@@ -43,7 +43,7 @@ DebuggerSubscriber *WebSocketReplayInit(DebuggerEventHandlerMap &map) {
 //
 // No parameters.
 //
-// Response (same event name) with no extra data.
+// Empty response.
 void WebSocketReplayBegin(DebuggerRequest &req) {
 	ReplayBeginSave();
 	req.Respond();
@@ -142,7 +142,7 @@ void WebSocketReplayTimeGet(DebuggerRequest &req) {
 // Parameters:
 //  - value: unsigned integer.
 //
-// Response (same event name) with no extra data.
+// Empty response.
 void WebSocketReplayTimeSet(DebuggerRequest &req) {
 	if (!PSP_IsInited())
 		return req.Fail("Game not running");

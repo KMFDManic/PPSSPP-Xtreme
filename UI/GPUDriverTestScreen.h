@@ -17,8 +17,6 @@ public:
 	void CreateViews() override;
 	void render() override;
 
-	const char *tag() const override { return "GPUDriverTest"; }
-
 private:
 	void DiscardTest();
 	void ShaderTest();

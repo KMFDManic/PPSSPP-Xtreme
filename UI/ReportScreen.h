@@ -37,8 +37,6 @@ class ReportScreen : public UIDialogScreenWithGameBackground {
 public:
 	ReportScreen(const Path &gamePath);
 
-	const char *tag() const override { return "Report"; }
-
 protected:
 	void postRender() override;
 	void update() override;
@@ -76,8 +74,6 @@ protected:
 class ReportFinishScreen : public UIDialogScreenWithGameBackground {
 public:
 	ReportFinishScreen(const Path &gamePath, ReportingOverallScore score);
-
-	const char *tag() const override { return "ReportFinish"; }
 
 protected:
 	void update() override;

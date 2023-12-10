@@ -214,12 +214,13 @@ static int sub_17A8(u8* data)
 	return -261;
 }
 
-static int sceSdGetLastIndex(u32 addressCtx, u32 addressHash, u32 addressKey) {
-	auto ctx = PSPPointer<pspChnnlsvContext1>::Create(addressCtx);
-	u8 *hash = Memory::GetPointerWrite(addressHash);
-	if (!ctx.IsValid() || !hash)
-		return hleLogError(SCEMISC, 0, "Invalid pointer");
-	return hleLogSuccessI(SCEMISC, sceSdGetLastIndex_(*ctx, hash, Memory::GetPointerWrite(addressKey)));
+static int sceSdGetLastIndex(u32 addressCtx, u32 addressHash, u32 addressKey)
+{
+	pspChnnlsvContext1 ctx;
+	Memory::ReadStruct(addressCtx, &ctx);
+	int res = sceSdGetLastIndex_(ctx, Memory::GetPointerWrite(addressHash), Memory::GetPointerWrite(addressKey));
+	Memory::WriteStruct(addressCtx, &ctx);
+	return res;
 }
 
 int sceSdGetLastIndex_(pspChnnlsvContext1& ctx, u8* in_hash, u8* in_key)
@@ -324,11 +325,13 @@ int sceSdGetLastIndex_(pspChnnlsvContext1& ctx, u8* in_hash, u8* in_key)
 	return 0;
 }
 
-static int sceSdSetIndex(u32 addressCtx, int value) {
-	auto ctx = PSPPointer<pspChnnlsvContext1>::Create(addressCtx);
-	if (!ctx.IsValid())
-		return hleLogError(SCEMISC, 0, "Invalid pointer");
-	return hleLogSuccessI(SCEMISC, sceSdSetIndex_(*ctx, value));
+static int sceSdSetIndex(u32 addressCtx, int value)
+{
+	pspChnnlsvContext1 ctx;
+	Memory::ReadStruct(addressCtx,&ctx);
+	int res = sceSdSetIndex_(ctx, value);
+	Memory::WriteStruct(addressCtx,&ctx);
+	return res;
 }
 
 int sceSdSetIndex_(pspChnnlsvContext1& ctx, int value)
@@ -341,11 +344,14 @@ int sceSdSetIndex_(pspChnnlsvContext1& ctx, int value)
 }
 
 
-static int sceSdRemoveValue(u32 addressCtx, u32 addressData, int length) {
-	auto ctx = PSPPointer<pspChnnlsvContext1>::Create(addressCtx);
-	if (!ctx.IsValid() || !Memory::IsValidAddress(addressData))
-		return hleLogError(SCEMISC, 0, "Invalid pointer");
-	return hleLogSuccessI(SCEMISC, sceSdRemoveValue_(*ctx, Memory::GetPointerWrite(addressData), length));
+static int sceSdRemoveValue(u32 addressCtx, u32 addressData, int length)
+{
+	pspChnnlsvContext1 ctx;
+	Memory::ReadStruct(addressCtx, &ctx);
+	int res = sceSdRemoveValue_(ctx, Memory::GetPointerWrite(addressData), length);
+	Memory::WriteStruct(addressCtx, &ctx);
+
+	return res;
 }
 
 int sceSdRemoveValue_(pspChnnlsvContext1& ctx, u8* data, int length)
@@ -390,14 +396,18 @@ int sceSdRemoveValue_(pspChnnlsvContext1& ctx, u8* data, int length)
 	return 0;
 }
 
-static int sceSdCreateList(u32 ctx2Addr, int mode, int unkwn, u32 dataAddr, u32 cryptkeyAddr) {
-	auto ctx2 = PSPPointer<pspChnnlsvContext2>::Create(ctx2Addr);
+static int sceSdCreateList(u32 ctx2Addr, int mode, int unkwn, u32 dataAddr, u32 cryptkeyAddr)
+{
+	pspChnnlsvContext2 ctx2;
+	Memory::ReadStruct(ctx2Addr, &ctx2);
 	u8* data = Memory::GetPointerWrite(dataAddr);
 	u8* cryptkey = Memory::GetPointerWrite(cryptkeyAddr);
-	if (!ctx2.IsValid() || !data)
-		return hleLogError(SCEMISC, 0, "Invalid pointer");
 
-	return hleLogSuccessI(SCEMISC, sceSdCreateList_(*ctx2, mode, unkwn, data, cryptkey));
+	int res = sceSdCreateList_(ctx2, mode, unkwn, data, cryptkey);
+
+	Memory::WriteStruct(ctx2Addr, &ctx2);
+
+	return res;
 }
 
 int sceSdCreateList_(pspChnnlsvContext2& ctx2, int mode, int uknw, u8* data, u8* cryptkey)
@@ -454,13 +464,17 @@ int sceSdCreateList_(pspChnnlsvContext2& ctx2, int mode, int uknw, u8* data, u8*
 	return 0;
 }
 
-static int sceSdSetMember(u32 ctxAddr, u32 dataAddr, int alignedLen) {
-	auto ctx = PSPPointer<pspChnnlsvContext2>::Create(ctxAddr);
-	u8 *data = Memory::GetPointerWrite(dataAddr);
-	if (!ctx.IsValid() || !data)
-		return hleLogError(SCEMISC, 0, "Invalid pointer");
+static int sceSdSetMember(u32 ctxAddr, u32 dataAddr, int alignedLen)
+{
+	pspChnnlsvContext2 ctx;
+	Memory::ReadStruct(ctxAddr, &ctx);
+	u8* data = Memory::GetPointerWrite(dataAddr);
 
-	return hleLogSuccessI(SCEMISC, sceSdSetMember_(*ctx, data, alignedLen));
+	int res = sceSdSetMember_(ctx, data, alignedLen);
+
+	Memory::WriteStruct(ctxAddr, &ctx);
+
+	return res;
 }
 
 int sceSdSetMember_(pspChnnlsvContext2& ctx, u8* data, int alignedLen)
@@ -497,14 +511,18 @@ int sceSdSetMember_(pspChnnlsvContext2& ctx, u8* data, int alignedLen)
 	return res;
 }
 
-static int sceSdCleanList(u32 ctxAddr) {
-	auto ctx = PSPPointer<pspChnnlsvContext2>::Create(ctxAddr);
-	if (!ctx.IsValid())
-		return hleLogError(SCEMISC, 0, "Invalid pointer");
-	return hleLogSuccessI(SCEMISC, sceSdCleanList_(*ctx));
+static int sceChnnlsv_21BE78B4(u32 ctxAddr)
+{
+	pspChnnlsvContext2 ctx;
+	Memory::ReadStruct(ctxAddr, &ctx);
+
+	int res = sceChnnlsv_21BE78B4_(ctx);
+
+	Memory::WriteStruct(ctxAddr, &ctx);
+	return res;
 }
 
-int sceSdCleanList_(pspChnnlsvContext2& ctx)
+int sceChnnlsv_21BE78B4_(pspChnnlsvContext2& ctx)
 {
 	memset(ctx.cryptedData, 0, 16);
 	ctx.unkn = 0;
@@ -520,7 +538,7 @@ const HLEFunction sceChnnlsv[] =
 	{0XC4C494F8, &WrapI_UUU<sceSdGetLastIndex>,      "sceSdGetLastIndex",   'i', "xxx"  },
 	{0XABFDFC8B, &WrapI_UIIUU<sceSdCreateList>,      "sceSdCreateList",     'i', "xiixx"},
 	{0X850A7FA1, &WrapI_UUI<sceSdSetMember>,         "sceSdSetMember",      'i', "xxi"  },
-	{0X21BE78B4, &WrapI_U<sceSdCleanList>,           "sceSdCleanList",      'i', "x"    },
+	{0X21BE78B4, &WrapI_U<sceChnnlsv_21BE78B4>,      "sceChnnlsv_21BE78B4", 'i', "x"    },
 };
 
 void Register_sceChnnlsv()

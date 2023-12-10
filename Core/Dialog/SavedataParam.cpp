@@ -15,16 +15,14 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include <algorithm>
-#include <memory>
 #include "Common/Log.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Data/Format/ZIMLoad.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/System/OSD.h"
 #include "Common/StringUtils.h"
 #include "Core/Config.h"
+#include "Core/Host.h"
 #include "Core/Reporting.h"
 #include "Core/System.h"
 #include "Core/Debugger/MemBlockInfo.h"
@@ -38,14 +36,13 @@
 #include "Core/HW/MemoryStick.h"
 #include "Core/Util/PPGeDraw.h"
 
+#include <algorithm>
+
 static const std::string ICON0_FILENAME = "ICON0.PNG";
 static const std::string ICON1_FILENAME = "ICON1.PMF";
 static const std::string PIC1_FILENAME = "PIC1.PNG";
 static const std::string SND0_FILENAME = "SND0.AT3";
 static const std::string SFO_FILENAME = "PARAM.SFO";
-
-static const int FILE_LIST_COUNT_MAX = 99;
-static const u32 FILE_LIST_TOTAL_SIZE = sizeof(SaveSFOFileListEntry) * FILE_LIST_COUNT_MAX;
 
 static const std::string savePath = "ms0:/PSP/SAVEDATA/";
 
@@ -86,7 +83,7 @@ namespace
 		return result != 0;
 	}
 
-	bool WritePSPFile(std::string filename, const u8 *data, SceSize dataSize)
+	bool WritePSPFile(std::string filename, u8 *data, SceSize dataSize)
 	{
 		int handle = pspFileSystem.OpenFile(filename, (FileAccess)(FILEACCESS_WRITE | FILEACCESS_CREATE | FILEACCESS_TRUNCATE));
 		if (handle < 0)
@@ -96,18 +93,6 @@ namespace
 		pspFileSystem.CloseFile(handle);
 
 		return result == dataSize;
-	}
-
-	PSPFileInfo FileFromListing(const std::vector<PSPFileInfo> &listing, const std::string &filename) {
-		for (const PSPFileInfo &sub : listing) {
-			if (sub.name == filename)
-				return sub;
-		}
-
-		PSPFileInfo info;
-		info.name = filename;
-		info.exists = false;
-		return info;
 	}
 
 	bool PSPMatch(std::string text, std::string regexp)
@@ -208,7 +193,16 @@ void SaveFileInfo::DoState(PointerWrap &p)
 	}
 }
 
-SavedataParam::SavedataParam() { }
+SavedataParam::SavedataParam()
+	: pspParam(0)
+	, selectedSave(0)
+	, saveDataList(0)
+	, noSaveIcon(0)
+	, saveDataListCount(0)
+	, saveNameListDataCount(0)
+{
+
+}
 
 void SavedataParam::Init()
 {
@@ -273,7 +267,7 @@ std::string SavedataParam::GetSaveFilePath(const SceUtilitySavedataParam *param,
 inline static std::string FixedToString(const char *str, size_t n)
 {
 	if (!str) {
-		return std::string();
+		return std::string("");
 	} else {
 		return std::string(str, strnlen(str, n));
 	}
@@ -346,7 +340,6 @@ bool SavedataParam::Delete(SceUtilitySavedataParam* param, int saveId) {
 		return false;
 	}
 
-	ClearCaches();
 	pspFileSystem.RmDir(dirPath);
 	return true;
 }
@@ -369,11 +362,11 @@ int SavedataParam::DeleteData(SceUtilitySavedataParam* param) {
 	if (!pspFileSystem.GetFileInfo(sfoPath).exists)
 		return SCE_UTILITY_SAVEDATA_ERROR_RW_DATA_BROKEN;
 
-	if (!fileName.empty() && !pspFileSystem.GetFileInfo(filePath).exists) {
+	if (fileName != "" && !pspFileSystem.GetFileInfo(filePath).exists) {
 		return SCE_UTILITY_SAVEDATA_ERROR_RW_FILE_NOT_FOUND;
 	}
 
-	if (fileName.empty()) {
+	if (fileName == "") {
 		return 0;
 	}
 
@@ -382,41 +375,7 @@ int SavedataParam::DeleteData(SceUtilitySavedataParam* param) {
 		return 0;
 	}
 
-	ClearCaches();
 	pspFileSystem.RemoveFile(filePath);
-
-	// Update PARAM.SFO to remove the file, if it was in the list.
-	std::shared_ptr<ParamSFOData> sfoFile = LoadCachedSFO(sfoPath);
-	if (sfoFile) {
-		// Note: do not update values such as TITLE in this operation.
-		u32 fileListSize = 0;
-		SaveSFOFileListEntry *fileList = (SaveSFOFileListEntry *)sfoFile->GetValueData("SAVEDATA_FILE_LIST", &fileListSize);
-		size_t fileListCount = fileListSize / sizeof(SaveSFOFileListEntry);
-		bool changed = false;
-		for (size_t i = 0; i < fileListCount; ++i) {
-			if (strncmp(fileList[i].filename, fileName.c_str(), sizeof(fileList[i].filename)) != 0)
-				continue;
-
-			memset(fileList[i].filename, 0, sizeof(fileList[i].filename));
-			memset(fileList[i].hash, 0, sizeof(fileList[i].hash));
-			changed = true;
-			break;
-		}
-
-		if (changed) {
-			std::unique_ptr<u8[]> updatedList(new u8[fileListSize]);
-			memcpy(updatedList.get(), fileList, fileListSize);
-			sfoFile->SetValue("SAVEDATA_FILE_LIST", updatedList.get(), fileListSize, (int)FILE_LIST_TOTAL_SIZE);
-
-			u8 *sfoData;
-			size_t sfoSize;
-			sfoFile->WriteSFO(&sfoData, &sfoSize);
-
-			ClearCaches();
-			WritePSPFile(sfoPath, sfoData, (SceSize)sfoSize);
-			delete[] sfoData;
-		}
-	}
 
 	return 0;
 }
@@ -448,15 +407,15 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 			ERROR_LOG_REPORT(SCEUTILITY, "Savedata version with missing key on save: %d", param->secureVersion);
 			return SCE_UTILITY_SAVEDATA_ERROR_SAVE_PARAM;
 		}
-		WARN_LOG(SCEUTILITY, "Savedata version requested on save: %d", param->secureVersion);
+		WARN_LOG_REPORT(SCEUTILITY, "Savedata version requested on save: %d", param->secureVersion);
 	}
 
 	std::string dirPath = GetSaveFilePath(param, GetSaveDir(param, saveDirName));
 
 	if (!pspFileSystem.GetFileInfo(dirPath).exists) {
 		if (!pspFileSystem.MkDir(dirPath)) {
-			auto err = GetI18NCategory(I18NCat::ERRORS);
-			g_OSD.Show(OSDType::MESSAGE_ERROR, err->T("Unable to write savedata, disk may be full"));
+			auto err = GetI18NCategory("Error");
+			host->NotifyUserMessage(err->T("Unable to write savedata, disk may be full"));
 		}
 	}
 
@@ -484,8 +443,8 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 		}
 
 		if (EncryptData(decryptMode, cryptedData, &cryptedSize, &aligned_len, cryptedHash, (hasKey ? param->key : 0)) != 0) {
-			auto err = GetI18NCategory(I18NCat::ERRORS);
-			g_OSD.Show(OSDType::MESSAGE_WARNING, err->T("Save encryption failed. This save won't work on real PSP"), 6.0f);
+			auto err = GetI18NCategory("Error");
+			host->NotifyUserMessage(err->T("Save encryption failed. This save won't work on real PSP"), 6.0f);
 			ERROR_LOG(SCEUTILITY,"Save encryption failed. This save won't work on real PSP");
 			delete[] cryptedData;
 			cryptedData = 0;
@@ -493,26 +452,28 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 	}
 
 	// SAVE PARAM.SFO
+	ParamSFOData sfoFile;
 	std::string sfopath = dirPath + "/" + SFO_FILENAME;
-	std::shared_ptr<ParamSFOData> sfoFile = LoadCachedSFO(sfopath, true);
-
-	bool subWrite = param->mode == SCE_UTILITY_SAVEDATA_TYPE_WRITEDATASECURE || param->mode == SCE_UTILITY_SAVEDATA_TYPE_WRITEDATA;
-	bool wasCrypted = GetSaveCryptMode(param, saveDirName) != 0;
+	{
+		std::vector<u8> sfoData;
+		if (pspFileSystem.ReadEntireFile(sfopath, sfoData) >= 0)
+			sfoFile.ReadSFO(sfoData);
+	}
 
 	// Update values
-	if(!subWrite){
-		sfoFile->SetValue("TITLE", param->sfoParam.title, 128);
-		sfoFile->SetValue("SAVEDATA_TITLE", param->sfoParam.savedataTitle, 128);
-		sfoFile->SetValue("SAVEDATA_DETAIL", param->sfoParam.detail, 1024);
-		sfoFile->SetValue("PARENTAL_LEVEL", param->sfoParam.parentalLevel, 4);
-		sfoFile->SetValue("CATEGORY", "MS", 4);
-		sfoFile->SetValue("SAVEDATA_DIRECTORY", GetSaveDir(param, saveDirName), 64);
-	}
+	sfoFile.SetValue("TITLE",param->sfoParam.title,128);
+	sfoFile.SetValue("SAVEDATA_TITLE",param->sfoParam.savedataTitle,128);
+	sfoFile.SetValue("SAVEDATA_DETAIL",param->sfoParam.detail,1024);
+	sfoFile.SetValue("PARENTAL_LEVEL",param->sfoParam.parentalLevel,4);
+	sfoFile.SetValue("CATEGORY","MS",4);
+	sfoFile.SetValue("SAVEDATA_DIRECTORY", GetSaveDir(param, saveDirName), 64);
 
 	// Always write and update the file list.
 	// For each file, 13 bytes for filename, 16 bytes for file hash (0 in PPSSPP), 3 byte for padding
+	const int FILE_LIST_COUNT_MAX = 99;
+	const u32 FILE_LIST_TOTAL_SIZE = sizeof(SaveSFOFileListEntry) * FILE_LIST_COUNT_MAX;
 	u32 tmpDataSize = 0;
-	SaveSFOFileListEntry *tmpDataOrig = (SaveSFOFileListEntry *)sfoFile->GetValueData("SAVEDATA_FILE_LIST", &tmpDataSize);
+	SaveSFOFileListEntry *tmpDataOrig = (SaveSFOFileListEntry *)sfoFile.GetValueData("SAVEDATA_FILE_LIST", &tmpDataSize);
 	SaveSFOFileListEntry *updatedList = new SaveSFOFileListEntry[FILE_LIST_COUNT_MAX];
 	if (tmpDataSize != 0)
 		memcpy(updatedList, tmpDataOrig, std::min(tmpDataSize, FILE_LIST_TOTAL_SIZE));
@@ -533,30 +494,28 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 		}
 	}
 
-	sfoFile->SetValue("SAVEDATA_FILE_LIST", (u8 *)updatedList, FILE_LIST_TOTAL_SIZE, (int)FILE_LIST_TOTAL_SIZE);
+	sfoFile.SetValue("SAVEDATA_FILE_LIST", (u8 *)updatedList, FILE_LIST_TOTAL_SIZE, (int)FILE_LIST_TOTAL_SIZE);
 	delete[] updatedList;
 
 	// Init param with 0. This will be used to detect crypted save or not on loading
 	u8 *tmpData = new u8[128];
 	memset(tmpData, 0, 128);
-	sfoFile->SetValue("SAVEDATA_PARAMS", tmpData, 128, 128);
+	sfoFile.SetValue("SAVEDATA_PARAMS", tmpData, 128, 128);
 	delete[] tmpData;
 
 	u8 *sfoData;
 	size_t sfoSize;
-	sfoFile->WriteSFO(&sfoData, &sfoSize);
+	sfoFile.WriteSFO(&sfoData,&sfoSize);
 
 	// Calc SFO hash for PSP.
-	if (cryptedData != 0 || (subWrite && wasCrypted)) {
-		int offset = sfoFile->GetDataOffset(sfoData, "SAVEDATA_PARAMS");
+	if(cryptedData != 0)
+	{
+		int offset = sfoFile.GetDataOffset(sfoData,"SAVEDATA_PARAMS");
 		if(offset >= 0)
 			UpdateHash(sfoData, (int)sfoSize, offset, DetermineCryptMode(param));
 	}
-
-	ClearCaches();
 	WritePSPFile(sfopath, sfoData, (SceSize)sfoSize);
 	delete[] sfoData;
-	sfoData = nullptr;
 
 	if(param->dataBuf.IsValid())	// Can launch save without save data in mode 13
 	{
@@ -583,7 +542,7 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 		// copy back save name in request
 		strncpy(param->saveName, saveDirName.c_str(), 20);
 
-		if (fileName.empty()) {
+		if (fileName == "") {
 			delete[] cryptedData;
 		} else {
 			if (!WritePSPFile(filePath, data_, saveSize)) {
@@ -633,25 +592,19 @@ int SavedataParam::Load(SceUtilitySavedataParam *param, const std::string &saveD
 	std::string dirPath = GetSaveFilePath(param, GetSaveDir(param, saveDirName));
 	std::string fileName = GetFileName(param);
 	std::string filePath = dirPath + "/" + fileName;
+	std::string sfoPath = dirPath + "/" + SFO_FILENAME;
 
 	if (!pspFileSystem.GetFileInfo(dirPath).exists) {
 		return isRWMode ? SCE_UTILITY_SAVEDATA_ERROR_RW_NO_DATA : SCE_UTILITY_SAVEDATA_ERROR_LOAD_NO_DATA;
 	}
 
-	if (!fileName.empty() && !pspFileSystem.GetFileInfo(filePath).exists) {
-		return isRWMode ? SCE_UTILITY_SAVEDATA_ERROR_RW_FILE_NOT_FOUND : SCE_UTILITY_SAVEDATA_ERROR_LOAD_FILE_NOT_FOUND;
-	}
-
-	// If it wasn't zero, force to zero before loading and especially in case of error.
-	// This isn't reset if the path doesn't even exist.
-	param->dataSize = 0;
-	int result = LoadSaveData(param, saveDirName, dirPath, secureMode);
-	if (result != 0)
-		return result;
-
 	// Load sfo
 	if (!LoadSFO(param, dirPath)) {
 		return isRWMode ? SCE_UTILITY_SAVEDATA_ERROR_RW_DATA_BROKEN : SCE_UTILITY_SAVEDATA_ERROR_LOAD_DATA_BROKEN;
+	}
+
+	if (fileName != "" && !pspFileSystem.GetFileInfo(filePath).exists) {
+		return isRWMode ? SCE_UTILITY_SAVEDATA_ERROR_RW_FILE_NOT_FOUND : SCE_UTILITY_SAVEDATA_ERROR_LOAD_FILE_NOT_FOUND;
 	}
 
 	// Don't know what it is, but PSP always respond this and this unlock some game
@@ -667,6 +620,15 @@ int SavedataParam::Load(SceUtilitySavedataParam *param, const std::string &saveD
 	LoadFile(dirPath, PIC1_FILENAME, &param->pic1FileData);
 	// Load SND0.AT3
 	LoadFile(dirPath, SND0_FILENAME, &param->snd0FileData);
+
+	if (fileName == "") {
+		// Don't load savedata but return success.
+		return 0;
+	}
+
+	int result = LoadSaveData(param, saveDirName, dirPath, secureMode);
+	if (result != 0)
+		return result;
 
 	return 0;
 }
@@ -685,10 +647,6 @@ int SavedataParam::LoadSaveData(SceUtilitySavedataParam *param, const std::strin
 
 	std::string filename = GetFileName(param);
 	std::string filePath = dirPath + "/" + filename;
-	// Blank filename always means success, if secureVersion was correct.
-	if (filename.empty())
-		return 0;
-
 	s64 readSize;
 	INFO_LOG(SCEUTILITY, "Loading file with size %u in %s", param->dataBufSize, filePath.c_str());
 	u8 *saveData = nullptr;
@@ -718,18 +676,14 @@ int SavedataParam::LoadSaveData(SceUtilitySavedataParam *param, const std::strin
 	if (!saveDone) {
 		loadedSize = LoadNotCryptedSave(param, param->dataBuf, saveData, saveSize);
 	}
+	param->dataSize = (SceSize)saveSize;
 	delete[] saveData;
 
-	// Ignore error codes.
-	if (loadedSize != 0 && (loadedSize & 0x80000000) == 0) {
+	if (loadedSize != 0) {
 		std::string tag = "LoadSaveData/" + filePath;
 		NotifyMemInfo(MemBlockFlags::WRITE, param->dataBuf.ptr, loadedSize, tag.c_str(), tag.size());
 	}
 
-	if ((loadedSize & 0x80000000) != 0)
-		return loadedSize;
-
-	param->dataSize = (SceSize)saveSize;
 	return 0;
 }
 
@@ -779,9 +733,9 @@ u32 SavedataParam::LoadCryptedSave(SceUtilitySavedataParam *param, u8 *data, con
 
 			// Don't notify the user if we're not going to upgrade the save.
 			if (!g_Config.bEncryptSave) {
-				auto di = GetI18NCategory(I18NCat::DIALOG);
-				g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("When you save, it will load on a PSP, but not an older PPSSPP"), 6.0f);
-				g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Old savedata detected"), 6.0f);
+				auto di = GetI18NCategory("Dialog");
+				host->NotifyUserMessage(di->T("When you save, it will load on a PSP, but not an older PPSSPP"), 6.0f);
+				host->NotifyUserMessage(di->T("Old savedata detected"), 6.0f);
 			}
 		} else {
 			if (decryptMode == 5 && prevCryptMode == 3) {
@@ -791,9 +745,9 @@ u32 SavedataParam::LoadCryptedSave(SceUtilitySavedataParam *param, u8 *data, con
 			}
 			if (g_Config.bSavedataUpgrade) {
 				decryptMode = prevCryptMode;
-				auto di = GetI18NCategory(I18NCat::DIALOG);
-				g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("When you save, it will not work on outdated PSP Firmware anymore"), 6.0f);
-				g_OSD.Show(OSDType::MESSAGE_WARNING, di->T("Old savedata detected"), 6.0f);
+				auto di = GetI18NCategory("Dialog");
+				host->NotifyUserMessage(di->T("When you save, it will not work on outdated PSP Firmware anymore"), 6.0f);
+				host->NotifyUserMessage(di->T("Old savedata detected"), 6.0f);
 			}
 		}
 		hasKey = decryptMode > 1;
@@ -815,12 +769,8 @@ u32 SavedataParam::LoadCryptedSave(SceUtilitySavedataParam *param, u8 *data, con
 	u32 sz = 0;
 	if (err == 0) {
 		if (param->dataBuf.IsValid()) {
-			if ((u32)saveSize > param->dataBufSize || !Memory::IsValidRange(param->dataBuf.ptr, saveSize)) {
-				sz = SCE_UTILITY_SAVEDATA_ERROR_LOAD_DATA_BROKEN;
-			} else {
-				sz = (u32)saveSize;
-				memcpy(data, data_base, sz);
-			}
+			sz = std::min((u32)saveSize, (u32)param->dataBufSize);
+			memcpy(data, data_base, sz);
 		}
 		saveDone = true;
 	}
@@ -832,40 +782,46 @@ u32 SavedataParam::LoadCryptedSave(SceUtilitySavedataParam *param, u8 *data, con
 
 u32 SavedataParam::LoadNotCryptedSave(SceUtilitySavedataParam *param, u8 *data, u8 *saveData, int &saveSize) {
 	if (param->dataBuf.IsValid()) {
-		if ((u32)saveSize > param->dataBufSize || !Memory::IsValidRange(param->dataBuf.ptr, saveSize)) {
-			return SCE_UTILITY_SAVEDATA_ERROR_LOAD_DATA_BROKEN;
-		}
-		memcpy(data, saveData, saveSize);
-		return saveSize;
+		u32 sz = std::min((u32)saveSize, (u32)param->dataBufSize);
+		memcpy(data, saveData, sz);
+		return sz;
 	}
 	return 0;
 }
 
 bool SavedataParam::LoadSFO(SceUtilitySavedataParam *param, const std::string& dirPath) {
+	ParamSFOData sfoFile;
 	std::string sfopath = dirPath + "/" + SFO_FILENAME;
-	std::shared_ptr<ParamSFOData> sfoFile = LoadCachedSFO(sfopath);
-	if (sfoFile) {
+	std::vector<u8> sfoData;
+	if (pspFileSystem.ReadEntireFile(sfopath, sfoData) >= 0) {
+		sfoFile.ReadSFO(sfoData);
+
 		// copy back info in request
-		strncpy(param->sfoParam.title, sfoFile->GetValueString("TITLE").c_str(), 128);
-		strncpy(param->sfoParam.savedataTitle, sfoFile->GetValueString("SAVEDATA_TITLE").c_str(), 128);
-		strncpy(param->sfoParam.detail, sfoFile->GetValueString("SAVEDATA_DETAIL").c_str(), 1024);
-		param->sfoParam.parentalLevel = sfoFile->GetValueInt("PARENTAL_LEVEL");
+		strncpy(param->sfoParam.title,sfoFile.GetValueString("TITLE").c_str(),128);
+		strncpy(param->sfoParam.savedataTitle,sfoFile.GetValueString("SAVEDATA_TITLE").c_str(),128);
+		strncpy(param->sfoParam.detail,sfoFile.GetValueString("SAVEDATA_DETAIL").c_str(),1024);
+		param->sfoParam.parentalLevel = sfoFile.GetValueInt("PARENTAL_LEVEL");
 		return true;
+	} else {
+		return false;
 	}
-	return false;
 }
 
 std::vector<SaveSFOFileListEntry> SavedataParam::GetSFOEntries(const std::string &dirPath) {
 	std::vector<SaveSFOFileListEntry> result;
 	const std::string sfoPath = dirPath + "/" + SFO_FILENAME;
 
-	std::shared_ptr<ParamSFOData> sfoFile = LoadCachedSFO(sfoPath);
-	if (!sfoFile) {
+	ParamSFOData sfoFile;
+	std::vector<u8> sfoData;
+	if (pspFileSystem.ReadEntireFile(sfoPath, sfoData) >= 0) {
+		sfoFile.ReadSFO(sfoData);
+	} else {
 		return result;
 	}
 
+	const int FILE_LIST_COUNT_MAX = 99;
 	u32 sfoFileListSize = 0;
-	SaveSFOFileListEntry *sfoFileList = (SaveSFOFileListEntry *)sfoFile->GetValueData("SAVEDATA_FILE_LIST", &sfoFileListSize);
+	SaveSFOFileListEntry *sfoFileList = (SaveSFOFileListEntry *)sfoFile.GetValueData("SAVEDATA_FILE_LIST", &sfoFileListSize);
 	const u32 count = std::min((u32)FILE_LIST_COUNT_MAX, sfoFileListSize / (u32)sizeof(SaveSFOFileListEntry));
 
 	for (u32 i = 0; i < count; ++i) {
@@ -952,7 +908,7 @@ int SavedataParam::EncryptData(unsigned int mode,
 		return -5;
 
 	/* Verify encryption */
-	if (sceSdCleanList_(ctx2) < 0)
+	if (sceChnnlsv_21BE78B4_(ctx2) < 0)
 		return -6;
 
 	/* Build the file hash from this PSP */
@@ -994,7 +950,7 @@ int SavedataParam::DecryptSave(unsigned int mode, unsigned char *data, int *data
 		return -6;
 
 	/* Verify that it decrypted correctly */
-	if (sceSdCleanList_(ctx2) < 0)
+	if (sceChnnlsv_21BE78B4_(ctx2) < 0)
 		return -7;
 
 	if (expectedHash) {
@@ -1136,12 +1092,13 @@ int SavedataParam::GetSizes(SceUtilitySavedataParam *param)
 		const std::string saveName(msData->saveName, strnlen(msData->saveName, sizeof(msData->saveName)));
 		// TODO: How should <> be handled?
 		std::string path = GetSaveFilePath(param, gameName + (saveName == "<>" ? "" : saveName));
-		bool listingExists = false;
-		auto listing = pspFileSystem.GetDirListing(path, &listingExists);
-		if (listingExists) {
+		PSPFileInfo finfo = pspFileSystem.GetFileInfo(path);
+		if (finfo.exists)
+		{
 			param->msData->info.usedClusters = 0;
-			for (auto &item : listing) {
-				param->msData->info.usedClusters += (item.size + (u32)MemoryStick_SectorSize() - 1) / (u32)MemoryStick_SectorSize();
+			auto listing = pspFileSystem.GetDirListing(path);
+			for (auto it = listing.begin(), end = listing.end(); it != end; ++it) {
+				param->msData->info.usedClusters += (it->size + (u32)MemoryStick_SectorSize() - 1) / (u32)MemoryStick_SectorSize();
 			}
 
 			// The usedSpaceKB value is definitely based on clusters, not bytes or even KB.
@@ -1292,9 +1249,7 @@ int SavedataParam::GetFilesList(SceUtilitySavedataParam *param, u32 requestAddr)
 	}
 
 	std::string dirPath = savePath + GetGameName(param) + GetSaveName(param);
-	bool dirPathExists = false;
-	auto files = pspFileSystem.GetDirListing(dirPath, &dirPathExists);
-	if (!dirPathExists) {
+	if (!pspFileSystem.GetFileInfo(dirPath).exists) {
 		DEBUG_LOG(SCEUTILITY, "SavedataParam::GetFilesList(): directory %s does not exist", dirPath.c_str());
 		return SCE_UTILITY_SAVEDATA_ERROR_RW_NO_DATA;
 	}
@@ -1305,7 +1260,7 @@ int SavedataParam::GetFilesList(SceUtilitySavedataParam *param, u32 requestAddr)
 	fileList->resultNumSystemEntries = 0;
 
 	// We need PARAM.SFO's SAVEDATA_FILE_LIST to determine which entries are secure.
-	PSPFileInfo sfoFileInfo = FileFromListing(files, SFO_FILENAME);
+	PSPFileInfo sfoFileInfo = pspFileSystem.GetFileInfo(dirPath + "/" + SFO_FILENAME);
 	std::set<std::string> secureFilenames;
 
 	if (sfoFileInfo.exists) {
@@ -1322,7 +1277,7 @@ int SavedataParam::GetFilesList(SceUtilitySavedataParam *param, u32 requestAddr)
 	requestPtr->bind = 1021;
 
 	// Does not list directories, nor recurse into them, and ignores files not ALL UPPERCASE.
-	bool isCrypted = GetSaveCryptMode(param, GetSaveDirName(param, 0)) != 0;
+	auto files = pspFileSystem.GetDirListing(dirPath);
 	for (auto file = files.begin(), end = files.end(); file != end; ++file) {
 		if (file->type == FILETYPE_DIRECTORY) {
 			continue;
@@ -1347,6 +1302,7 @@ int SavedataParam::GetFilesList(SceUtilitySavedataParam *param, u32 requestAddr)
 				entry = &fileList->secureEntries[fileList->resultNumSecureEntries++];
 			}
 			// Secure files are slightly bigger.
+			bool isCrypted = GetSaveCryptMode(param, GetSaveDirName(param, 0)) != 0;
 			if (isCrypted) {
 				sizeOffset = -0x10;
 			}
@@ -1390,8 +1346,8 @@ bool SavedataParam::GetSize(SceUtilitySavedataParam *param)
 	}
 
 	const std::string saveDir = savePath + GetGameName(param) + GetSaveName(param);
-	bool exists = false;
-	auto listing = pspFileSystem.GetDirListing(saveDir, &exists);
+	PSPFileInfo info = pspFileSystem.GetFileInfo(saveDir);
+	bool exists = info.exists;
 
 	if (param->sizeInfo.IsValid())
 	{
@@ -1401,12 +1357,12 @@ bool SavedataParam::GetSize(SceUtilitySavedataParam *param)
 		s64 writeBytes = 0;
 		for (int i = 0; i < param->sizeInfo->numNormalEntries; ++i) {
 			const auto &entry = param->sizeInfo->normalEntries[i];
-			overwriteBytes += FileFromListing(listing, entry.name).size;
+			overwriteBytes += pspFileSystem.GetFileInfo(saveDir + "/" + entry.name).size;
 			writeBytes += entry.size;
 		}
 		for (int i = 0; i < param->sizeInfo->numSecureEntries; ++i) {
 			const auto &entry = param->sizeInfo->secureEntries[i];
-			overwriteBytes += FileFromListing(listing, entry.name).size;
+			overwriteBytes += pspFileSystem.GetFileInfo(saveDir + "/" + entry.name).size;
 			writeBytes += entry.size + 0x10;
 		}
 
@@ -1521,7 +1477,7 @@ int SavedataParam::SetPspParam(SceUtilitySavedataParam *param)
 			saveDataListCount++;
 		}
 
-		if (saveDataListCount > 0 && WouldHaveMultiSaveName(param)) {
+		if (saveDataListCount > 0 && wouldHasMultiSaveName(param)) {
 			hasMultipleFileName = true;
 			saveDataList = new SaveFileInfo[saveDataListCount];
 			
@@ -1530,20 +1486,23 @@ int SavedataParam::SetPspParam(SceUtilitySavedataParam *param)
 			for (int i = 0; i < saveDataListCount; i++) {
 				// "<>" means saveName can be anything...
 				if (strncmp(saveNameListData[i], "<>", ARRAY_SIZE(saveNameListData[i])) == 0) {
+					std::string fileDataPath = "";				
 					// TODO:Maybe we need a way to reorder the files?
 					auto allSaves = pspFileSystem.GetDirListing(savePath);
 					std::string gameName = GetGameName(param);
-					for (auto it = allSaves.begin(); it != allSaves.end(); ++it) {
-						if (it->name.compare(0, gameName.length(), gameName) == 0) {
-							std::string saveName = it->name.substr(gameName.length());
+					std::string saveName = "";
+					for(auto it = allSaves.begin(); it != allSaves.end(); ++it) {
+						if(it->name.compare(0, gameName.length(), gameName) == 0) {
+							saveName = it->name.substr(gameName.length());
 							
-							if (IsInSaveDataList(saveName, realCount)) // Already in SaveDataList, skip...
+							if(IsInSaveDataList(saveName, realCount)) // Already in SaveDataList, skip...
 								continue;
 
-							std::string fileDataPath = savePath + it->name;
-							if (it->exists) {
-								SetFileInfo(realCount, *it, saveName);
-								DEBUG_LOG(SCEUTILITY, "%s Exist", fileDataPath.c_str());
+							fileDataPath = savePath + it->name;
+							PSPFileInfo info = pspFileSystem.GetFileInfo(fileDataPath);
+							if (info.exists) {
+								SetFileInfo(realCount, info, saveName);
+								DEBUG_LOG(SCEUTILITY,"%s Exist",fileDataPath.c_str());
 								++realCount;
 							} else {
 								if (listEmptyFile) {
@@ -1614,7 +1573,7 @@ void SavedataParam::SetFileInfo(SaveFileInfo &saveInfo, PSPFileInfo &info, std::
 	saveInfo.idx = 0;
 	saveInfo.modif_time = info.mtime;
 
-	std::string saveDir = savrDir.empty() ? GetGameName(pspParam) + saveName : savrDir;
+	std::string saveDir = savrDir == "" ? GetGameName(pspParam) + saveName : savrDir;
 	saveInfo.saveDir = saveDir;
 
 	// Start with a blank slate.
@@ -1630,17 +1589,23 @@ void SavedataParam::SetFileInfo(SaveFileInfo &saveInfo, PSPFileInfo &info, std::
 
 	// Search save image icon0
 	// TODO : If icon0 don't exist, need to use icon1 which is a moving icon. Also play sound
-	if (!ignoreTextures_) {
-		saveInfo.texture = new PPGeImage(savePath + saveDir + "/" + ICON0_FILENAME);
-	}
+	std::string fileDataPath2 = savePath + saveDir + "/" + ICON0_FILENAME;
+	PSPFileInfo info2 = pspFileSystem.GetFileInfo(fileDataPath2);
+	if (info2.exists)
+		saveInfo.texture = new PPGeImage(fileDataPath2);
 
 	// Load info in PARAM.SFO
-	std::string sfoFilename = savePath + saveDir + "/" + SFO_FILENAME;
-	std::shared_ptr<ParamSFOData> sfoFile = LoadCachedSFO(sfoFilename);
-	if (sfoFile) {
-		SetStringFromSFO(*sfoFile, "TITLE", saveInfo.title, sizeof(saveInfo.title));
-		SetStringFromSFO(*sfoFile, "SAVEDATA_TITLE", saveInfo.saveTitle, sizeof(saveInfo.saveTitle));
-		SetStringFromSFO(*sfoFile, "SAVEDATA_DETAIL", saveInfo.saveDetail, sizeof(saveInfo.saveDetail));
+	fileDataPath2 = savePath + saveDir + "/" + SFO_FILENAME;
+	info2 = pspFileSystem.GetFileInfo(fileDataPath2);
+	if (info2.exists) {
+		std::vector<u8> sfoData;
+		pspFileSystem.ReadEntireFile(fileDataPath2, sfoData);
+		ParamSFOData sfoFile;
+		if (sfoFile.ReadSFO(sfoData)) {
+			SetStringFromSFO(sfoFile, "TITLE", saveInfo.title, sizeof(saveInfo.title));
+			SetStringFromSFO(sfoFile, "SAVEDATA_TITLE", saveInfo.saveTitle, sizeof(saveInfo.saveTitle));
+			SetStringFromSFO(sfoFile, "SAVEDATA_DETAIL", saveInfo.saveDetail, sizeof(saveInfo.saveDetail));
+		}
 	} else {
 		saveInfo.broken = true;
 		truncate_cpy(saveInfo.title, saveDir.c_str());
@@ -1847,7 +1812,8 @@ int SavedataParam::GetLastEmptySave()
 	return idx;
 }
 
-int SavedataParam::GetSaveNameIndex(const SceUtilitySavedataParam *param) {
+int SavedataParam::GetSaveNameIndex(SceUtilitySavedataParam* param)
+{
 	std::string saveName = GetSaveName(param);
 	for (int i = 0; i < saveNameListDataCount; i++)
 	{
@@ -1861,7 +1827,7 @@ int SavedataParam::GetSaveNameIndex(const SceUtilitySavedataParam *param) {
 	return 0;
 }
 
-bool SavedataParam::WouldHaveMultiSaveName(const SceUtilitySavedataParam *param) {
+bool SavedataParam::wouldHasMultiSaveName(SceUtilitySavedataParam* param) {
 	switch ((SceUtilitySavedataType)(u32)param->mode) {
 	case SCE_UTILITY_SAVEDATA_TYPE_LOAD:
 	case SCE_UTILITY_SAVEDATA_TYPE_AUTOLOAD:
@@ -1884,8 +1850,9 @@ bool SavedataParam::WouldHaveMultiSaveName(const SceUtilitySavedataParam *param)
 	}
 }
 
-void SavedataParam::DoState(PointerWrap &p) {
-	auto s = p.Section("SavedataParam", 1, 2);
+void SavedataParam::DoState(PointerWrap &p)
+{
+	auto s = p.Section("SavedataParam", 1);
 	if (!s)
 		return;
 
@@ -1893,78 +1860,55 @@ void SavedataParam::DoState(PointerWrap &p) {
 	Do(p, selectedSave);
 	Do(p, saveDataListCount);
 	Do(p, saveNameListDataCount);
-	if (p.mode == p.MODE_READ) {
-		if (saveDataList)
+	if (p.mode == p.MODE_READ)
+	{
+		if (saveDataList != NULL)
 			delete [] saveDataList;
-		if (saveDataListCount != 0) {
+		if (saveDataListCount != 0)
+		{
 			saveDataList = new SaveFileInfo[saveDataListCount];
 			DoArray(p, saveDataList, saveDataListCount);
-		} else {
-			saveDataList = nullptr;
 		}
+		else
+			saveDataList = NULL;
 	}
 	else
 		DoArray(p, saveDataList, saveDataListCount);
-
-	if (s >= 2) {
-		Do(p, ignoreTextures_);
-	} else {
-		ignoreTextures_ = false;
-	}
 }
 
-void SavedataParam::ClearCaches() {
-	std::lock_guard<std::mutex> guard(cacheLock_);
-	sfoCache_.clear();
-}
-
-std::shared_ptr<ParamSFOData> SavedataParam::LoadCachedSFO(const std::string &path, bool orCreate) {
-	std::lock_guard<std::mutex> guard(cacheLock_);
-	if (sfoCache_.find(path) == sfoCache_.end()) {
-		std::vector<u8> data;
-		if (pspFileSystem.ReadEntireFile(path, data) < 0) {
-			// Mark as not existing for later.
-			sfoCache_[path].reset();
-		} else {
-			sfoCache_.emplace(path, new ParamSFOData());
-			// If it fails to load, also keep it to indicate failed.
-			if (!sfoCache_.at(path)->ReadSFO(data))
-				sfoCache_.at(path).reset();
-		}
-	}
-
-	if (!sfoCache_.at(path)) {
-		if (!orCreate)
-			return nullptr;
-		sfoCache_.at(path).reset(new ParamSFOData());
-	}
-	return sfoCache_.at(path);
-}
-
-int SavedataParam::GetSaveCryptMode(const SceUtilitySavedataParam *param, const std::string &saveDirName) {
+int SavedataParam::GetSaveCryptMode(SceUtilitySavedataParam* param, const std::string &saveDirName)
+{
+	ParamSFOData sfoFile;
 	std::string dirPath = GetSaveFilePath(param, GetSaveDir(param, saveDirName));
 	std::string sfopath = dirPath + "/" + SFO_FILENAME;
-	std::shared_ptr<ParamSFOData> sfoFile = LoadCachedSFO(sfopath);
-	if (sfoFile) {
-		// save created in PPSSPP and not encrypted has '0' in SAVEDATA_PARAMS
-		u32 tmpDataSize = 0;
-		const u8 *tmpDataOrig = sfoFile->GetValueData("SAVEDATA_PARAMS", &tmpDataSize);
-		if (tmpDataSize == 0 || !tmpDataOrig) {
-			return 0;
-		}
-		switch (tmpDataOrig[0]) {
-		case 0:
-			return 0;
-		case 0x01:
-			return 1;
-		case 0x21:
-			return 3;
-		case 0x41:
-			return 5;
-		default:
-			// Well, it's not zero, so yes.
-			ERROR_LOG_REPORT(SCEUTILITY, "Unexpected SAVEDATA_PARAMS hash flag: %02x", tmpDataOrig[0]);
-			return 1;
+	PSPFileInfo sfoInfo = pspFileSystem.GetFileInfo(sfopath);
+	if(sfoInfo.exists) // Read sfo
+	{
+		std::vector<u8> sfoData;
+		if (pspFileSystem.ReadEntireFile(sfopath, sfoData) >= 0)
+		{
+			sfoFile.ReadSFO(sfoData);
+
+			// save created in PPSSPP and not encrypted has '0' in SAVEDATA_PARAMS
+			u32 tmpDataSize = 0;
+			const u8 *tmpDataOrig = sfoFile.GetValueData("SAVEDATA_PARAMS", &tmpDataSize);
+			if (tmpDataSize == 0 || !tmpDataOrig) {
+				return 0;
+			}
+			switch (tmpDataOrig[0]) {
+			case 0:
+				return 0;
+			case 0x01:
+				return 1;
+			case 0x21:
+				return 3;
+			case 0x41:
+				return 5;
+			default:
+				// Well, it's not zero, so yes.
+				ERROR_LOG_REPORT(SCEUTILITY, "Unexpected SAVEDATA_PARAMS hash flag: %02x", tmpDataOrig[0]);
+				return 1;
+			}
 		}
 	}
 	return 0;

@@ -24,7 +24,6 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/Config.h"
 #include "Core/MemMap.h"
-#include "Core/System.h"
 
 const int PSP_UMD_POPUP_DISABLE = 0;
 const int PSP_UMD_POPUP_ENABLE = 1;
@@ -40,13 +39,8 @@ static u32 backlightOffTime;
 
 void __ImposeInit()
 {
-	language = g_Config.GetPSPLanguage();
-	if (PSP_CoreParameter().compat.flags().EnglishOrJapaneseOnly) {
-		if (language != PSP_SYSTEMPARAM_LANGUAGE_ENGLISH && language != PSP_SYSTEMPARAM_LANGUAGE_JAPANESE) {
-			language = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
-		}
-	}
-	buttonValue = PSP_CoreParameter().compat.flags().ForceCircleButtonConfirm ? PSP_SYSTEMPARAM_BUTTON_CIRCLE : g_Config.iButtonPreference;
+	language = g_Config.iLanguage;
+	buttonValue = g_Config.iButtonPreference;
 	umdPopup = PSP_UMD_POPUP_DISABLE;
 	backlightOffTime = 0;
 }
@@ -73,13 +67,12 @@ static u32 sceImposeGetBatteryIconStatus(u32 chargingPtr, u32 iconStatusPtr)
 	return 0;
 }
 
-static u32 sceImposeSetLanguageMode(u32 languageVal, u32 buttonVal) {
+static u32 sceImposeSetLanguageMode(u32 languageVal, u32 buttonVal)
+{
+	DEBUG_LOG(SCEUTILITY, "sceImposeSetLanguageMode(%08x, %08x)", languageVal, buttonVal);
 	language = languageVal;
 	buttonValue = buttonVal;
-	if (language != g_Config.GetPSPLanguage()) {
-		return hleLogWarning(SCEUTILITY, 0, "ignoring requested language");
-	}
-	return hleLogSuccessI(SCEUTILITY, 0);
+	return 0;
 }
 
 static u32 sceImposeGetLanguageMode(u32 languagePtr, u32 btnPtr)
@@ -117,7 +110,7 @@ static u32 sceImposeGetBacklightOffTime() {
 //OSD stuff? home button?
 const HLEFunction sceImpose[] =
 {
-	{0X36AA6E91, &WrapU_UU<sceImposeSetLanguageMode>,      "sceImposeSetLanguageMode",      'i', "ii"},
+	{0X36AA6E91, &WrapU_UU<sceImposeSetLanguageMode>,      "sceImposeSetLanguageMode",      'x', "xx"},  // Seen
 	{0X381BD9E7, nullptr,                                  "sceImposeHomeButton",           '?', ""  },
 	{0X0F341BE4, nullptr,                                  "sceImposeGetHomePopup",         '?', ""  },
 	{0X5595A71A, nullptr,                                  "sceImposeSetHomePopup",         '?', ""  },

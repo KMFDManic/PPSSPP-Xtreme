@@ -17,55 +17,37 @@
 
 #pragma once
 
-#include <deque>
-
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
-#include "GPU/Common/PostShader.h"
-
 #include "MiscScreens.h"
 
-class DisplayLayoutScreen : public UIDialogScreenWithGameBackground {
+class DragDropDisplay;
+
+class DisplayLayoutScreen : public UIDialogScreenWithBackground {
 public:
-	DisplayLayoutScreen(const Path &filename);
-	void CreateViews() override;
-	void dialogFinished(const Screen *dialog, DialogResult result) override;
-	void onFinish(DialogResult reason) override;
-
-	void DrawBackground(UIContext &dc) override;
-
-	void resized() override {
-		RecreateViews();
-	}
-
-	const char *tag() const override { return "DisplayLayout"; }
+	DisplayLayoutScreen();
+	virtual void CreateViews() override;
+	virtual bool touch(const TouchInput &touch) override;
+	virtual void dialogFinished(const Screen *dialog, DialogResult result) override;
+	virtual void onFinish(DialogResult reason) override;
+	virtual void resized() override;
+	std::string tag() const override { return "display layout screen"; }
 	
 protected:
-	UI::EventReturn OnPostProcShaderChange(UI::EventParams &e);
-
-	void sendMessage(UIMessage message, const char *value) override;
+	virtual UI::EventReturn OnCenter(UI::EventParams &e);
+	virtual UI::EventReturn OnZoomTypeChange(UI::EventParams &e);
 
 private:
+	DragDropDisplay *displayRepresentation_ = nullptr;
 	UI::ChoiceStrip *mode_ = nullptr;
-	UI::Choice *postProcChoice_ = nullptr;
-	std::string shaderNames_[256];
-	std::deque<bool> settingsVisible_;  // vector<bool> is an insane bitpacked specialization!
-};
-
-class PostProcScreen : public UI::ListPopupScreen {
-public:
-	PostProcScreen(const std::string &title, int id, bool showStereoShaders) 
-		: ListPopupScreen(title), id_(id), showStereoShaders_(showStereoShaders) { }
-
-	void CreateViews() override;
-
-	const char *tag() const override { return "PostProc"; }
-
-private:
-	void OnCompleted(DialogResult result) override;
-	bool ShowButtons() const override { return true; }
-	std::vector<ShaderInfo> shaders_;
-	int id_;
-	bool showStereoShaders_;
-	std::vector<int> indexTranslation_;
+	bool dragging_ = false;
+	bool bRotated_ = false;
+	bool stickToEdgeX_ = false;
+	bool stickToEdgeY_ = false;
+	// Touch down state for drag to resize etc
+	float startY_ = 0.0f;
+	float startScale_ = 1.0f;
+	int offsetTouchX_ = 0;
+	int offsetTouchY_ = 0;
+	
 };

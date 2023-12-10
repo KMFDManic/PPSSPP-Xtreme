@@ -6,8 +6,9 @@
 //
 //
 
-#pragma once
+#ifndef SmartKeyboardMap_hpp
+#define SmartKeyboardMap_hpp
 
-#include "Common/Input/KeyCodes.h"
+int getSmartKeyboardMap(int keycode);
 
-InputKeyCode getSmartKeyboardMap(int keycode);
+#endif /* SmartKeyboardMap_hpp */

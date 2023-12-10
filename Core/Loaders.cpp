@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "Common/File/AndroidContentURI.h"
 #include "Common/File/FileUtil.h"
 #include "Common/File/Path.h"
 #include "Common/StringUtils.h"
@@ -61,7 +60,7 @@ FileLoader *ConstructFileLoader(const Path &filename) {
 
 // TODO : improve, look in the file more
 IdentifiedFileType Identify_File(FileLoader *fileLoader, std::string *errorString) {
-	errorString->clear();
+	*errorString = "";
 	if (fileLoader == nullptr) {
 		*errorString = "Invalid fileLoader";
 		return IdentifiedFileType::ERROR_IDENTIFYING;
@@ -93,8 +92,6 @@ IdentifiedFileType Identify_File(FileLoader *fileLoader, std::string *errorStrin
 		}
 		return IdentifiedFileType::PSP_ISO;
 	} else if (extension == ".cso") {
-		return IdentifiedFileType::PSP_ISO;
-	} else if (extension == ".chd") {
 		return IdentifiedFileType::PSP_ISO;
 	} else if (extension == ".ppst") {
 		return IdentifiedFileType::PPSSPP_SAVESTATE;
@@ -131,7 +128,6 @@ IdentifiedFileType Identify_File(FileLoader *fileLoader, std::string *errorStrin
 
 	// OK, quick methods of identification for common types failed. Moving on to more expensive methods,
 	// starting by reading the first few bytes.
-	// This can be necessary for weird Android content storage path types, see issue #17462
 
 	u32_le id;
 
@@ -174,9 +170,9 @@ IdentifiedFileType Identify_File(FileLoader *fileLoader, std::string *errorStrin
 
 	if (id == 'FLE\x7F') {
 		Path filename = fileLoader->GetPath();
-		// There are a few elfs misnamed as pbp (like Trig Wars), accept that. Also accept extension-less paths.
+		// There are a few elfs misnamed as pbp (like Trig Wars), accept that.
 		if (extension == ".plf" || strstr(filename.GetFilename().c_str(), "BOOT.BIN") ||
-			extension == ".elf" || extension == ".prx" || extension == ".pbp" || extension == "") {
+			extension == ".elf" || extension == ".prx" || extension == ".pbp") {
 			return IdentifiedFileType::PSP_ELF;
 		}
 		return IdentifiedFileType::UNKNOWN_ELF;
@@ -262,13 +258,15 @@ Path ResolvePBPFile(const Path &filename) {
 
 bool LoadFile(FileLoader **fileLoaderPtr, std::string *error_string) {
 	FileLoader *&fileLoader = *fileLoaderPtr;
+	// Note that this can modify filename!
 	IdentifiedFileType type = Identify_File(fileLoader, error_string);
 	switch (type) {
 	case IdentifiedFileType::PSP_PBP_DIRECTORY:
 		{
+			// TODO: Perhaps we should/can never get here now?
 			fileLoader = ResolveFileLoaderTarget(fileLoader);
 			if (fileLoader->Exists()) {
-				INFO_LOG(LOADER, "File is a PBP in a directory: %s", fileLoader->GetPath().c_str());
+				INFO_LOG(LOADER, "File is a PBP in a directory!");
 				IdentifiedFileType ebootType = Identify_File(fileLoader, error_string);
 				if (ebootType == IdentifiedFileType::PSP_ISO_NP) {
 					InitMemoryForGameISO(fileLoader);
@@ -286,9 +284,6 @@ bool LoadFile(FileLoader **fileLoaderPtr, std::string *error_string) {
 				}
 
 				std::string dir = fileLoader->GetPath().GetDirectory();
-				if (fileLoader->GetPath().Type() == PathType::CONTENT_URI) {
-					dir = AndroidContentURI(dir).FilePath();
-				}
 				size_t pos = dir.find("PSP/GAME/");
 				if (pos != std::string::npos) {
 					dir = ResolvePBPDirectory(Path(dir)).ToString();
@@ -301,12 +296,11 @@ bool LoadFile(FileLoader **fileLoaderPtr, std::string *error_string) {
 				return false;
 			}
 		}
-		// Looks like a wrong fall through but is not, both paths are handled above.
 
 	case IdentifiedFileType::PSP_PBP:
 	case IdentifiedFileType::PSP_ELF:
 		{
-			INFO_LOG(LOADER, "File is an ELF or loose PBP! %s", fileLoader->GetPath().c_str());
+			INFO_LOG(LOADER, "File is an ELF or loose PBP!");
 			return Load_PSP_ELF_PBP(fileLoader, error_string);
 		}
 
@@ -387,7 +381,7 @@ bool LoadFile(FileLoader **fileLoaderPtr, std::string *error_string) {
 	return false;
 }
 
-bool UmdReplace(const Path &filepath, FileLoader **fileLoader, std::string &error) {
+bool UmdReplace(const Path &filepath, std::string &error) {
 	IFileSystem *currentUMD = pspFileSystem.GetSystem("disc0:");
 
 	if (!currentUMD) {
@@ -398,15 +392,14 @@ bool UmdReplace(const Path &filepath, FileLoader **fileLoader, std::string &erro
 	FileLoader *loadedFile = ConstructFileLoader(filepath);
 
 	if (!loadedFile->Exists()) {
-		error = loadedFile->GetPath().ToVisualString() + " doesn't exist";
 		delete loadedFile;
+		error = loadedFile->GetPath().ToVisualString() + " doesn't exist";
 		return false;
 	}
 	UpdateLoadedFile(loadedFile);
 
 	loadedFile = ResolveFileLoaderTarget(loadedFile);
 
-	*fileLoader = loadedFile;
 
 	std::string errorString;
 	IdentifiedFileType type = Identify_File(loadedFile, &errorString);
@@ -419,6 +412,7 @@ bool UmdReplace(const Path &filepath, FileLoader **fileLoader, std::string &erro
 			error = "reinit memory failed";
 			return false;
 		}
+
 		break;
 	default:
 		error = "Unsupported file type: " + std::to_string((int)type) + " " + errorString;

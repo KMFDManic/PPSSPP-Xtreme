@@ -23,8 +23,6 @@
 #include "Common/UI/UIScreen.h"
 #include "Common/File/Path.h"
 
-class NoticeView;
-
 // Game screen: Allows you to start a game, delete saves, delete the game,
 // set game specific settings, etc.
 
@@ -40,7 +38,7 @@ public:
 
 	void render() override;
 
-	const char *tag() const override { return "Game"; }
+	std::string tag() const override { return "game"; }
 
 protected:
 	void CreateViews() override;
@@ -58,6 +56,7 @@ private:
 	UI::EventReturn OnDeleteSaveData(UI::EventParams &e);
 	UI::EventReturn OnDeleteGame(UI::EventParams &e);
 	UI::EventReturn OnSwitchBack(UI::EventParams &e);
+	UI::EventReturn OnCreateShortcut(UI::EventParams &e);
 	UI::EventReturn OnRemoveFromRecent(UI::EventParams &e);
 	UI::EventReturn OnShowInFolder(UI::EventParams &e);
 	UI::EventReturn OnCreateConfig(UI::EventParams &e);
@@ -72,10 +71,8 @@ private:
 	UI::TextView *tvSaveDataSize_ = nullptr;
 	UI::TextView *tvInstallDataSize_ = nullptr;
 	UI::TextView *tvRegion_ = nullptr;
-	UI::TextView *tvPlayTime_ = nullptr;
 	UI::TextView *tvCRC_ = nullptr;
 	UI::TextView *tvID_ = nullptr;
-	NoticeView *tvVerified_ = nullptr;
 
 	UI::Choice *btnGameSettings_ = nullptr;
 	UI::Choice *btnCreateGameConfig_ = nullptr;
@@ -88,6 +85,4 @@ private:
 	std::vector<UI::Choice *> otherChoices_;
 	std::vector<Path> saveDirs;
 	std::string CRC32string;
-
-	bool isHomebrew_ = false;
 };

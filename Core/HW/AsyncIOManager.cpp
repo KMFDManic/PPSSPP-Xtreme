@@ -29,7 +29,6 @@
 #include "Core/FileSystems/MetaFileSystem.h"
 
 bool AsyncIOManager::HasOperation(u32 handle) {
-	std::lock_guard<std::mutex> guard(resultsLock_);
 	if (resultsPending_.find(handle) != resultsPending_.end()) {
 		return true;
 	}
@@ -61,7 +60,6 @@ bool AsyncIOManager::HasResult(u32 handle) {
 }
 
 bool AsyncIOManager::PopResult(u32 handle, AsyncIOResult &result) {
-	// This is called under lock from WaitResult, no need to lock again.
 	if (results_.find(handle) != results_.end()) {
 		result = results_[handle];
 		results_.erase(handle);
@@ -77,7 +75,6 @@ bool AsyncIOManager::PopResult(u32 handle, AsyncIOResult &result) {
 }
 
 bool AsyncIOManager::ReadResult(u32 handle, AsyncIOResult &result) {
-	// This is called under lock from WaitResult, no need to lock again.
 	if (results_.find(handle) != results_.end()) {
 		result = results_[handle];
 		return true;
@@ -137,7 +134,7 @@ void AsyncIOManager::Read(u32 handle, u8 *buf, size_t bytes, u32 invalidateAddr)
 	EventResult(handle, AsyncIOResult(result, usec, invalidateAddr));
 }
 
-void AsyncIOManager::Write(u32 handle, const u8 *buf, size_t bytes) {
+void AsyncIOManager::Write(u32 handle, u8 *buf, size_t bytes) {
 	int usec = 0;
 	s64 result = pspFileSystem.WriteFile(handle, buf, bytes, usec);
 	EventResult(handle, AsyncIOResult(result, usec));

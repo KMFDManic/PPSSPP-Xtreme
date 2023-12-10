@@ -2,7 +2,6 @@
 #include "Core/MIPS/ARM/ArmRegCacheFPU.h"
 #include "Core/MIPS/ARM/ArmJit.h"
 #include "Core/MIPS/JitCommon/JitState.h"
-#include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPSVFPUUtils.h"
 #include "ext/disarm.h"
 
@@ -10,7 +9,7 @@
 
 #include "UnitTest.h"
 
-static bool CheckLast(const ArmGen::ARMXEmitter &emit, const char *comp) {
+static bool CheckLast(ArmGen::ARMXEmitter &emit, const char *comp) {
 	u32 instr;
 	memcpy(&instr, emit.GetCodePointer() - 4, 4);
 	char disasm[512];
@@ -243,8 +242,8 @@ bool TestArmEmitter() {
 	int R001 = GetRowName(0, M_4x4, 1, 0);
 	int R002 = GetRowName(0, M_4x4, 2, 0);
 	int R003 = GetRowName(0, M_4x4, 3, 0);
-	printf("Col 010: %s\n", GetVectorNotation(C010, V_Quad).c_str());
-	printf("Row 003: %s\n", GetVectorNotation(R003, V_Quad).c_str());
+	printf("Col 010: %s\n", GetVectorNotation(C010, V_Quad));
+	printf("Row 003: %s\n", GetVectorNotation(R003, V_Quad));
 	
 	MIPSAnalyst::AnalysisResults results;
 	memset(&results, 0, sizeof(results));

@@ -9,10 +9,10 @@
 // As usual, everything is UTF-8. Nothing else allowed.
 
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <memory>
 
 #include "Common/Common.h"
 #include "Common/File/Path.h"
@@ -22,45 +22,6 @@
 class I18NRepo;
 class IniFile;
 class Section;
-
-enum class I18NCat : uint8_t {
-	AUDIO = 0,
-	CONTROLS,
-	CWCHEATS,
-	DESKTOPUI,
-	DEVELOPER,
-	DIALOG,
-	ERRORS,  // Can't name it ERROR, clashes with many defines.
-	GAME,
-	GRAPHICS,
-	INSTALLZIP,
-	KEYMAPPING,
-	MAINMENU,
-	MAINSETTINGS,
-	MAPPABLECONTROLS,
-	NETWORKING,
-	PAUSE,
-	POSTSHADERS,
-	PSPCREDITS,
-	MEMSTICK,
-	REMOTEISO,
-	REPORTING,
-	SAVEDATA,
-	SCREEN,
-	SEARCH,
-	STORE,
-	SYSINFO,
-	SYSTEM,
-	TEXTURESHADERS,
-	THEMES,
-	UI_ELEMENTS,
-	UPGRADE,
-	VR,
-	ACHIEVEMENTS,
-	PSPSETTINGS,
-	CATEGORY_COUNT,
-	NONE = CATEGORY_COUNT,
-};
 
 struct I18NEntry {
 	I18NEntry(const std::string &t) : text(t), readFlag(false) {}
@@ -78,10 +39,9 @@ struct I18NCandidate {
 
 class I18NCategory {
 public:
-	I18NCategory() {}
-	explicit I18NCategory(const Section &section);
-
-	const char *T(const char *key, const char *def = nullptr);
+	// NOTE: Name must be a global constant string - it is not copied.
+	I18NCategory(const char *name) : name_(name) {}
+	const char *T(const char *key, const char *def = 0);
 	const char *T(const std::string &key) {
 		return T(key.c_str(), nullptr);
 	}
@@ -93,11 +53,13 @@ public:
 
 	const std::map<std::string, I18NEntry> &GetMap() { return map_; }
 	void ClearMissed() { missedKeyLog_.clear(); }
-	void Clear();
+	const char *GetName() const { return name_.c_str(); }
 
 private:
-	I18NCategory(I18NRepo *repo, const char *name) {}
+	I18NCategory(I18NRepo *repo, const char *name) : name_(name) {}
 	void SetMap(const std::map<std::string, std::string> &m);
+
+	std::string name_;
 
 	std::map<std::string, I18NEntry> map_;
 	mutable std::mutex missedKeyLock_;
@@ -105,43 +67,62 @@ private:
 
 	// Noone else can create these.
 	friend class I18NRepo;
+
+	DISALLOW_COPY_AND_ASSIGN(I18NCategory);
 };
 
 class I18NRepo {
 public:
-	I18NRepo();
+	I18NRepo() {}
+	~I18NRepo();
+
 	bool IniExists(const std::string &languageID) const;
 	bool LoadIni(const std::string &languageID, const Path &overridePath = Path()); // NOT the filename!
+	void SaveIni(const std::string &languageID);
 
 	std::string LanguageID();
 
-	std::shared_ptr<I18NCategory> GetCategory(I18NCat category);
-
-	// Translate the string, by looking up "key" in the file, and falling back to either def or key, in that order, if the lookup fails.
-	// def can (and usually is) set to nullptr.
-	const char *T(I18NCat category, const char *key, const char *def = nullptr) {
-		if (category == I18NCat::NONE)
-			return def ? def : key;
-		return cats_[(size_t)category]->T(key, def);
+	std::shared_ptr<I18NCategory> GetCategory(const char *categoryName);
+	bool HasCategory(const char *categoryName) const {
+		std::lock_guard<std::mutex> guard(catsLock_);
+		return cats_.find(categoryName) != cats_.end();
 	}
+	const char *T(const char *category, const char *key, const char *def = 0);
 
-	void LogMissingKeys() const;
+	std::map<std::string, std::vector<std::string>> GetMissingKeys() const;
 
 private:
-	Path GetIniPath(const std::string &languageID) const;
+	std::string GetIniPath(const std::string &languageID) const;
 	void Clear();
+	I18NCategory *LoadSection(const Section *section, const char *name);
+	void SaveSection(IniFile &ini, Section *section, std::shared_ptr<I18NCategory> cat);
 
 	mutable std::mutex catsLock_;
-	std::shared_ptr<I18NCategory> cats_[(size_t)I18NCat::CATEGORY_COUNT];
+	std::map<std::string, std::shared_ptr<I18NCategory>> cats_;
 	std::string languageID_;
+
+	DISALLOW_COPY_AND_ASSIGN(I18NRepo);
 };
 
-extern I18NRepo g_i18nrepo;
+extern I18NRepo i18nrepo;
 
 // These are simply talking to the one global instance of I18NRepo.
 
-std::shared_ptr<I18NCategory> GetI18NCategory(I18NCat cat);
-
-inline const char *T(I18NCat category, const char *key, const char *def = nullptr) {
-	return g_i18nrepo.T(category, key, def);
+inline std::shared_ptr<I18NCategory> GetI18NCategory(const char *categoryName) {
+	if (!categoryName)
+		return nullptr;
+	return i18nrepo.GetCategory(categoryName);
 }
+
+inline bool I18NCategoryLoaded(const char *categoryName) {
+	return i18nrepo.HasCategory(categoryName);
+}
+
+inline const char *T(const char *category, const char *key, const char *def = 0) {
+	return i18nrepo.T(category, key, def);
+}
+
+inline std::map<std::string, std::vector<std::string>> GetI18NMissingKeys() {
+	return i18nrepo.GetMissingKeys();
+}
+

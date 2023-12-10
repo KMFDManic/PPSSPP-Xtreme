@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# Requirement:
-# python3 -m pip install lxml
-
 import re
 from time import sleep
 from urllib.request import urlopen
@@ -79,8 +76,6 @@ def update(file_name):
 		footer = cont[d + len(footer_delimiter):]
 		cont = cont[0 : d]
 		re.sub(r"\[#(\d+)\]:", already_added_id, footer)
-		if footer[-1] != "\n":
-			footer += "\n"
 
 	# Add brackets if missing
 	added_bracket = re.sub(r"([^[])#(\d+)", add_bracket, cont)

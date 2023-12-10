@@ -25,10 +25,10 @@ class OutputSink;
 
 namespace http {
 
-class ServerRequest {
+class Request {
 public:
-	ServerRequest(int fd);
-	~ServerRequest();
+	Request(int fd);
+	~Request();
 
 	const char *resource() const {
 		return header_.resource;
@@ -75,7 +75,7 @@ public:
 	Server(NewThreadExecutor *executor);
 	virtual ~Server();
 
-	typedef std::function<void(const ServerRequest &)> UrlHandlerFunc;
+	typedef std::function<void(const Request &)> UrlHandlerFunc;
 	typedef std::map<std::string, UrlHandlerFunc> UrlHandlerMap;
 
 	// Runs forever, serving request. If you want to do something else than serve pages,
@@ -94,7 +94,7 @@ public:
 	// If you want to customize things at a lower level than just a simple path handler,
 	// then inherit and override this. Implementations should forward to HandleRequestDefault
 	// if they don't recognize the url.
-	virtual void HandleRequest(const ServerRequest &request);
+	virtual void HandleRequest(const Request &request);
 
 	int Port() {
 		return port_;
@@ -107,11 +107,11 @@ private:
 	void HandleConnection(int conn_fd);
 
 	// Things like default 404, etc.
-	void HandleRequestDefault(const ServerRequest &request);
+	void HandleRequestDefault(const Request &request);
 
 	// Neat built-in handlers that are tied to the server.
-	void HandleListing(const ServerRequest &request);
-	void Handle404(const ServerRequest &request);
+	void HandleListing(const Request &request);
+	void Handle404(const Request &request);
 
 	int listener_;
 	int port_ = 0;

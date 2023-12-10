@@ -127,7 +127,7 @@ static void ExceptionThread(mach_port_t port) {
 #pragma pack()
 	memset(&msg_in, 0xee, sizeof(msg_in));
 	memset(&msg_out, 0xee, sizeof(msg_out));
-	mach_msg_header_t* send_msg = &msg_out.Head;
+	mach_msg_header_t* send_msg = nullptr;
 	mach_msg_size_t send_size = 0;
 	mach_msg_option_t option = MACH_RCV_MSG;
 	while (true) {
@@ -284,23 +284,18 @@ void InstallExceptionHandler(BadAccessHandler badAccessHandler) {
 		g_badAccessHandler = badAccessHandler;
 		return;
 	}
-	
-	size_t altStackSize = SIGSTKSZ;
 
-	// Add some extra room.
-	altStackSize += 65536;
-
-	INFO_LOG(SYSTEM, "Installed exception handler. stack size: %d", (int)altStackSize);
+	INFO_LOG(SYSTEM, "Installed exception handler");
 	g_badAccessHandler = badAccessHandler;
 
 	stack_t signal_stack{};
-	altStack = malloc(altStackSize);
+	altStack = malloc(SIGSTKSZ);
 #ifdef __FreeBSD__
 	signal_stack.ss_sp = (char*)altStack;
 #else
 	signal_stack.ss_sp = altStack;
 #endif
-	signal_stack.ss_size = altStackSize;
+	signal_stack.ss_size = SIGSTKSZ;
 	signal_stack.ss_flags = 0;
 	if (sigaltstack(&signal_stack, nullptr)) {
 		_assert_msg_(false, "sigaltstack failed");

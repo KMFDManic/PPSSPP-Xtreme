@@ -89,8 +89,6 @@ public:
 	int FinishShutdown();
 
 protected:
-	void InitCommon();
-	void UpdateCommon();
 	PPGeStyle FadedStyle(PPGeAlign align, float scale);
 	PPGeImageStyle FadedImageStyle();
 	void UpdateButtons();
@@ -101,15 +99,12 @@ protected:
 	void ChangeStatus(DialogStatus newStatus, int delayUs);
 	void ChangeStatusInit(int delayUs);
 	void ChangeStatusShutdown(int delayUs);
-	DialogStatus ReadStatus() const {
+	DialogStatus ReadStatus() {
 		return status;
 	}
 
 	// TODO: Remove this once all dialogs are updated.
 	virtual bool UseAutoStatus() = 0;
-
-	static int GetConfirmButton();
-	static int GetCancelButton();
 
 	void StartFade(bool fadeIn_);
 	void UpdateFade(int animSpeed);
@@ -122,10 +117,10 @@ protected:
 	unsigned int lastButtons = 0;
 	unsigned int buttons = 0;
 
-	float fadeTimer = 0.0f;
-	bool isFading = false;
-	bool fadeIn = false;
-	u32 fadeValue = 0;
+	float fadeTimer;
+	bool isFading;
+	bool fadeIn;
+	u32 fadeValue;
 
 	ImageID okButtonImg;
 	ImageID cancelButtonImg;
@@ -134,6 +129,6 @@ protected:
 
 private:
 	DialogStatus status = SCE_UTILITY_STATUS_NONE;
-	UtilityDialogType dialogType_ = UtilityDialogType::NONE;
+	UtilityDialogType dialogType_;
 	bool volatileLocked_ = false;
 };

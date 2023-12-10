@@ -60,7 +60,7 @@ namespace http {
 // Note: charset here helps prevent XSS.
 const char *const DEFAULT_MIME_TYPE = "text/html; charset=utf-8";
 
-ServerRequest::ServerRequest(int fd)
+Request::Request(int fd)
 	: fd_(fd) {
 	in_ = new net::InputSink(fd);
 	out_ = new net::OutputSink(fd);
@@ -73,7 +73,7 @@ ServerRequest::ServerRequest(int fd)
 	}
 }
 
-ServerRequest::~ServerRequest() {
+Request::~Request() {
 	Close();
 
 	if (!in_->Empty()) {
@@ -81,12 +81,12 @@ ServerRequest::~ServerRequest() {
 	}
 	delete in_;
 	if (!out_->Empty()) {
-		ERROR_LOG(IO, "Output not empty - connection abort? (%s)", this->header_.resource);
+		ERROR_LOG(IO, "Output not empty - connection abort?");
 	}
 	delete out_;
 }
 
-void ServerRequest::WriteHttpResponseHeader(const char *ver, int status, int64_t size, const char *mimeType, const char *otherHeaders) const {
+void Request::WriteHttpResponseHeader(const char *ver, int status, int64_t size, const char *mimeType, const char *otherHeaders) const {
 	const char *statusStr;
 	switch (status) {
 	case 200: statusStr = "OK"; break;
@@ -123,18 +123,18 @@ void ServerRequest::WriteHttpResponseHeader(const char *ver, int status, int64_t
 	buffer->Push("\r\n");
 }
 
-void ServerRequest::WritePartial() const {
+void Request::WritePartial() const {
 	_assert_(fd_);
 	out_->Flush();
 }
 
-void ServerRequest::Write() {
+void Request::Write() {
 	_assert_(fd_);
 	WritePartial();
 	Close();
 }
 
-void ServerRequest::Close() {
+void Request::Close() {
 	if (fd_) {
 		closesocket(fd_);
 		fd_ = 0;
@@ -317,7 +317,7 @@ void Server::Stop() {
 }
 
 void Server::HandleConnection(int conn_fd) {
-	ServerRequest request(conn_fd);
+	Request request(conn_fd);
 	if (!request.IsOK()) {
 		WARN_LOG(IO, "Bad request, ignoring.");
 		return;
@@ -331,11 +331,11 @@ void Server::HandleConnection(int conn_fd) {
 	request.Write();
 }
 
-void Server::HandleRequest(const ServerRequest &request) {
+void Server::HandleRequest(const Request &request) {
 	HandleRequestDefault(request);
 }
 
-void Server::HandleRequestDefault(const ServerRequest &request) {
+void Server::HandleRequestDefault(const Request &request) {
 	if (request.resource() == nullptr) {
 		fallback_(request);
 		return;
@@ -350,14 +350,14 @@ void Server::HandleRequestDefault(const ServerRequest &request) {
 	}
 }
 
-void Server::Handle404(const ServerRequest &request) {
+void Server::Handle404(const Request &request) {
 	INFO_LOG(IO, "No handler for '%s', falling back to 404.", request.resource());
 	const char *payload = "<html><body>404 not found</body></html>\r\n";
 	request.WriteHttpResponseHeader("1.0", 404, (int)strlen(payload));
 	request.Out()->Push(payload);
 }
 
-void Server::HandleListing(const ServerRequest &request) {
+void Server::HandleListing(const Request &request) {
 	request.WriteHttpResponseHeader("1.0", 200, -1, "text/plain");
 	for (auto iter = handlers_.begin(); iter != handlers_.end(); ++iter) {
 		request.Out()->Printf("%s\n", iter->first.c_str());

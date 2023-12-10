@@ -15,7 +15,6 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "ppsspp_config.h"
 #include <set>
 
 #include "ext/xxhash.h"
@@ -35,9 +34,9 @@
 #include "Core/MIPS/MIPSInt.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/IR/IRRegCache.h"
-#include "Core/MIPS/IR/IRInterpreter.h"
 #include "Core/MIPS/IR/IRJit.h"
-#include "Core/MIPS/IR/IRNativeCommon.h"
+#include "Core/MIPS/IR/IRPassSimplify.h"
+#include "Core/MIPS/IR/IRInterpreter.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/Reporting.h"
 
@@ -50,21 +49,7 @@ IRJit::IRJit(MIPSState *mipsState) : frontend_(mipsState->HasDefaultPrefix()), m
 
 	IROptions opts{};
 	opts.disableFlags = g_Config.uJitDisableFlags;
-#if PPSSPP_ARCH(RISCV64)
-	// Assume RISC-V always has very slow unaligned memory accesses.
-	opts.unalignedLoadStore = false;
-	opts.unalignedLoadStoreVec4 = true;
-	opts.preferVec4 = cpu_info.RiscV_V;
-#elif PPSSPP_ARCH(ARM)
 	opts.unalignedLoadStore = (opts.disableFlags & (uint32_t)JitDisable::LSU_UNALIGNED) == 0;
-	opts.unalignedLoadStoreVec4 = true;
-	opts.preferVec4 = cpu_info.bASIMD || cpu_info.bNEON;
-#else
-	opts.unalignedLoadStore = (opts.disableFlags & (uint32_t)JitDisable::LSU_UNALIGNED) == 0;
-	// TODO: Could allow on x86 pretty easily...
-	opts.unalignedLoadStoreVec4 = false;
-	opts.preferVec4 = true;
-#endif
 	frontend_.SetOptions(opts);
 }
 
@@ -84,12 +69,7 @@ void IRJit::ClearCache() {
 }
 
 void IRJit::InvalidateCacheAt(u32 em_address, int length) {
-	std::vector<int> numbers = blocks_.FindInvalidatedBlockNumbers(em_address, length);
-	for (int block_num : numbers) {
-		auto block = blocks_.GetBlock(block_num);
-		int cookie = block->GetTargetOffset() < 0 ? block_num : block->GetTargetOffset();
-		block->Destroy(cookie);
-	}
+	blocks_.InvalidateICache(em_address, length);
 }
 
 void IRJit::Compile(u32 em_address) {
@@ -101,11 +81,9 @@ void IRJit::Compile(u32 em_address) {
 		if (block_num != -1) {
 			IRBlock *b = blocks_.GetBlock(block_num);
 			// Okay, let's link and finalize the block now.
-			int cookie = b->GetTargetOffset() < 0 ? block_num : b->GetTargetOffset();
-			b->Finalize(cookie);
+			b->Finalize(block_num);
 			if (b->IsValid()) {
 				// Success, we're done.
-				FinalizeTargetBlock(b, block_num);
 				return;
 			}
 		}
@@ -146,15 +124,13 @@ bool IRJit::CompileBlock(u32 em_address, std::vector<IRInst> &instructions, u32 
 	b->SetOriginalSize(mipsBytes);
 	if (preload) {
 		// Hash, then only update page stats, don't link yet.
-		// TODO: Should we always hash?  Then we can reuse blocks.
 		b->UpdateHash();
+		blocks_.FinalizeBlock(block_num, true);
+	} else {
+		// Overwrites the first instruction, and also updates stats.
+		// TODO: Should we always hash?  Then we can reuse blocks.
+		blocks_.FinalizeBlock(block_num);
 	}
-	if (!CompileTargetBlock(b, block_num, preload))
-		return false;
-	// Overwrites the first instruction, and also updates stats.
-	blocks_.FinalizeBlock(block_num, preload);
-	if (!preload)
-		FinalizeTargetBlock(b, block_num);
 
 	return true;
 }
@@ -168,7 +144,6 @@ void IRJit::CompileFunction(u32 start_address, u32 length) {
 	// We may go up and down from branches, so track all block starts done here.
 	std::set<u32> doneAddresses;
 	std::vector<u32> pendingAddresses;
-	pendingAddresses.reserve(16);
 	pendingAddresses.push_back(start_address);
 	while (!pendingAddresses.empty()) {
 		u32 em_address = pendingAddresses.back();
@@ -252,11 +227,9 @@ void IRJit::RunLoopUntil(u64 globalticks) {
 			if (opcode == MIPS_EMUHACK_OPCODE) {
 				u32 data = inst & 0xFFFFFF;
 				IRBlock *block = blocks_.GetBlock(data);
-				u32 startPC = mips_->pc;
 				mips_->pc = IRInterpret(mips_, block->GetInstructions(), block->GetNumInstructions());
-				// Note: this will "jump to zero" on a badly constructed block missing exits.
-				if (!Memory::IsValidAddress(mips_->pc) || (mips_->pc & 3) != 0) {
-					Core_ExecException(mips_->pc, startPC, ExecExceptionType::JUMP);
+				if (!Memory::IsValidAddress(mips_->pc)) {
+					Core_ExecException(mips_->pc, mips_->pc, ExecExceptionType::JUMP);
 					break;
 				}
 			} else {
@@ -283,20 +256,23 @@ void IRJit::UnlinkBlock(u8 *checkedEntry, u32 originalAddress) {
 	Crash();
 }
 
+bool IRJit::ReplaceJalTo(u32 dest) {
+	Crash();
+	return false;
+}
+
 void IRBlockCache::Clear() {
 	for (int i = 0; i < (int)blocks_.size(); ++i) {
-		int cookie = blocks_[i].GetTargetOffset() < 0 ? i : blocks_[i].GetTargetOffset();
-		blocks_[i].Destroy(cookie);
+		blocks_[i].Destroy(i);
 	}
 	blocks_.clear();
 	byPage_.clear();
 }
 
-std::vector<int> IRBlockCache::FindInvalidatedBlockNumbers(u32 address, u32 length) {
+void IRBlockCache::InvalidateICache(u32 address, u32 length) {
 	u32 startPage = AddressToPage(address);
 	u32 endPage = AddressToPage(address + length);
 
-	std::vector<int> found;
 	for (u32 page = startPage; page <= endPage; ++page) {
 		const auto iter = byPage_.find(page);
 		if (iter == byPage_.end())
@@ -306,18 +282,15 @@ std::vector<int> IRBlockCache::FindInvalidatedBlockNumbers(u32 address, u32 leng
 		for (int i : blocksInPage) {
 			if (blocks_[i].OverlapsRange(address, length)) {
 				// Not removing from the page, hopefully doesn't build up with small recompiles.
-				found.push_back(i);
+				blocks_[i].Destroy(i);
 			}
 		}
 	}
-
-	return found;
 }
 
 void IRBlockCache::FinalizeBlock(int i, bool preload) {
 	if (!preload) {
-		int cookie = blocks_[i].GetTargetOffset() < 0 ? i : blocks_[i].GetTargetOffset();
-		blocks_[i].Finalize(cookie);
+		blocks_[i].Finalize(i);
 	}
 
 	u32 startAddr, size;
@@ -344,27 +317,14 @@ int IRBlockCache::FindPreloadBlock(u32 em_address) {
 
 	const std::vector<int> &blocksInPage = iter->second;
 	for (int i : blocksInPage) {
-		if (blocks_[i].GetOriginalStart() == em_address) {
+		u32 start, mipsBytes;
+		blocks_[i].GetRange(start, mipsBytes);
+
+		if (start == em_address) {
 			if (blocks_[i].HashMatches()) {
 				return i;
 			}
 		}
-	}
-
-	return -1;
-}
-
-int IRBlockCache::FindByCookie(int cookie) {
-	if (blocks_.empty())
-		return -1;
-	// TODO: Maybe a flag to determine target offset mode?
-	if (blocks_[0].GetTargetOffset() < 0)
-		return cookie;
-
-	for (int i = 0; i < GetNumBlocks(); ++i) {
-		int offset = blocks_[i].GetTargetOffset();
-		if (offset == cookie)
-			return i;
 	}
 
 	return -1;
@@ -376,8 +336,7 @@ std::vector<u32> IRBlockCache::SaveAndClearEmuHackOps() {
 
 	for (int number = 0; number < (int)blocks_.size(); ++number) {
 		IRBlock &b = blocks_[number];
-		int cookie = b.GetTargetOffset() < 0 ? number : b.GetTargetOffset();
-		if (b.IsValid() && b.RestoreOriginalFirstOp(cookie)) {
+		if (b.IsValid() && b.RestoreOriginalFirstOp(number)) {
 			result[number] = number;
 		} else {
 			result[number] = 0;
@@ -397,8 +356,7 @@ void IRBlockCache::RestoreSavedEmuHackOps(std::vector<u32> saved) {
 		IRBlock &b = blocks_[number];
 		// Only if we restored it, write it back.
 		if (b.IsValid() && saved[number] != 0 && b.HasOriginalFirstOp()) {
-			int cookie = b.GetTargetOffset() < 0 ? number : b.GetTargetOffset();
-			b.Finalize(cookie);
+			b.Finalize(number);
 		}
 	}
 }
@@ -412,7 +370,7 @@ JitBlockDebugInfo IRBlockCache::GetBlockDebugInfo(int blockNum) const {
 
 	for (u32 addr = start; addr < start + size; addr += 4) {
 		char temp[256];
-		MIPSDisAsm(Memory::Read_Instruction(addr), addr, temp, sizeof(temp), true);
+		MIPSDisAsm(Memory::Read_Instruction(addr), addr, temp, true);
 		std::string mipsDis = temp;
 		debugInfo.origDisasm.push_back(mipsDis);
 	}
@@ -466,7 +424,9 @@ int IRBlockCache::GetBlockNumberFromStartAddress(u32 em_address, bool realBlocks
 	const std::vector<int> &blocksInPage = iter->second;
 	int best = -1;
 	for (int i : blocksInPage) {
-		if (blocks_[i].GetOriginalStart() == em_address) {
+		uint32_t start, size;
+		blocks_[i].GetRange(start, size);
+		if (start == em_address) {
 			best = i;
 			if (blocks_[i].IsValid()) {
 				return i;
@@ -480,8 +440,8 @@ bool IRBlock::HasOriginalFirstOp() const {
 	return Memory::ReadUnchecked_U32(origAddr_) == origFirstOpcode_.encoding;
 }
 
-bool IRBlock::RestoreOriginalFirstOp(int cookie) {
-	const u32 emuhack = MIPS_EMUHACK_OPCODE | cookie;
+bool IRBlock::RestoreOriginalFirstOp(int number) {
+	const u32 emuhack = MIPS_EMUHACK_OPCODE | number;
 	if (Memory::ReadUnchecked_U32(origAddr_) == emuhack) {
 		Memory::Write_Opcode_JIT(origAddr_, origFirstOpcode_);
 		return true;
@@ -489,19 +449,19 @@ bool IRBlock::RestoreOriginalFirstOp(int cookie) {
 	return false;
 }
 
-void IRBlock::Finalize(int cookie) {
+void IRBlock::Finalize(int number) {
 	// Check it wasn't invalidated, in case this is after preload.
 	// TODO: Allow reusing blocks when the code matches hash_ again, instead.
 	if (origAddr_) {
 		origFirstOpcode_ = Memory::Read_Opcode_JIT(origAddr_);
-		MIPSOpcode opcode = MIPSOpcode(MIPS_EMUHACK_OPCODE | cookie);
+		MIPSOpcode opcode = MIPSOpcode(MIPS_EMUHACK_OPCODE | number);
 		Memory::Write_Opcode_JIT(origAddr_, opcode);
 	}
 }
 
-void IRBlock::Destroy(int cookie) {
+void IRBlock::Destroy(int number) {
 	if (origAddr_) {
-		MIPSOpcode opcode = MIPSOpcode(MIPS_EMUHACK_OPCODE | cookie);
+		MIPSOpcode opcode = MIPSOpcode(MIPS_EMUHACK_OPCODE | number);
 		if (Memory::ReadUnchecked_U32(origAddr_) == opcode.encoding)
 			Memory::Write_Opcode_JIT(origAddr_, origFirstOpcode_);
 
@@ -535,7 +495,7 @@ bool IRBlock::OverlapsRange(u32 addr, u32 size) const {
 }
 
 MIPSOpcode IRJit::GetOriginalOp(MIPSOpcode op) {
-	IRBlock *b = blocks_.GetBlock(blocks_.FindByCookie(op.encoding & 0xFFFFFF));
+	IRBlock *b = blocks_.GetBlock(op.encoding & 0xFFFFFF);
 	if (b) {
 		return b->GetOriginalFirstOp();
 	}

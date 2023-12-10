@@ -1,11 +1,10 @@
 #pragma once
 
 #include "Common/Data/Collections/ConstMap.h"
-#include "Common/Input/KeyCodes.h"
 #include <map>
 
 // TODO: Add any missing keys
-static const std::map<int, InputKeyCode> KeyMapRawSDLtoNative = InitConstMap<int, InputKeyCode>
+static const std::map<int, int> KeyMapRawSDLtoNative = InitConstMap<int, int>
 	(SDLK_UNKNOWN, NKCODE_UNKNOWN)
 	(SDLK_p, NKCODE_P)
 	(SDLK_o, NKCODE_O)

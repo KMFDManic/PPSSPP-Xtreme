@@ -10,7 +10,7 @@ public:
 	~CVFPUDlg();
 
 	void Goto(u32 addr);
-	void Update() override;
+	void Update();
 	void Size();
 
 private:
@@ -18,5 +18,5 @@ private:
 	DebugInterface *cpu;
 	HFONT font;
 	int mode;
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 };

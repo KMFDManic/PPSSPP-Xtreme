@@ -57,13 +57,17 @@ struct StoreEntry {
 	u64 size;
 };
 
+struct StoreFilter {
+	std::string categoryId;
+};
+
 class StoreScreen : public UIDialogScreenWithBackground {
 public:
 	StoreScreen();
 	~StoreScreen();
 
 	void update() override;
-	const char *tag() const override { return "Store"; }
+	std::string tag() const override { return "store"; }
 
 protected:
 	void CreateViews() override;
@@ -72,13 +76,15 @@ protected:
 	UI::EventReturn OnGameLaunch(UI::EventParams &e);
 
 private:
+	void SetFilter(const StoreFilter &filter);
 	void ParseListing(std::string json);
 	ProductItemView *GetSelectedItem();
+	std::vector<StoreEntry> FilterEntries();
 
 	std::string GetTranslatedString(const json::JsonGet json, std::string key, const char *fallback = nullptr) const;
 
-	std::shared_ptr<http::Request> listing_;
-	std::shared_ptr<http::Request> image_;
+	std::shared_ptr<http::Download> listing_;
+	std::shared_ptr<http::Download> image_;
 
 	// TODO: Replace with a PathBrowser or similar. Though that one only supports
 	// local filesystems at the moment.
@@ -94,11 +100,12 @@ private:
 	// for now. entries_ contains all the products in the store.
 	std::vector<StoreEntry> entries_;
 
+	StoreFilter filter_;
 	std::string lang_;
 	std::string lastSelectedName_;
 
-	UI::ViewGroup *scrollItemView_ = nullptr;
-	UI::ViewGroup *productPanel_ = nullptr;
-	UI::TextView *titleText_ = nullptr;
+	UI::ViewGroup *scrollItemView_;
+	UI::ViewGroup *productPanel_;
+	UI::TextView *titleText_;
 };
 

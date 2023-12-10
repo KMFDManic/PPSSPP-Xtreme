@@ -296,7 +296,7 @@ static u32 _sceSasCore(u32 core, u32 outAddr) {
 
 	__SasEnqueueMix(outAddr);
 
-	return hleLogSuccessVerboseI(SCESAS, delaySasResult(0));
+	return hleLogSuccessI(SCESAS, delaySasResult(0));
 }
 
 // Another way of running the mixer, the inoutAddr should be both input and output
@@ -315,12 +315,12 @@ static u32 _sceSasCoreWithMix(u32 core, u32 inoutAddr, int leftVolume, int right
 
 	__SasEnqueueMix(inoutAddr, inoutAddr, leftVolume, rightVolume);
 
-	return hleLogSuccessVerboseI(SCESAS, delaySasResult(0));
+	return hleLogSuccessI(SCESAS, delaySasResult(0));
 }
 
 static u32 sceSasSetVoice(u32 core, int voiceNum, u32 vagAddr, int size, int loop) {
 	if (voiceNum >= PSP_SAS_VOICES_MAX || voiceNum < 0)	{
-		return hleLogVerbose(SCESAS, ERROR_SAS_INVALID_VOICE, "invalid voicenum");
+		return hleLogWarning(SCESAS, ERROR_SAS_INVALID_VOICE, "invalid voicenum");
 	}
 
 	if (size == 0 || ((u32)size & 0xF) != 0) {
@@ -363,11 +363,8 @@ static u32 sceSasSetVoice(u32 core, int voiceNum, u32 vagAddr, int size, int loo
 	v.type = VOICETYPE_VAG;
 	v.vagAddr = vagAddr;  // Real VAG header is 0x30 bytes behind the vagAddr
 	v.vagSize = size;
-	v.loop = loop != 0;
-	if (v.on) {
-		v.playing = true;
-	}
-	v.vag.Start(vagAddr, size, loop != 0);
+	v.loop = loop ? true : false;
+	v.ChangedParams(vagAddr == prevVagAddr);
 	return 0;
 }
 
@@ -404,6 +401,7 @@ static u32 sceSasSetVoicePCM(u32 core, int voiceNum, u32 pcmAddr, int size, int 
 	v.pcmLoopPos = loopPos >= 0 ? loopPos : 0;
 	v.loop = loopPos >= 0 ? true : false;
 	v.playing = true;
+	v.ChangedParams(pcmAddr == prevPcmAddr);
 	return 0;
 }
 
@@ -426,7 +424,7 @@ static u32 sceSasSetPause(u32 core, u32 voicebit, int pause) {
 	for (int i = 0; voicebit != 0; i++, voicebit >>= 1) {
 		if (i < PSP_SAS_VOICES_MAX && i >= 0) {
 			if ((voicebit & 1) != 0)
-				sas->voices[i].paused = pause != 0;
+				sas->voices[i].paused = pause ? true : false;
 		}
 	}
 
@@ -468,6 +466,7 @@ static u32 sceSasSetPitch(u32 core, int voiceNum, int pitch) {
 	__SasDrain();
 	SasVoice &v = sas->voices[voiceNum];
 	v.pitch = pitch;
+	v.ChangedParams(false);
 	return 0;
 }
 
@@ -524,6 +523,7 @@ static u32 sceSasSetNoise(u32 core, int voiceNum, int freq) {
 	SasVoice &v = sas->voices[voiceNum];
 	v.type = VOICETYPE_NOISE;
 	v.noiseFreq = freq;
+	v.ChangedParams(true);
 	return 0;
 }
 
@@ -536,7 +536,7 @@ static u32 sceSasSetSL(u32 core, int voiceNum, int level) {
 	DEBUG_LOG(SCESAS, "sceSasSetSL(%08x, %i, %08x)", core, voiceNum, level);
 	__SasDrain();
 	SasVoice &v = sas->voices[voiceNum];
-	v.envelope.SetSustainLevel(level);
+	v.envelope.sustainLevel = level;
 	return 0;
 }
 
@@ -556,7 +556,10 @@ static u32 sceSasSetADSR(u32 core, int voiceNum, int flag, int a, int d, int s, 
 
 	__SasDrain();
 	SasVoice &v = sas->voices[voiceNum];
-	v.envelope.SetRate(flag, a, d, s, r);
+	if ((flag & 0x1) != 0) v.envelope.attackRate  = a;
+	if ((flag & 0x2) != 0) v.envelope.decayRate   = d;
+	if ((flag & 0x4) != 0) v.envelope.sustainRate = s;
+	if ((flag & 0x8) != 0) v.envelope.releaseRate = r;
 	return 0;
 }
 
@@ -599,7 +602,10 @@ static u32 sceSasSetADSRMode(u32 core, int voiceNum, int flag, int a, int d, int
 	DEBUG_LOG(SCESAS, "sceSasSetADSRMode(%08x, %i, %i, %08x, %08x, %08x, %08x)", core, voiceNum, flag, a, d, s, r);
 	__SasDrain();
 	SasVoice &v = sas->voices[voiceNum];
-	v.envelope.SetEnvelope(flag, a, d, s, r);
+	if ((flag & 0x1) != 0) v.envelope.attackType  = a;
+	if ((flag & 0x2) != 0) v.envelope.decayType   = d;
+	if ((flag & 0x4) != 0) v.envelope.sustainType = s;
+	if ((flag & 0x8) != 0) v.envelope.releaseType = r;
 	return 0;
 }
 

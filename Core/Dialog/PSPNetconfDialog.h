@@ -38,13 +38,13 @@ struct SceUtilityNetconfParam {
 class PSPNetconfDialog: public PSPDialog {
 public:
 	PSPNetconfDialog(UtilityDialogType type);
-	~PSPNetconfDialog();
+	virtual ~PSPNetconfDialog();
 
-	int Init(u32 paramAddr);
-	int Update(int animSpeed) override;
-	int Shutdown(bool force = false) override;
-	void DoState(PointerWrap &p) override;
-	pspUtilityDialogCommon* GetCommonParam() override;
+	virtual int Init(u32 paramAddr);
+	virtual int Update(int animSpeed) override;
+	virtual int Shutdown(bool force = false) override;
+	virtual void DoState(PointerWrap &p) override;
+	virtual pspUtilityDialogCommon* GetCommonParam() override;
 
 protected:
 	bool UseAutoStatus() override {

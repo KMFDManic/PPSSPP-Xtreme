@@ -39,16 +39,8 @@ public class SizeManager implements SurfaceHolder.Callback {
 	private Point desiredSize = new Point();
 	private int badOrientationCount = 0;
 
-
-	private boolean paused = false;
-
 	public SizeManager(final NativeActivity a) {
 		activity = a;
-	}
-
-
-	public void setPaused(boolean p) {
-		paused = p;
 	}
 
 	@TargetApi(Build.VERSION_CODES.P)
@@ -115,11 +107,7 @@ public class SizeManager implements SurfaceHolder.Callback {
 		NativeApp.backbufferResize(width, height, format);
 		updateDisplayMeasurements();
 
-		if (!paused) {
-			activity.notifySurface(holder.getSurface());
-		} else {
-			Log.i(TAG, "Skipping notifySurface while paused");
-		}
+		activity.notifySurface(holder.getSurface());
 	}
 
 	@Override
@@ -136,10 +124,15 @@ public class SizeManager implements SurfaceHolder.Callback {
 		}
 		displayUpdatePending = true;
 
-		activity.runOnUiThread(() -> {
-			Log.d(TAG, "checkDisplayMeasurements: checking now");
-			updateDisplayMeasurements();
-		});
+		final Runnable updater = new Runnable() {
+			public void run() {
+				Log.d(TAG, "checkDisplayMeasurements: checking now");
+				updateDisplayMeasurements();
+			}
+		};
+
+		final Handler handler = new Handler(Looper.getMainLooper());
+		handler.postDelayed(updater, 10);
 	}
 
 	@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
@@ -215,7 +208,7 @@ public class SizeManager implements SurfaceHolder.Callback {
 				safeInsetTop = 0;
 				safeInsetBottom = 0;
 			}
-			NativeApp.sendMessageFromJava("safe_insets", safeInsetLeft + ":" + safeInsetRight + ":" + safeInsetTop + ":" + safeInsetBottom);
+			NativeApp.sendMessage("safe_insets", safeInsetLeft + ":" + safeInsetRight + ":" + safeInsetTop + ":" + safeInsetBottom);
 		}
 	}
 }

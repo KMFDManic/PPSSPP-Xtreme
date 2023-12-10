@@ -19,6 +19,7 @@
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/Data/Collections/FixedSizeQueue.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/Host.h"
 #include "Core/CoreTiming.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/FunctionWrappers.h"
@@ -35,7 +36,6 @@ const int AUDIO_ROUTING_SPEAKER_ON = 1;
 int defaultRoutingMode = AUDIO_ROUTING_SPEAKER_ON;
 int defaultRoutingVolMode = AUDIO_ROUTING_SPEAKER_ON;
 
-// TODO: These are way oversized and together consume 4MB of memory.
 extern FixedSizeQueue<s16, 32768 * 8> chanSampleQueues[PSP_AUDIO_CHANNEL_MAX + 1];
 
 // The extra channel is for SRC/Output2/Vaudio.

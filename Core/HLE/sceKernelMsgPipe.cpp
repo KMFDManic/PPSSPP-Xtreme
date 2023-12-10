@@ -140,13 +140,10 @@ struct MsgPipe : public KernelObject
 	int GetIDType() const override { return SCE_KERNEL_TMID_Mpipe; }
 
 	MsgPipe() : buffer(0) {}
-	~MsgPipe() {
-		if (buffer != 0) {
-			BlockAllocator *alloc = BlockAllocatorFromAddr(buffer);
-			_assert_msg_(alloc != nullptr, "Should always have a valid allocator/address");
-			if (alloc)
-				alloc->Free(buffer);
-		}
+	~MsgPipe()
+	{
+		if (buffer != 0)
+			userMemory.Free(buffer);
 	}
 
 	u32 GetUsedSize()
@@ -670,26 +667,41 @@ void __KernelMsgPipeDoState(PointerWrap &p)
 	CoreTiming::RestoreRegisterEvent(waitTimer, "MsgPipeTimeout", __KernelMsgPipeTimeout);
 }
 
-int sceKernelCreateMsgPipe(const char *name, int partition, u32 attr, u32 size, u32 optionsPtr) {
+int sceKernelCreateMsgPipe(const char *name, int partition, u32 attr, u32 size, u32 optionsPtr)
+{
 	if (!name)
-		return hleLogWarning(SCEKERNEL, SCE_KERNEL_ERROR_NO_MEMORY, "invalid name");
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateMsgPipe(): invalid name", SCE_KERNEL_ERROR_NO_MEMORY);
+		return SCE_KERNEL_ERROR_NO_MEMORY;
+	}
 	if (partition < 1 || partition > 9 || partition == 7)
-		return hleLogWarning(SCEKERNEL, SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT, "invalid partition %d", partition);
-
-	BlockAllocator *allocator = BlockAllocatorFromID(partition);
-	if (allocator == nullptr)
-		return hleLogWarning(SCEKERNEL, SCE_KERNEL_ERROR_ILLEGAL_PERM, "invalid partition %d", partition);
-
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateMsgPipe(): invalid partition %d", SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT, partition);
+		return SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT;
+	}
+	// We only support user right now.
+	if (partition != 2 && partition != 6)
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateMsgPipe(): invalid partition %d", SCE_KERNEL_ERROR_ILLEGAL_PERM, partition);
+		return SCE_KERNEL_ERROR_ILLEGAL_PERM;
+	}
 	if ((attr & ~SCE_KERNEL_MPA_KNOWN) >= 0x100)
-		return hleLogWarning(SCEKERNEL, SCE_KERNEL_ERROR_ILLEGAL_ATTR, "invalid attr parameter: %08x", attr);
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateEventFlag(%s): invalid attr parameter: %08x", SCE_KERNEL_ERROR_ILLEGAL_ATTR, name, attr);
+		return SCE_KERNEL_ERROR_ILLEGAL_ATTR;
+	}
 
 	u32 memBlockPtr = 0;
-	if (size != 0) {
+	if (size != 0)
+	{
 		// We ignore the upalign to 256.
 		u32 allocSize = size;
-		memBlockPtr = allocator->Alloc(allocSize, (attr & SCE_KERNEL_MPA_HIGHMEM) != 0, StringFromFormat("MsgPipe/%s", name).c_str());
+		memBlockPtr = userMemory.Alloc(allocSize, (attr & SCE_KERNEL_MPA_HIGHMEM) != 0, "MsgPipe");
 		if (memBlockPtr == (u32)-1)
-			return hleLogError(SCEKERNEL, SCE_KERNEL_ERROR_NO_MEMORY, "failed to allocate %i bytes for buffer", size);
+		{
+			ERROR_LOG(SCEKERNEL, "%08x=sceKernelCreateEventFlag(%s): Failed to allocate %i bytes for buffer", SCE_KERNEL_ERROR_NO_MEMORY, name, size);
+			return SCE_KERNEL_ERROR_NO_MEMORY;
+		}
 	}
 
 	MsgPipe *m = new MsgPipe();
@@ -994,14 +1006,19 @@ int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThr
 	return 0;
 }
 
-int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr) {
+int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr)
+{
 	u32 error;
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
-	if (m) {
-		auto status = PSPPointer<NativeMsgPipe>::Create(statusPtr);
-		if (!status.IsValid()) {
-			return hleLogError(SCEKERNEL, -1, "invalid address");
+	if (m)
+	{
+		if (!Memory::IsValidAddress(statusPtr))
+		{
+			ERROR_LOG(SCEKERNEL, "sceKernelReferMsgPipeStatus(%i, %08x): invalid address", uid, statusPtr);
+			return -1;
 		}
+
+		DEBUG_LOG(SCEKERNEL, "sceKernelReferMsgPipeStatus(%i, %08x)", uid, statusPtr);
 
 		// Clean up any that have timed out.
 		m->SortReceiveThreads();
@@ -1009,12 +1026,13 @@ int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr) {
 
 		m->nmp.numSendWaitThreads = (int) m->sendWaitingThreads.size();
 		m->nmp.numReceiveWaitThreads = (int) m->receiveWaitingThreads.size();
-		if (status->size != 0) {
-			*status = m->nmp;
-			status.NotifyWrite("MsgPipeStatus");
-		}
-		return hleLogSuccessI(SCEKERNEL, 0);
-	} else {
-		return hleLogError(SCEKERNEL, error, "bad message pipe");
+		if (Memory::Read_U32(statusPtr) != 0)
+			Memory::WriteStruct(statusPtr, &m->nmp);
+		return 0;
+	}
+	else
+	{
+		DEBUG_LOG(SCEKERNEL, "sceKernelReferMsgPipeStatus(%i, %08x): bad message pipe", uid, statusPtr);
+		return error;
 	}
 }

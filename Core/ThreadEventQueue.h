@@ -28,8 +28,6 @@ template <typename B, typename Event, typename EventType, EventType EVENT_INVALI
 struct ThreadEventQueue : public B {
 	ThreadEventQueue() : threadEnabled_(false), eventsRunning_(false), eventsHaveRun_(false) {
 	}
-	virtual ~ThreadEventQueue() {
-	}
 
 	void SetThreadEnabled(bool threadEnabled) {
 		threadEnabled_ = threadEnabled;

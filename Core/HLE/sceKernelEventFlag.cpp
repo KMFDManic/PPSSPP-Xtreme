@@ -522,17 +522,14 @@ u32 sceKernelReferEventFlagStatus(SceUID id, u32 statusPtr) {
 	u32 error;
 	EventFlag *e = kernelObjects.Get<EventFlag>(id, error);
 	if (e) {
-		auto status = PSPPointer<NativeEventFlag>::Create(statusPtr);
-		if (!status.IsValid())
+		if (!Memory::IsValidAddress(statusPtr))
 			return hleLogWarning(SCEKERNEL, -1, "invalid ptr");
 
 		HLEKernel::CleanupWaitingThreads(WAITTYPE_EVENTFLAG, id, e->waitingThreads);
 
 		e->nef.numWaitThreads = (int) e->waitingThreads.size();
-		if (status->size != 0) {
-			*status = e->nef;
-			status.NotifyWrite("EventFlagStatus");
-		}
+		if (Memory::Read_U32(statusPtr) != 0)
+			Memory::WriteStruct(statusPtr, &e->nef);
 		return hleLogSuccessI(SCEKERNEL, 0);
 	} else {
 		return hleLogDebug(SCEKERNEL, error, "invalid event flag");

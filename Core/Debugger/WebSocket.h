@@ -18,9 +18,9 @@
 #pragma once
 
 namespace http {
-class ServerRequest;
+class Request;
 }
 
-void HandleDebuggerRequest(const http::ServerRequest &request);
+void HandleDebuggerRequest(const http::Request &request);
 // Note: blocks.
 void StopAllDebuggers();

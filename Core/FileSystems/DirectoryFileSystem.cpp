@@ -33,7 +33,6 @@
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/StringUtils.h"
-#include "Common/System/OSD.h"
 #include "Common/File/FileUtil.h"
 #include "Common/File/DiskFree.h"
 #include "Common/File/VFS/VFS.h"
@@ -44,9 +43,9 @@
 #include "Core/HW/MemoryStick.h"
 #include "Core/CoreTiming.h"
 #include "Core/System.h"
+#include "Core/Host.h"
 #include "Core/Replay.h"
 #include "Core/Reporting.h"
-#include "Core/ELF/ParamSFO.h"
 
 #ifdef _WIN32
 #include "Common/CommonWindows.h"
@@ -115,11 +114,6 @@ Path DirectoryFileSystem::GetLocalPath(std::string internalPath) const {
 
 bool DirectoryFileHandle::Open(const Path &basePath, std::string &fileName, FileAccess access, u32 &error) {
 	error = 0;
-
-	if (access == FILEACCESS_NONE) {
-		error = SCE_KERNEL_ERROR_ERRNO_INVALID_ARGUMENT;
-		return false;
-	}
 
 #if HOST_IS_CASE_SENSITIVE
 	if (access & (FILEACCESS_APPEND | FILEACCESS_CREATE | FILEACCESS_WRITE)) {
@@ -191,8 +185,8 @@ bool DirectoryFileHandle::Open(const Path &basePath, std::string &fileName, File
 
 		if (w32err == ERROR_DISK_FULL || w32err == ERROR_NOT_ENOUGH_QUOTA) {
 			// This is returned when the disk is full.
-			auto err = GetI18NCategory(I18NCat::ERRORS);
-			g_OSD.Show(OSDType::MESSAGE_ERROR, err->T("Disk full while writing data"));
+			auto err = GetI18NCategory("Error");
+			host->NotifyUserMessage(err->T("Disk full while writing data"));
 			error = SCE_KERNEL_ERROR_ERRNO_NO_PERM;
 		} else if (!success) {
 			error = SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND;
@@ -289,8 +283,8 @@ bool DirectoryFileHandle::Open(const Path &basePath, std::string &fileName, File
 		}
 	} else if (errno == ENOSPC) {
 		// This is returned when the disk is full.
-		auto err = GetI18NCategory(I18NCat::ERRORS);
-		g_OSD.Show(OSDType::MESSAGE_ERROR, err->T("Disk full while writing data"));
+		auto err = GetI18NCategory("Error");
+		host->NotifyUserMessage(err->T("Disk full while writing data"));
 		error = SCE_KERNEL_ERROR_ERRNO_NO_PERM;
 	} else {
 		error = SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND;
@@ -364,8 +358,8 @@ size_t DirectoryFileHandle::Write(const u8* pointer, s64 size)
 
 	if (diskFull) {
 		ERROR_LOG(FILESYS, "Disk full");
-		auto err = GetI18NCategory(I18NCat::ERRORS);
-		g_OSD.Show(OSDType::MESSAGE_ERROR, err->T("Disk full while writing data"));
+		auto err = GetI18NCategory("Error");
+		host->NotifyUserMessage(err->T("Disk full while writing data"));
 		// We only return an error when the disk is actually full.
 		// When writing this would cause the disk to be full, so it wasn't written, we return 0.
 		if (MemoryStick_FreeSpace() == 0) {
@@ -562,7 +556,7 @@ int DirectoryFileSystem::OpenFile(std::string filename, FileAccess access, const
 	OpenFileEntry entry;
 	entry.hFile.fileSystemFlags_ = flags;
 	u32 err = 0;
-	bool success = entry.hFile.Open(basePath, filename, (FileAccess)(access & FILEACCESS_PSP_FLAGS), err);
+	bool success = entry.hFile.Open(basePath, filename, access, err);
 	if (err == 0 && !success) {
 		err = SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND;
 	}
@@ -578,9 +572,7 @@ int DirectoryFileSystem::OpenFile(std::string filename, FileAccess access, const
 #else
 		logError = (int)errno;
 #endif
-		if (!(access & FILEACCESS_PPSSPP_QUIET)) {
-			ERROR_LOG(FILESYS, "DirectoryFileSystem::OpenFile('%s'): FAILED, %d - access = %d '%s'", filename.c_str(), logError, (int)(access & FILEACCESS_PSP_FLAGS), errorString.c_str());
-		}
+		ERROR_LOG(FILESYS, "DirectoryFileSystem::OpenFile('%s'): FAILED, %d - access = %d '%s'", filename.c_str(), logError, (int)access, errorString.c_str());
 		return err;
 	} else {
 #ifdef _WIN32
@@ -592,7 +584,7 @@ int DirectoryFileSystem::OpenFile(std::string filename, FileAccess access, const
 		u32 newHandle = hAlloc->GetNewHandle();
 
 		entry.guestFilename = filename;
-		entry.access = (FileAccess)(access & FILEACCESS_PSP_FLAGS);
+		entry.access = access;
 
 		entries[newHandle] = entry;
 
@@ -679,34 +671,40 @@ PSPFileInfo DirectoryFileSystem::GetFileInfo(std::string filename) {
 	PSPFileInfo x;
 	x.name = filename;
 
-	File::FileInfo info;
 	Path fullName = GetLocalPath(filename);
-	if (!File::GetFileInfo(fullName, &info)) {
+	if (!File::Exists(fullName)) {
 #if HOST_IS_CASE_SENSITIVE
 		if (! FixPathCase(basePath, filename, FPC_FILE_MUST_EXIST))
 			return ReplayApplyDiskFileInfo(x, CoreTiming::GetGlobalTimeUs());
 		fullName = GetLocalPath(filename);
 
-		if (!File::GetFileInfo(fullName, &info))
+		if (! File::Exists(fullName))
 			return ReplayApplyDiskFileInfo(x, CoreTiming::GetGlobalTimeUs());
 #else
 		return ReplayApplyDiskFileInfo(x, CoreTiming::GetGlobalTimeUs());
 #endif
 	}
 
-	x.type = info.isDirectory ? FILETYPE_DIRECTORY : FILETYPE_NORMAL;
+	// TODO: Consolidate to just a File::GetFileInfo call.
+
+	x.type = File::IsDirectory(fullName) ? FILETYPE_DIRECTORY : FILETYPE_NORMAL;
 	x.exists = true;
 
 	if (x.type != FILETYPE_DIRECTORY) {
-		x.size = info.size;
-		x.access = info.access;
-		time_t atime = info.atime;
-		time_t ctime = info.ctime;
-		time_t mtime = info.mtime;
+		File::FileInfo info;
+		if (!File::GetFileInfo(fullName, &info)) {
+			ERROR_LOG(FILESYS, "DirectoryFileSystem::GetFileInfo: GetFileInfo failed: %s", fullName.c_str());
+		} else {
+			x.size = info.size;
+			x.access = info.access;
+			time_t atime = info.atime;
+			time_t ctime = info.ctime;
+			time_t mtime = info.mtime;
 
-		localtime_r((time_t*)&atime, &x.atime);
-		localtime_r((time_t*)&ctime, &x.ctime);
-		localtime_r((time_t*)&mtime, &x.mtime);
+			localtime_r((time_t*)&atime, &x.atime);
+			localtime_r((time_t*)&ctime, &x.ctime);
+			localtime_r((time_t*)&mtime, &x.mtime);
+		}
 	}
 
 	return ReplayApplyDiskFileInfo(x, CoreTiming::GetGlobalTimeUs());
@@ -715,7 +713,7 @@ PSPFileInfo DirectoryFileSystem::GetFileInfo(std::string filename) {
 #ifdef _WIN32
 #define FILETIME_FROM_UNIX_EPOCH_US 11644473600000000ULL
 
-static void tmFromFiletime(tm &dest, const FILETIME &src) {
+static void tmFromFiletime(tm &dest, FILETIME &src) {
 	u64 from_1601_us = (((u64) src.dwHighDateTime << 32ULL) + (u64) src.dwLowDateTime) / 10ULL;
 	u64 from_1970_us = from_1601_us - FILETIME_FROM_UNIX_EPOCH_US;
 
@@ -797,28 +795,25 @@ bool DirectoryFileSystem::ComputeRecursiveDirSizeIfFast(const std::string &path,
 	}
 }
 
-std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(std::string path) {
 	std::vector<PSPFileInfo> myVector;
 
 	std::vector<File::FileInfo> files;
 	Path localPath = GetLocalPath(path);
 	const int flags = File::GETFILES_GETHIDDEN | File::GETFILES_GET_NAVIGATION_ENTRIES;
-	bool success = File::GetFilesInDir(localPath, &files, nullptr, flags);
-#if HOST_IS_CASE_SENSITIVE
-	if (!success) {
+	if (!File::GetFilesInDir(localPath, &files, nullptr, flags)) {
 		// TODO: Case sensitivity should be checked on a file system basis, right?
-		std::string fixedPath = path;
-		if (FixPathCase(basePath, fixedPath, FPC_FILE_MUST_EXIST)) {
+#if HOST_IS_CASE_SENSITIVE
+		if (FixPathCase(basePath, path, FPC_FILE_MUST_EXIST)) {
 			// May have failed due to case sensitivity, try again
-			localPath = GetLocalPath(fixedPath);
-			success = File::GetFilesInDir(localPath, &files, nullptr, flags);
+			localPath = GetLocalPath(path);
+			if (!File::GetFilesInDir(localPath, &files, nullptr, 0)) {
+				return ReplayApplyDiskListing(myVector, CoreTiming::GetGlobalTimeUs());
+			}
 		}
-	}
-#endif
-	if (!success) {
-		if (exists)
-			*exists = false;
+#else
 		return ReplayApplyDiskListing(myVector, CoreTiming::GetGlobalTimeUs());
+#endif
 	}
 
 	bool hideISOFiles = PSP_CoreParameter().compat.flags().HideISOFiles;
@@ -831,22 +826,9 @@ std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(const std::string &p
 		} else {
 			entry.name = file.name;
 		}
-		if (hideISOFiles) {
-			if (endsWithNoCase(entry.name, ".cso") || endsWithNoCase(entry.name, ".iso")) {
-				// Workaround for DJ Max Portable, see compat.ini.
-				continue;
-			} else if (file.isDirectory) {
-				if (endsWithNoCase(path, "SAVEDATA")) {
-					// Don't let it see savedata from other games, it can misinterpret stuff.
-					std::string gameID = g_paramSFO.GetDiscID();
-					if (entry.name.size() > 2 && !startsWithNoCase(entry.name, gameID)) {
-						continue;
-					}
-				} else if (file.name == "GAME" || file.name == "TEXTURES" || file.name == "PPSSPP_STATE" || file.name == "PLUGINS" || file.name == "SYSTEM" || equalsNoCase(file.name, "Cheats")) {
-					// The game scans these folders on startup which can take time. Skip them.
-					continue;
-				}
-			}
+		if (hideISOFiles && (endsWithNoCase(entry.name, ".cso") || endsWithNoCase(entry.name, ".iso"))) {
+			// Workaround for DJ Max Portable, see compat.ini.
+			continue;
 		}
 		if (file.name == "..") {
 			entry.size = 4096;
@@ -859,7 +841,6 @@ std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(const std::string &p
 			entry.type = FILETYPE_NORMAL;
 		}
 		entry.access = file.access;
-		entry.exists = file.exists;
 
 		localtime_r((time_t*)&file.atime, &entry.atime);
 		localtime_r((time_t*)&file.ctime, &entry.ctime);
@@ -868,8 +849,6 @@ std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(const std::string &p
 		myVector.push_back(entry);
 	}
 
-	if (exists)
-		*exists = true;
 	return ReplayApplyDiskListing(myVector, CoreTiming::GetGlobalTimeUs());
 }
 
@@ -920,25 +899,20 @@ void DirectoryFileSystem::DoState(PointerWrap &p) {
 			Do(p, entry.guestFilename);
 			Do(p, entry.access);
 			u32 err;
-			bool brokenFile = false;
 			if (!entry.hFile.Open(basePath,entry.guestFilename,entry.access, err)) {
 				ERROR_LOG(FILESYS, "Failed to reopen file while loading state: %s", entry.guestFilename.c_str());
-				brokenFile = true;
+				continue;
 			}
 			u32 position;
 			Do(p, position);
 			if (position != entry.hFile.Seek(position, FILEMOVE_BEGIN)) {
 				ERROR_LOG(FILESYS, "Failed to restore seek position while loading state: %s", entry.guestFilename.c_str());
-				brokenFile = true;
+				continue;
 			}
 			if (s >= 2) {
 				Do(p, entry.hFile.needsTrunc_);
 			}
-			// Let's hope that things don't go that badly with the file mysteriously auto-closed.
-			// Better than not loading the save state at all, hopefully.
-			if (!brokenFile) {
-				entries[key] = entry;
-			}
+			entries[key] = entry;
 		}
 	} else {
 		for (auto iter = entries.begin(); iter != entries.end(); ++iter) {
@@ -1001,7 +975,7 @@ int VFSFileSystem::OpenFile(std::string filename, FileAccess access, const char 
 	VERBOSE_LOG(FILESYS, "VFSFileSystem actually opening %s (%s)", fullNameC, filename.c_str());
 
 	size_t size;
-	u8 *data = g_VFS.ReadFile(fullNameC, &size);
+	u8 *data = VFSReadFile(fullNameC, &size);
 	if (!data) {
 		ERROR_LOG(FILESYS, "VFSFileSystem failed to open %s", filename.c_str());
 		return SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND;
@@ -1022,7 +996,7 @@ PSPFileInfo VFSFileSystem::GetFileInfo(std::string filename) {
 
 	std::string fullName = GetLocalPath(filename);
 	File::FileInfo fo;
-	if (g_VFS.GetFileInfo(fullName.c_str(), &fo)) {
+	if (VFSGetFileInfo(fullName.c_str(), &fo)) {
 		x.exists = fo.exists;
 		if (x.exists) {
 			x.size = fo.size;
@@ -1105,11 +1079,9 @@ size_t VFSFileSystem::SeekFile(u32 handle, s32 position, FileMove type) {
 	}
 }
 
-std::vector<PSPFileInfo> VFSFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> VFSFileSystem::GetDirListing(std::string path) {
 	std::vector<PSPFileInfo> myVector;
 	// TODO
-	if (exists)
-		*exists = false;
 	return myVector;
 }
 

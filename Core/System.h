@@ -75,10 +75,8 @@ bool PSP_InitStart(const CoreParameter &coreParam, std::string *error_string);
 bool PSP_InitUpdate(std::string *error_string);
 bool PSP_IsIniting();
 bool PSP_IsInited();
-bool PSP_IsRebooting();
 bool PSP_IsQuitting();
 void PSP_Shutdown();
-bool PSP_Reboot(std::string *error_string);
 
 void PSP_BeginHostFrame();
 void PSP_EndHostFrame();
@@ -100,13 +98,19 @@ void Core_UpdateDebugStats(bool collectStats);
 // Increments or decrements an internal counter.  Intended to be used by debuggers.
 void Core_ForceDebugStats(bool enable);
 
+void Audio_Init();
+void Audio_Shutdown();
+bool IsAudioInitialised();
+
 void UpdateLoadedFile(FileLoader *fileLoader);
 
 // NOTE: These are almost all derived from g_Config.memStickDirectory directly -
 // they are not stored anywhere.
 Path GetSysDirectory(PSPDirectories directoryType);
 
-bool CreateSysDirectories();
+#ifdef _WIN32
+void InitSysDirectories();
+#endif
 
 // RUNNING must be at 0, NEXTFRAME must be at 1.
 enum CoreState {

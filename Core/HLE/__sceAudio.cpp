@@ -23,7 +23,6 @@
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/Data/Collections/FixedSizeQueue.h"
-#include "Common/System/System.h"
 
 #ifdef _M_SSE
 #include <emmintrin.h>
@@ -31,6 +30,7 @@
 
 #include "Core/Config.h"
 #include "Core/CoreTiming.h"
+#include "Core/Host.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/Reporting.h"
 #include "Core/System.h"
@@ -44,7 +44,10 @@
 #include "Core/HLE/sceAudio.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelThread.h"
+#include "Core/HW/StereoResampler.h"
 #include "Core/Util/AudioFormat.h"
+
+StereoResampler resampler;
 
 // Should be used to lock anything related to the outAudioQueue.
 // atomic locks are used on the lock. TODO: make this lock-free
@@ -55,15 +58,14 @@ std::atomic_flag atomicLock_;
 FixedSizeQueue<s16, 32768 * 8> chanSampleQueues[PSP_AUDIO_CHANNEL_MAX + 1];
 
 int eventAudioUpdate = -1;
-
-// TODO: This is now useless and should be removed. Just scared of breaking states.
 int eventHostAudioUpdate = -1;
-
 int mixFrequency = 44100;
 int srcFrequency = 0;
 
 const int hwSampleRate = 44100;
-const int hwBlockSize = 64;
+
+int hwBlockSize = 64;
+int hostAttemptBlockSize = 512;
 
 static int audioIntervalCycles;
 static int audioHostIntervalCycles;
@@ -89,22 +91,27 @@ static void hleAudioUpdate(u64 userdata, int cyclesLate) {
 
 static void hleHostAudioUpdate(u64 userdata, int cyclesLate) {
 	CoreTiming::ScheduleEvent(audioHostIntervalCycles - cyclesLate, eventHostAudioUpdate, 0);
+
+	// Not all hosts need this call to poke their audio system once in a while, but those that don't
+	// can just ignore it.
+	host->UpdateSound();
 }
 
 static void __AudioCPUMHzChange() {
 	audioIntervalCycles = (int)(usToCycles(1000000ULL) * hwBlockSize / hwSampleRate);
-
-	// Soon to be removed.
-	audioHostIntervalCycles = (int)(usToCycles(1000000ULL) * 512 / hwSampleRate);
+	audioHostIntervalCycles = (int)(usToCycles(1000000ULL) * hostAttemptBlockSize / hwSampleRate);
 }
 
+
 void __AudioInit() {
-	System_AudioResetStatCounters();
+	resampler.ResetStatCounters();
 	mixFrequency = 44100;
 	srcFrequency = 0;
 
 	chanQueueMaxSizeFactor = 2;
 	chanQueueMinSizeFactor = 1;
+	hwBlockSize = 64;
+	hostAttemptBlockSize = 512;
 
 	__AudioCPUMHzChange();
 
@@ -122,7 +129,7 @@ void __AudioInit() {
 	clampedMixBuffer = new s16[hwBlockSize * 2];
 	memset(mixBuffer, 0, hwBlockSize * 2 * sizeof(s32));
 
-	System_AudioClear();
+	resampler.Clear();
 	CoreTiming::RegisterMHzChangeCallback(&__AudioCPUMHzChange);
 }
 
@@ -145,18 +152,15 @@ void __AudioDoState(PointerWrap &p) {
 		mixFrequency = 44100;
 	}
 
+	// TODO: This never happens because maxVer=1.
 	if (s >= 2) {
-		// TODO: Next time we bump, get rid of this. It's kinda useless.
-		auto s = p.Section("resampler", 1);
-		if (p.mode == p.MODE_READ) {
-			System_AudioClear();
-		}
+		resampler.DoState(p);
 	} else {
 		// Only to preserve the previous file format. Might cause a slight audio glitch on upgrades?
 		FixedSizeQueue<s16, 512 * 16> outAudioQueue;
 		outAudioQueue.DoState(p);
 
-		System_AudioClear();
+		resampler.Clear();
 	}
 
 	int chanCount = ARRAY_SIZE(chans);
@@ -326,14 +330,15 @@ void __AudioSetSRCFrequency(int freq) {
 	srcFrequency = freq;
 }
 
-// Mix samples from the various audio channels into a single sample queue, managed by the backend implementation.
+// Mix samples from the various audio channels into a single sample queue.
+// This single sample queue is where __AudioMix should read from. If the sample queue is full, we should
+// just sleep the main emulator thread a little.
 void __AudioUpdate(bool resetRecording) {
 	// Audio throttle doesn't really work on the PSP since the mixing intervals are so closely tied
 	// to the CPU. Much better to throttle the frame rate on frame display and just throw away audio
 	// if the buffer somehow gets full.
 	bool firstChannel = true;
-	const int16_t srcBufferSize = hwBlockSize * 2;
-	int16_t srcBuffer[srcBufferSize];
+	std::vector<int16_t> srcBuffer;
 
 	for (u32 i = 0; i < PSP_AUDIO_CHANNEL_MAX + 1; i++)	{
 		if (!chans[i].reserved)
@@ -346,7 +351,7 @@ void __AudioUpdate(bool resetRecording) {
 		}
 
 		bool needsResample = i == PSP_AUDIO_CHANNEL_SRC && srcFrequency != 0 && srcFrequency != mixFrequency;
-		size_t sz = needsResample ? (srcBufferSize * srcFrequency) / mixFrequency : srcBufferSize;
+		size_t sz = needsResample ? (hwBlockSize * 2 * srcFrequency) / mixFrequency : hwBlockSize * 2;
 		if (sz > chanSampleQueues[i].size()) {
 			ERROR_LOG(SCEAUDIO, "Channel %i buffer underrun at %i of %i", i, (int)chanSampleQueues[i].size() / 2, (int)sz / 2);
 		}
@@ -367,11 +372,13 @@ void __AudioUpdate(bool resetRecording) {
 				return buf1[sz1 - 1];
 			};
 
+			srcBuffer.resize(hwBlockSize * 2);
+
 			// TODO: This is terrible, since it's doing it by small chunk and discarding frac.
 			const uint32_t ratio = (uint32_t)(65536.0 * srcFrequency / (double)mixFrequency);
 			uint32_t frac = 0;
 			size_t readIndex = 0;
-			for (size_t outIndex = 0; readIndex < sz && outIndex < srcBufferSize; outIndex += 2) {
+			for (size_t outIndex = 0; readIndex < sz && outIndex < srcBuffer.size(); outIndex += 2) {
 				size_t readIndex2 = readIndex + 2;
 				int16_t l1 = read(readIndex);
 				int16_t r1 = read(readIndex + 1);
@@ -386,8 +393,8 @@ void __AudioUpdate(bool resetRecording) {
 				frac &= 0xffff;
 			}
 
-			buf1 = srcBuffer;
-			sz1 = srcBufferSize;
+			buf1 = srcBuffer.data();
+			sz1 = srcBuffer.size();
 			buf2 = nullptr;
 			sz2 = 0;
 		}
@@ -418,7 +425,7 @@ void __AudioUpdate(bool resetRecording) {
 	}
 
 	if (g_Config.bEnableSound) {
-		System_AudioPushSamples(mixBuffer, hwBlockSize);
+		resampler.PushSamples(mixBuffer, hwBlockSize);
 #ifndef MOBILE_DEVICE
 		if (g_Config.bSaveLoadResetsAVdumping && resetRecording) {
 			__StopLogAudio();
@@ -456,6 +463,23 @@ void __AudioUpdate(bool resetRecording) {
 	}
 }
 
+// numFrames is number of stereo frames.
+// This is called from *outside* the emulator thread.
+int __AudioMix(short *outstereo, int numFrames, int sampleRate) {
+	return resampler.Mix(outstereo, numFrames, false, sampleRate);
+}
+
+void __AudioGetDebugStats(char *buf, size_t bufSize) {
+	resampler.GetAudioDebugStats(buf, bufSize);
+}
+
+void __PushExternalAudio(const s32 *audio, int numSamples) {
+	if (audio) {
+		resampler.PushSamples(audio, numSamples);
+	} else {
+		resampler.Clear();
+	}
+}
 #ifndef MOBILE_DEVICE
 void __StartLogAudio(const Path& filename) {
 	if (!m_logAudio) {

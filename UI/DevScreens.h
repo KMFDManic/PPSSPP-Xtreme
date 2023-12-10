@@ -24,15 +24,13 @@
 #include "Common/Data/Text/I18n.h"
 #include "Common/Net/HTTPClient.h"
 #include "Common/UI/UIScreen.h"
-#include "UI/TabbedDialogScreen.h"
+
 #include "UI/MiscScreens.h"
 #include "GPU/Common/ShaderCommon.h"
 
-class DevMenuScreen : public PopupScreen {
+class DevMenu : public PopupScreen {
 public:
-	DevMenuScreen(const Path &gamePath, I18NCat cat) : PopupScreen(T(cat, "Dev Tools")), gamePath_(gamePath) {}
-
-	const char *tag() const override { return "DevMenu"; }
+	DevMenu(std::shared_ptr<I18NCategory> i18n) : PopupScreen(i18n->T("Dev Tools")) {}
 
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
@@ -42,19 +40,17 @@ protected:
 	UI::EventReturn OnLogConfig(UI::EventParams &e);
 	UI::EventReturn OnJitCompare(UI::EventParams &e);
 	UI::EventReturn OnShaderView(UI::EventParams &e);
+	UI::EventReturn OnFreezeFrame(UI::EventParams &e);
+	UI::EventReturn OnDumpFrame(UI::EventParams &e);
 	UI::EventReturn OnDeveloperTools(UI::EventParams &e);
+	UI::EventReturn OnToggleAudioDebug(UI::EventParams &e);
 	UI::EventReturn OnResetLimitedLogging(UI::EventParams &e);
-
-private:
-	Path gamePath_;
 };
 
 class JitDebugScreen : public UIDialogScreenWithBackground {
 public:
 	JitDebugScreen() {}
-	void CreateViews() override;
-
-	const char *tag() const override { return "JitDebug"; }
+	virtual void CreateViews() override;
 
 private:
 	UI::EventReturn OnEnableAll(UI::EventParams &e);
@@ -64,9 +60,7 @@ private:
 class LogConfigScreen : public UIDialogScreenWithBackground {
 public:
 	LogConfigScreen() {}
-	void CreateViews() override;
-
-	const char *tag() const override { return "LogConfig"; }
+	virtual void CreateViews() override;
 
 private:
 	UI::EventReturn OnToggleAll(UI::EventParams &e);
@@ -78,43 +72,32 @@ private:
 
 class LogScreen : public UIDialogScreenWithBackground {
 public:
+	LogScreen() : toBottom_(false) {}
 	void CreateViews() override;
 	void update() override;
-
-	const char *tag() const override { return "Log"; }
 
 private:
 	void UpdateLog();
 	UI::EventReturn OnSubmit(UI::EventParams &e);
-
-	UI::TextEdit *cmdLine_ = nullptr;
-	UI::LinearLayout *vert_ = nullptr;
-	UI::ScrollView *scroll_ = nullptr;
-	bool toBottom_ = false;
+	UI::TextEdit *cmdLine_;
+	UI::LinearLayout *vert_;
+	UI::ScrollView *scroll_;
+	bool toBottom_;
 };
 
-class LogLevelScreen : public UI::ListPopupScreen {
+class LogLevelScreen : public ListPopupScreen {
 public:
 	LogLevelScreen(const std::string &title);
 
-	const char *tag() const override { return "LogLevel"; }
-
 private:
-	void OnCompleted(DialogResult result) override;
+	virtual void OnCompleted(DialogResult result);
+
 };
 
-class SystemInfoScreen : public TabbedUIDialogScreenWithGameBackground {
+class SystemInfoScreen : public UIDialogScreenWithBackground {
 public:
-	SystemInfoScreen(const Path &filename) : TabbedUIDialogScreenWithGameBackground(filename) {}
-
-	const char *tag() const override { return "SystemInfo"; }
-
-	void CreateTabs() override;
-	void update() override;
-
-protected:
-	bool ShowSearchControls() const override { return false; }
-	void CreateInternalsTab(UI::ViewGroup *internals);
+	SystemInfoScreen() {}
+	void CreateViews() override;
 };
 
 class AddressPromptScreen : public PopupScreen {
@@ -123,15 +106,13 @@ public:
 		memset(buttons_, 0, sizeof(buttons_));
 	}
 
-	const char *tag() const override { return "AddressPrompt"; }
-
-	bool key(const KeyInput &key) override;
+	virtual bool key(const KeyInput &key) override;
 
 	UI::Event OnChoice;
 
 protected:
-	void CreatePopupContents(UI::ViewGroup *parent) override;
-	void OnCompleted(DialogResult result) override;
+	virtual void CreatePopupContents(UI::ViewGroup *parent) override;
+	virtual void OnCompleted(DialogResult result) override;
 	UI::EventReturn OnDigitButton(UI::EventParams &e);
 	UI::EventReturn OnBackspace(UI::EventParams &e);
 
@@ -147,9 +128,8 @@ private:
 
 class JitCompareScreen : public UIDialogScreenWithBackground {
 public:
-	void CreateViews() override;
-
-	const char *tag() const override { return "JitCompare"; }
+	JitCompareScreen() : currentBlock_(-1) {}
+	virtual void CreateViews() override;
 
 private:
 	void UpdateDisasm();
@@ -166,7 +146,7 @@ private:
 	UI::EventReturn OnAddressChange(UI::EventParams &e);
 	UI::EventReturn OnShowStats(UI::EventParams &e);
 
-	int currentBlock_ = -1;
+	int currentBlock_;
 
 	UI::TextView *blockName_;
 	UI::TextEdit *blockAddr_;
@@ -178,9 +158,8 @@ private:
 
 class ShaderListScreen : public UIDialogScreenWithBackground {
 public:
+	ShaderListScreen() {}
 	void CreateViews() override;
-
-	const char *tag() const override { return "ShaderList"; }
 
 private:
 	int ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
@@ -196,9 +175,6 @@ public:
 		: id_(id), type_(type) {}
 
 	void CreateViews() override;
-
-	const char *tag() const override { return "ShaderView"; }
-
 private:
 	std::string id_;
 	DebugShaderType type_;
@@ -212,17 +188,13 @@ public:
 	void CreateViews() override;
 	void update() override;
 
-	const char *tag() const override { return "FrameDumpTest"; }
-
 private:
 	UI::EventReturn OnLoadDump(UI::EventParams &e);
 
 	std::vector<std::string> files_;
-	std::shared_ptr<http::Request> listing_;
-	std::shared_ptr<http::Request> dumpDownload_;
+	std::shared_ptr<http::Download> listing_;
+	std::shared_ptr<http::Download> dumpDownload_;
 };
 
 void DrawProfile(UIContext &ui);
 const char *GetCompilerABI();
-
-void AddOverlayList(UI::ViewGroup *items, ScreenManager *screenManager);

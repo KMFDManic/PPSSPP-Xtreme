@@ -58,7 +58,7 @@ void LibretroHWRenderContext::ContextReset() {
 	GotBackbuffer();
 
 	if (gpu) {
-		gpu->DeviceRestore(draw_);
+		gpu->DeviceRestore();
 	}
 }
 
@@ -100,7 +100,7 @@ LibretroGraphicsContext *LibretroGraphicsContext::CreateGraphicsContext() {
 	}
 #endif
 
-	if (preferred == RETRO_HW_CONTEXT_DUMMY || preferred == RETRO_HW_CONTEXT_OPENGL || preferred == RETRO_HW_CONTEXT_OPENGLES3) {
+	if (preferred == RETRO_HW_CONTEXT_DUMMY || preferred == RETRO_HW_CONTEXT_OPENGL) {
 		ctx = new LibretroGLContext();
 
 		if (ctx->Init()) {

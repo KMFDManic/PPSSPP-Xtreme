@@ -56,14 +56,14 @@
 #include <cstring>
 
 #include "Common/Data/Text/I18n.h"
-#include "Common/Data/Text/Parsers.h"
-#include "Common/System/OSD.h"
 #include "Common/Thread/ThreadUtil.h"
+#include "Common/Data/Text/Parsers.h"
 
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/TimeUtil.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
+#include "Core/Host.h"
 #include "Core/HLE/sceKernelInterrupt.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceKernelMemory.h"
@@ -180,7 +180,7 @@ std::string ip2str(in_addr in, bool maskPublicIP) {
 	return std::string(str);
 }
 
-std::string mac2str(const SceNetEtherAddr *mac) {
+std::string mac2str(SceNetEtherAddr* mac) {
 	char str[18] = ":::::";
 
 	if (mac != NULL) {
@@ -1263,7 +1263,7 @@ void notifyMatchingHandler(SceNetAdhocMatchingContext * context, ThreadMessage *
 	MatchingArgs argsNew = { 0 };
 	u32_le dataBufLen = msg->optlen + 8; //max(bufLen, msg->optlen + 8);
 	u32_le dataBufAddr = userMemory.Alloc(dataBufLen); // We will free this memory after returning from mipscall. FIXME: Are these buffers supposed to be taken/pre-allocated from the memory pool during sceNetAdhocMatchingInit?
-	uint8_t *dataPtr = Memory::GetPointerWriteRange(dataBufAddr, dataBufLen);
+	uint8_t * dataPtr = Memory::GetPointerWrite(dataBufAddr);
 	if (dataPtr) {
 		memcpy(dataPtr, &msg->mac, sizeof(msg->mac));
 		if (msg->optlen > 0)
@@ -1312,7 +1312,7 @@ void timeoutFriendsRecursive(SceNetAdhocctlPeerInfo * node, int32_t* count) {
 
 void sendChat(std::string chatString) {
 	SceNetAdhocctlChatPacketC2S chat;
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
+	auto n = GetI18NCategory("Networking");
 	chat.base.opcode = OPCODE_CHAT;
 	//TODO check network inited, check send success or not, chatlog.pushback error on failed send, pushback error on not connected
 	if (friendFinderRunning) {
@@ -1325,10 +1325,10 @@ void sendChat(std::string chatString) {
 			if (IsSocketReady((int)metasocket, false, true) > 0) {
 				int chatResult = send((int)metasocket, (const char*)&chat, sizeof(chat), MSG_NOSIGNAL);
 				NOTICE_LOG(SCENET, "Send Chat %s to Adhoc Server", chat.message);
-				std::string name = g_Config.sNickName;
+				std::string name = g_Config.sNickName.c_str();
 
 				std::lock_guard<std::mutex> guard(chatLogLock);
-				chatLog.emplace_back(name.substr(0, 8) + ": " + chat.message);
+				chatLog.push_back(name.substr(0, 8) + ": " + chat.message);
 				chatMessageGeneration++;
 			}
 		}
@@ -1359,7 +1359,7 @@ int GetChatMessageCount() {
 // TODO: We should probably change this thread into PSPThread (or merging it into the existing AdhocThread PSPThread) as there are too many global vars being used here which also being used within some HLEs
 int friendFinder(){
 	SetCurrentThreadName("FriendFinder");
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
+	auto n = GetI18NCategory("Networking");
 	// Receive Buffer
 	int rxpos = 0;
 	uint8_t rx[1024];
@@ -1385,7 +1385,7 @@ int friendFinder(){
 	g_adhocServerIP.in.sin_addr.s_addr = INADDR_NONE;
 	if (g_Config.bEnableWlan && !net::DNSResolve(g_Config.proAdhocServer, "", &resolved, err)) {
 		ERROR_LOG(SCENET, "DNS Error Resolving %s\n", g_Config.proAdhocServer.c_str());
-		g_OSD.Show(OSDType::MESSAGE_ERROR, n->T("DNS Error Resolving ") + g_Config.proAdhocServer);
+		host->NotifyUserMessage(n->T("DNS Error Resolving ") + g_Config.proAdhocServer, 2.0f, 0x0000ff);
 	}
 	if (resolved) {
 		for (auto ptr = resolved; ptr != NULL; ptr = ptr->ai_next) {
@@ -1447,7 +1447,7 @@ int friendFinder(){
 							shutdown((int)metasocket, SD_BOTH);
 							closesocket((int)metasocket);
 							metasocket = (int)INVALID_SOCKET;
-							g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("Disconnected from AdhocServer")) + " (" + std::string(n->T("Error")) + ": " + std::to_string(error) + ")");
+							host->NotifyUserMessage(std::string(n->T("Disconnected from AdhocServer")) + " (" + std::string(n->T("Error")) + ": " + std::to_string(error) + ")", 2.0, 0x0000ff);
 							// Mark all friends as timedout since we won't be able to detects disconnected friends anymore without being connected to Adhoc Server
 							peerlock.lock();
 							timeoutFriendsRecursive(friends);
@@ -1891,7 +1891,6 @@ uint32_t getLocalIp(int sock) {
 static std::vector<std::pair<uint32_t, uint32_t>> InitPrivateIPRanges() {
 	struct sockaddr_in saNet {}, saMask{};
 	std::vector<std::pair<uint32_t, uint32_t>> ip_ranges;
-	ip_ranges.reserve(5);
 
 	if (1 == inet_pton(AF_INET, "192.168.0.0", &(saNet.sin_addr)) && 1 == inet_pton(AF_INET, "255.255.0.0", &(saMask.sin_addr)))
 		ip_ranges.push_back({saNet.sin_addr.s_addr, saMask.sin_addr.s_addr});
@@ -1929,7 +1928,7 @@ void getLocalMac(SceNetEtherAddr * addr){
 		mac[0] &= 0xfc;
 	}
 	else
-	if (!ParseMacAddress(g_Config.sMACAddress, mac)) {
+	if (!ParseMacAddress(g_Config.sMACAddress.c_str(), mac)) {
 		ERROR_LOG(SCENET, "Error parsing mac address %s", g_Config.sMACAddress.c_str());
 		memset(&mac, 0, sizeof(mac));
 	}
@@ -2087,7 +2086,7 @@ int setSockKeepAlive(int sock, bool keepalive, const int keepinvl, const int kee
 	int optval = keepalive ? 1 : 0;
 	int optlen = sizeof(optval);
 	int result = setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, optlen);
-#if !PPSSPP_PLATFORM(SWITCH) && !PPSSPP_PLATFORM(OPENBSD)
+#if !PPSSPP_PLATFORM(SWITCH)
 	if (result == 0 && keepalive) {
 		if (getsockopt(sock, SOL_SOCKET, SO_TYPE, (char*)&optval, (socklen_t*)&optlen) == 0 && optval == SOCK_STREAM) {
 			optlen = sizeof(optval);
@@ -2099,7 +2098,7 @@ int setSockKeepAlive(int sock, bool keepalive, const int keepinvl, const int kee
 			setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, (char*)&optval, optlen);
 		}
 	}
-#endif // !PPSSPP_PLATFORM(SWITCH) && !PPSSPP_PLATFORM(OPENBSD)
+#endif // !PPSSPP_PLATFORM(SWITCH)
 	return result;
 }
 
@@ -2162,7 +2161,7 @@ int getPTPSocketCount() {
 }
 
 int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
+	auto n = GetI18NCategory("Networking");
 	int iResult = 0;
 	metasocket = (int)INVALID_SOCKET;
 	metasocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -2191,7 +2190,7 @@ int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
 		iResult = bind((int)metasocket, &g_localhostIP.addr, sizeof(g_localhostIP.addr));
 		if (iResult == SOCKET_ERROR) {
 			ERROR_LOG(SCENET, "Bind to alternate localhost[%s] failed(%i).", ip2str(g_localhostIP.in.sin_addr).c_str(), iResult);
-			g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("Failed to Bind Localhost IP")) + " " + ip2str(g_localhostIP.in.sin_addr).c_str());
+			host->NotifyUserMessage(std::string(n->T("Failed to Bind Localhost IP")) + " " + ip2str(g_localhostIP.in.sin_addr).c_str(), 2.0, 0x0000ff);
 		}
 	}
 	
@@ -2246,7 +2245,7 @@ int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
 		}
 		if (!done) {
 			ERROR_LOG(SCENET, "Socket error (%i) when connecting to AdhocServer [%s/%s:%u]", errorcode, g_Config.proAdhocServer.c_str(), ip2str(g_adhocServerIP.in.sin_addr).c_str(), ntohs(g_adhocServerIP.in.sin_port));
-			g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("Failed to connect to Adhoc Server")) + " (" + std::string(n->T("Error")) + ": " + std::to_string(errorcode) + ")");
+			host->NotifyUserMessage(std::string(n->T("Failed to connect to Adhoc Server")) + " (" + std::string(n->T("Error")) + ": " + std::to_string(errorcode) + ")", 1.0f, 0x0000ff);
 			return iResult;
 		}
 	}
@@ -2268,9 +2267,10 @@ int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
 		socklen_t addrLen = sizeof(LocalIP);
 		memset(&LocalIP, 0, addrLen);
 		getsockname((int)metasocket, &LocalIP, &addrLen);
-		g_OSD.Show(OSDType::MESSAGE_SUCCESS, n->T("Network Initialized"), 1.0);
+		host->NotifyUserMessage(n->T("Network Initialized"), 1.0);
 		return 0;
-	} else {
+	}
+	else{
 		return SOCKET_ERROR;
 	}
 }

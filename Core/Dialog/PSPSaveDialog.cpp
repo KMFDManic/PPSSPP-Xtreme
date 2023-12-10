@@ -22,7 +22,6 @@
 #endif
 #endif
 
-#include <algorithm>
 #include <ctime>
 #include <thread>
 
@@ -57,31 +56,6 @@ const static int SAVEDATA_DIALOG_SIZE_V1 = 1480;
 const static int SAVEDATA_DIALOG_SIZE_V2 = 1500;
 const static int SAVEDATA_DIALOG_SIZE_V3 = 1536;
 
-static bool IsNotVisibleAction(SceUtilitySavedataType type) {
-	switch (type) {
-	case SCE_UTILITY_SAVEDATA_TYPE_AUTOLOAD:
-	case SCE_UTILITY_SAVEDATA_TYPE_AUTOSAVE:
-	case SCE_UTILITY_SAVEDATA_TYPE_SIZES:
-	case SCE_UTILITY_SAVEDATA_TYPE_LIST:
-	case SCE_UTILITY_SAVEDATA_TYPE_FILES:
-	case SCE_UTILITY_SAVEDATA_TYPE_GETSIZE:
-	case SCE_UTILITY_SAVEDATA_TYPE_MAKEDATASECURE:
-	case SCE_UTILITY_SAVEDATA_TYPE_MAKEDATA:
-	case SCE_UTILITY_SAVEDATA_TYPE_WRITEDATASECURE:
-	case SCE_UTILITY_SAVEDATA_TYPE_WRITEDATA:
-	case SCE_UTILITY_SAVEDATA_TYPE_READDATASECURE:
-	case SCE_UTILITY_SAVEDATA_TYPE_READDATA:
-	case SCE_UTILITY_SAVEDATA_TYPE_ERASESECURE:
-	case SCE_UTILITY_SAVEDATA_TYPE_ERASE:
-	case SCE_UTILITY_SAVEDATA_TYPE_DELETEDATA:
-	case SCE_UTILITY_SAVEDATA_TYPE_AUTODELETE:
-		return true;
-
-	default:
-		break;
-	}
-	return false;
-}
 
 PSPSaveDialog::PSPSaveDialog(UtilityDialogType type) : PSPDialog(type) {
 	param.SetPspParam(0);
@@ -113,8 +87,6 @@ int PSPSaveDialog::Init(int paramAddr)
 	Memory::Memcpy(&request, requestAddr, size);
 	Memory::Memcpy(&originalRequest, requestAddr, size);
 
-	param.SetIgnoreTextures(IsNotVisibleAction((SceUtilitySavedataType)(u32)request.mode));
-	param.ClearCaches();
 	int retval = param.SetPspParam(&request);
 
 	const u32 mode = (u32)param.GetPspParam()->mode;
@@ -158,7 +130,7 @@ int PSPSaveDialog::Init(int paramAddr)
 		break;
 	}
 
-	if (!param.WouldHaveMultiSaveName(param.GetPspParam()))
+	if(!param.wouldHasMultiSaveName(param.GetPspParam()))
 		currentSelectedSave = 0;
 
 	switch ((SceUtilitySavedataType)(u32)param.GetPspParam()->mode)
@@ -225,8 +197,6 @@ int PSPSaveDialog::Init(int paramAddr)
 		case SCE_UTILITY_SAVEDATA_TYPE_WRITEDATA:
 		case SCE_UTILITY_SAVEDATA_TYPE_READDATASECURE:
 		case SCE_UTILITY_SAVEDATA_TYPE_READDATA:
-		case SCE_UTILITY_SAVEDATA_TYPE_ERASESECURE:
-		case SCE_UTILITY_SAVEDATA_TYPE_ERASE:
 		case SCE_UTILITY_SAVEDATA_TYPE_DELETEDATA:
 			display = DS_NONE;
 			break;
@@ -269,8 +239,6 @@ int PSPSaveDialog::Init(int paramAddr)
 		ChangeStatusInit(SAVEDATA_INIT_DELAY_US);
 	}
 
-	param.ClearCaches();
-	InitCommon();
 	UpdateButtons();
 	StartFade(true);
 
@@ -341,7 +309,7 @@ const std::string PSPSaveDialog::GetSelectedSaveDirName() const
 
 void PSPSaveDialog::DisplayBanner(int which)
 {
-	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto di = GetI18NCategory("Dialog");
 	PPGeDrawRect(0, 0, 480, 23, CalcFadedColor(0x65636358));
 
 	PPGeStyle textStyle = FadedStyle(PPGeAlign::BOX_VCENTER, 0.6f);
@@ -377,7 +345,7 @@ void PSPSaveDialog::DisplaySaveList(bool canMove) {
 		PPGeImageStyle imageStyle = FadedImageStyle();
 		auto fileInfo = param.GetFileInfo(displayCount);
 
-		if (fileInfo.size == 0 && fileInfo.texture && fileInfo.texture->IsValid())
+		if (fileInfo.size == 0 && fileInfo.texture != NULL)
 			imageStyle.color = CalcFadedColor(0xFF777777);
 
 		// Calc save image position on screen
@@ -402,7 +370,7 @@ void PSPSaveDialog::DisplaySaveList(bool canMove) {
 			continue;
 
 		int pad = 0;
-		if (fileInfo.texture != nullptr && fileInfo.texture->IsValid()) {
+		if (fileInfo.texture != nullptr) {
 			fileInfo.texture->SetTexture();
 			int tw = fileInfo.texture->Width();
 			int th = fileInfo.texture->Height();
@@ -452,7 +420,7 @@ void PSPSaveDialog::DisplaySaveIcon(bool checkExists)
 
 	int tw = 256;
 	int th = 256;
-	if (curSave.texture != nullptr && curSave.texture->IsValid()) {
+	if (curSave.texture != NULL) {
 		curSave.texture->SetTexture();
 		tw = curSave.texture->Width();
 		th = curSave.texture->Height();
@@ -512,12 +480,12 @@ void PSPSaveDialog::DisplaySaveDataInfo1() {
 	PPGeStyle saveTitleStyle = FadedStyle(PPGeAlign::BOX_LEFT, 0.55f);
 
 	if (saveInfo.broken) {
-		auto di = GetI18NCategory(I18NCat::DIALOG);
+		auto di = GetI18NCategory("Dialog");
 		PPGeStyle textStyle = FadedStyle(PPGeAlign::BOX_VCENTER, 0.6f);
 		PPGeDrawText(di->T("Corrupted Data"), 180, 136, textStyle);
 		PPGeDrawText(saveInfo.title, 175, 159, saveTitleStyle);
 	} else if (saveInfo.size == 0) {
-		auto di = GetI18NCategory(I18NCat::DIALOG);
+		auto di = GetI18NCategory("Dialog");
 		PPGeStyle textStyle = FadedStyle(PPGeAlign::BOX_VCENTER, 0.6f);
 		PPGeDrawText(di->T("NEW DATA"), 180, 136, textStyle);
 	} else {
@@ -590,7 +558,7 @@ void PSPSaveDialog::DisplayMessage(std::string text, bool hasYesNo)
 	float h2 = h / 2.0f;
 	if (hasYesNo)
 	{
-		auto di = GetI18NCategory(I18NCat::DIALOG);
+		auto di = GetI18NCategory("Dialog");
 		const char *choiceText;
 		float x, w;
 		if (yesnoChoice == 1) {
@@ -641,9 +609,8 @@ int PSPSaveDialog::Update(int animSpeed)
 	// The struct may have been updated by the game.  This happens in "Where Is My Heart?"
 	// Check if it has changed, reload it.
 	// TODO: Cut down on preloading?  This rebuilds the list from scratch.
-	int size = std::min((u32)sizeof(originalRequest), Memory::Read_U32(requestAddr));
-	const u8 *updatedRequest = Memory::GetPointerRange(requestAddr, size);
-	if (updatedRequest && memcmp(updatedRequest, &originalRequest, size) != 0) {
+	int size = Memory::Read_U32(requestAddr);
+	if (memcmp(Memory::GetPointer(requestAddr), &originalRequest, size) != 0) {
 		memset(&request, 0, sizeof(request));
 		Memory::Memcpy(&request, requestAddr, size);
 		Memory::Memcpy(&originalRequest, requestAddr, size);
@@ -651,13 +618,21 @@ int PSPSaveDialog::Update(int animSpeed)
 		param.SetPspParam(&request);
 	}
 
-	param.ClearCaches();
 	UpdateButtons();
 	UpdateFade(animSpeed);
 
-	UpdateCommon();
+	okButtonImg = ImageID("I_CIRCLE");
+	cancelButtonImg = ImageID("I_CROSS");
+	okButtonFlag = CTRL_CIRCLE;
+	cancelButtonFlag = CTRL_CROSS;
+	if (param.GetPspParam()->common.buttonSwap == 1) {
+		okButtonImg = ImageID("I_CROSS");
+		cancelButtonImg = ImageID("I_CIRCLE");
+		okButtonFlag = CTRL_CROSS;
+		cancelButtonFlag = CTRL_CIRCLE;
+	}
 
-	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto di = GetI18NCategory("Dialog");
 
 	switch (display)
 	{
@@ -1060,13 +1035,11 @@ int PSPSaveDialog::Update(int animSpeed)
 
 	if (ReadStatus() == SCE_UTILITY_STATUS_FINISHED || pendingStatus == SCE_UTILITY_STATUS_FINISHED)
 		Memory::Memcpy(requestAddr, &request, request.common.size, "SaveDialogParam");
-	param.ClearCaches();
 	
 	return 0;
 }
 
 void PSPSaveDialog::ExecuteIOAction() {
-	param.ClearCaches();
 	auto &result = param.GetPspParam()->common.result;
 	std::lock_guard<std::mutex> guard(paramLock);
 	switch (display) {
@@ -1105,11 +1078,9 @@ void PSPSaveDialog::ExecuteIOAction() {
 	}
 
 	ioThreadStatus = SAVEIO_DONE;
-	param.ClearCaches();
 }
 
 void PSPSaveDialog::ExecuteNotVisibleIOAction() {
-	param.ClearCaches();
 	auto &result = param.GetPspParam()->common.result;
 
 	switch ((SceUtilitySavedataType)(u32)param.GetPspParam()->mode) {
@@ -1178,9 +1149,7 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 	case SCE_UTILITY_SAVEDATA_TYPE_READDATA:
 	case SCE_UTILITY_SAVEDATA_TYPE_READDATASECURE:
 		result = param.Load(param.GetPspParam(), GetSelectedSaveDirName(), currentSelectedSave, param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_READDATASECURE);
-		if (result == SCE_UTILITY_SAVEDATA_ERROR_LOAD_DATA_BROKEN)
-			result = SCE_UTILITY_SAVEDATA_ERROR_RW_DATA_BROKEN;
-		if (result == SCE_UTILITY_SAVEDATA_ERROR_LOAD_NO_DATA)
+		if(result == SCE_UTILITY_SAVEDATA_ERROR_LOAD_NO_DATA)
 			result = SCE_UTILITY_SAVEDATA_ERROR_RW_NO_DATA;
 		break;
 	case SCE_UTILITY_SAVEDATA_TYPE_ERASE:
@@ -1190,8 +1159,6 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 	default:
 		break;
 	}
-
-	param.ClearCaches();
 }
 
 void PSPSaveDialog::JoinIOThread() {
@@ -1204,8 +1171,6 @@ void PSPSaveDialog::JoinIOThread() {
 
 static void DoExecuteIOAction(PSPSaveDialog *dialog) {
 	SetCurrentThreadName("SaveIO");
-
-	AndroidJNIThreadContext jniContext;
 	dialog->ExecuteIOAction();
 }
 
@@ -1231,7 +1196,6 @@ int PSPSaveDialog::Shutdown(bool force) {
 		ChangeStatusShutdown(SAVEDATA_SHUTDOWN_DELAY_US);
 	}
 	param.SetPspParam(0);
-	param.ClearCaches();
 
 	return 0;
 }
@@ -1251,7 +1215,7 @@ void PSPSaveDialog::DoState(PointerWrap &p) {
 	// Just reset it.
 	bool hasParam = param.GetPspParam() != NULL;
 	Do(p, hasParam);
-	if (hasParam && p.mode == p.MODE_READ) {
+	if (hasParam) {
 		param.SetPspParam(&request);
 	}
 	Do(p, requestAddr);

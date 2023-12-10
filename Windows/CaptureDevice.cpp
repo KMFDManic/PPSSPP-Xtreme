@@ -716,7 +716,7 @@ std::vector<std::string> WindowsCaptureDevice::getDeviceList(bool forceEnum, int
 			// Get the size needed first
 			dwMinSize = WideCharToMultiByte(CP_UTF8, NULL, pwstrName, -1, nullptr, 0, nullptr, FALSE);
 			if (dwMinSize == 0)
-				hr = E_FAIL;
+				hr = -1;
 		}
 		if (SUCCEEDED(hr)) {
 			cstrName = new char[dwMinSize];

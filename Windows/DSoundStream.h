@@ -10,12 +10,15 @@ struct IDirectSoundBuffer;
 
 class DSoundAudioBackend : public WindowsAudioBackend {
 public:
-	~DSoundAudioBackend();
+	DSoundAudioBackend();
+	~DSoundAudioBackend() override;
 
 	bool Init(HWND window, StreamCallback callback, int sampleRate) override;  // If fails, can safely delete the object
-	int GetSampleRate() const override { return sampleRate_; }
+	void Update() override;
+	int GetSampleRate() override { return sampleRate_; }
 
 private:
+	inline int ModBufferSize(int x) { return (x + bufferSize_) % bufferSize_; }
 	int RunThread();
 	static unsigned int WINAPI soundThread(void *param);
 	bool CreateBuffer();
@@ -24,7 +27,8 @@ private:
 		DWORD soundBytes); // Size of block to copy.
 
 	CRITICAL_SECTION soundCriticalSection;
-	HWND window_ = nullptr;
+	HWND window_;
+	HANDLE soundSyncEvent_ = nullptr;
 	HANDLE hThread_ = nullptr;
 
 	StreamCallback callback_;
@@ -32,9 +36,9 @@ private:
 	IDirectSound8 *ds_ = nullptr;
 	IDirectSoundBuffer *dsBuffer_ = nullptr;
 
-	int bufferSize_ = 0; // bytes
-	int totalRenderedBytes_ = 0;
-	int sampleRate_ = 0;
+	int bufferSize_; // bytes
+	int totalRenderedBytes_;
+	int sampleRate_;
 
 	volatile int threadData_ = 0;
 
@@ -43,7 +47,7 @@ private:
 		MAXWAIT = 20,   //ms
 	};
 
-	int currentPos_ = 0;
-	int lastPos_ = 0;
+	int currentPos_;
+	int lastPos_;
 	short realtimeBuffer_[BUFSIZE * 2];
 };

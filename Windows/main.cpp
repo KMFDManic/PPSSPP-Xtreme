@@ -26,31 +26,25 @@
 #include "Common/GPU/Vulkan/VulkanLoader.h"
 #include "ppsspp_config.h"
 
-#include <mmsystem.h>
-#include <shellapi.h>
 #include <Wbemidl.h>
+#include <shellapi.h>
 #include <ShlObj.h>
+#include <mmsystem.h>
 
 #include "Common/System/Display.h"
 #include "Common/System/NativeApp.h"
 #include "Common/System/System.h"
-#include "Common/System/Request.h"
-#include "Common/File/FileUtil.h"
 #include "Common/File/VFS/VFS.h"
-#include "Common/File/VFS/DirectoryReader.h"
+#include "Common/File/VFS/AssetReader.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Profiler/Profiler.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Net/Resolve.h"
-#include "Common/TimeUtil.h"
-#include "W32Util/DarkMode.h"
-#include "W32Util/ShellUtil.h"
 
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/SaveState.h"
-#include "Core/Instance.h"
 #include "Windows/EmuThread.h"
 #include "Windows/WindowsAudio.h"
 #include "ext/disarm.h"
@@ -78,7 +72,6 @@
 #include "Windows/Debugger/CtrlDisAsmView.h"
 #include "Windows/Debugger/CtrlMemView.h"
 #include "Windows/Debugger/CtrlRegisterList.h"
-#include "Windows/Debugger/DebuggerShared.h"
 #include "Windows/InputBox.h"
 
 #include "Windows/WindowsHost.h"
@@ -112,27 +105,27 @@ static std::string restartArgs;
 
 int g_activeWindow = 0;
 
-WindowsInputManager g_inputManager;
+static std::thread inputBoxThread;
+static bool inputBoxRunning = false;
 
-int g_lastNumInstances = 0;
+void OpenDirectory(const char *path) {
+	SFGAOF flags;
+	PIDLIST_ABSOLUTE pidl = nullptr;
+	HRESULT hr = SHParseDisplayName(ConvertUTF8ToWString(ReplaceAll(path, "/", "\\")).c_str(), nullptr, &pidl, 0, &flags);
 
-static double g_lastActivity = 0.0;
-static double g_lastKeepAwake = 0.0;
-// Time until we stop considering the core active without user input.
-// Should this be configurable?  2 hours currently.
-static const double ACTIVITY_IDLE_TIMEOUT = 2.0 * 3600.0;
+	if (pidl) {
+		if (SUCCEEDED(hr))
+			SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
+		CoTaskMemFree(pidl);
+	}
+}
 
-void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
+void LaunchBrowser(const char *url) {
 	ShellExecute(NULL, L"open", ConvertUTF8ToWString(url).c_str(), NULL, NULL, SW_SHOWNORMAL);
 }
 
-void System_Vibrate(int length_ms) {
+void Vibrate(int length_ms) {
 	// Ignore on PC
-}
-
-static void AddDebugRestartArgs() {
-	if (LogManager::GetInstance()->GetConsoleListener()->IsOpen())
-		restartArgs += " -l";
 }
 
 // Adapted mostly as-is from http://www.gamedev.net/topic/495075-how-to-retrieve-info-about-videocard/?view=findpost&p=4229170
@@ -172,8 +165,8 @@ std::string GetVideoCardDriverVersion() {
 	IEnumWbemClassObject* pEnum;
 	hr = pIWbemServices->ExecQuery(bstrWQL, bstrPath, WBEM_FLAG_FORWARD_ONLY, NULL, &pEnum);
 
-	ULONG uReturned = 0;
-	VARIANT var{};
+	ULONG uReturned;
+	VARIANT var;
 	IWbemClassObject* pObj = NULL;
 	if (!FAILED(hr)) {
 		hr = pEnum->Next(WBEM_INFINITE, 1, &pObj, &uReturned);
@@ -214,7 +207,7 @@ std::string System_GetProperty(SystemProperty prop) {
 				if (wstr)
 					retval = ConvertWStringToUTF8(wstr);
 				else
-					retval.clear();
+					retval = "";
 				GlobalUnlock(handle);
 				CloseClipboard();
 			}
@@ -226,10 +219,6 @@ std::string System_GetProperty(SystemProperty prop) {
 			gpuDriverVersion = GetVideoCardDriverVersion();
 		}
 		return gpuDriverVersion;
-	case SYSPROP_BUILD_VERSION:
-		return PPSSPP_GIT_VERSION;
-	case SYSPROP_USER_DOCUMENTS_DIR:
-		return Path(W32Util::UserDocumentsPath()).ToString();  // this'll reverse the slashes.
 	default:
 		return "";
 	}
@@ -282,31 +271,6 @@ static int ScreenDPI() {
 #endif
 #endif
 
-static int ScreenRefreshRateHz() {
-	static int rate = 0;
-	static double lastCheck = 0.0;
-	double now = time_now_d();
-	if (!rate || lastCheck < now - 10.0) {
-		lastCheck = now;
-		DEVMODE lpDevMode{};
-		lpDevMode.dmSize = sizeof(DEVMODE);
-		lpDevMode.dmDriverExtra = 0;
-
-		// TODO: Use QueryDisplayConfig instead (Win7+) so we can get fractional refresh rates correctly.
-
-		if (EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &lpDevMode) == 0) {
-			rate = 60;  // default value
-		} else {
-			if (lpDevMode.dmFields & DM_DISPLAYFREQUENCY) {
-				rate = lpDevMode.dmDisplayFrequency > 60 ? lpDevMode.dmDisplayFrequency : 60;
-			} else {
-				rate = 60;
-			}
-		}
-	}
-	return rate;
-}
-
 int System_GetPropertyInt(SystemProperty prop) {
 	switch (prop) {
 	case SYSPROP_AUDIO_SAMPLE_RATE:
@@ -338,7 +302,7 @@ int System_GetPropertyInt(SystemProperty prop) {
 float System_GetPropertyFloat(SystemProperty prop) {
 	switch (prop) {
 	case SYSPROP_DISPLAY_REFRESH_RATE:
-		return (float)ScreenRefreshRateHz();
+		return 60.f;
 	case SYSPROP_DISPLAY_DPI:
 		return (float)ScreenDPI();
 	case SYSPROP_DISPLAY_SAFE_INSET_LEFT:
@@ -353,19 +317,12 @@ float System_GetPropertyFloat(SystemProperty prop) {
 
 bool System_GetPropertyBool(SystemProperty prop) {
 	switch (prop) {
-	case SYSPROP_HAS_DEBUGGER:
 	case SYSPROP_HAS_FILE_BROWSER:
 	case SYSPROP_HAS_FOLDER_BROWSER:
-	case SYSPROP_HAS_OPEN_DIRECTORY:
-	case SYSPROP_HAS_TEXT_INPUT_DIALOG:
-	case SYSPROP_CAN_CREATE_SHORTCUT:
-	case SYSPROP_CAN_SHOW_FILE:
 		return true;
 	case SYSPROP_HAS_IMAGE_BROWSER:
 		return true;
 	case SYSPROP_HAS_BACK_BUTTON:
-		return true;
-	case SYSPROP_HAS_LOGIN_DIALOG:
 		return true;
 	case SYSPROP_APP_GOLD:
 #ifdef GOLD
@@ -379,260 +336,58 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return true;
 	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR:
 		return true;  // FileUtil.cpp: OpenFileInEditor
-	case SYSPROP_SUPPORTS_HTTPS:
-		return !g_Config.bDisableHTTPS;
-	case SYSPROP_DEBUGGER_PRESENT:
-		return IsDebuggerPresent();
-	case SYSPROP_OK_BUTTON_LEFT:
-		return true;
 	default:
 		return false;
 	}
 }
 
-static BOOL PostDialogMessage(Dialog *dialog, UINT message, WPARAM wParam = 0, LPARAM lParam = 0) {
-	return PostMessage(dialog->GetDlgHandle(), message, wParam, lParam);
-}
-
-// This can come from any thread, so this mostly uses PostMessage. Can't access most data directly.
-void System_Notify(SystemNotification notification) {
-	switch (notification) {
-	case SystemNotification::BOOT_DONE:
-	{
-		if (g_symbolMap)
-			g_symbolMap->SortSymbols();  // internal locking is performed here
-		PostMessage(MainWindow::GetHWND(), WM_USER + 1, 0, 0);
-
-		if (disasmWindow)
-			PostDialogMessage(disasmWindow, WM_DEB_SETDEBUGLPARAM, 0, (LPARAM)Core_IsStepping());
-		break;
-	}
-
-	case SystemNotification::UI:
-	{
-		PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_UPDATE_UI, 0, 0);
-
-		int peers = GetInstancePeerCount();
-		if (PPSSPP_ID >= 1 && peers != g_lastNumInstances) {
-			g_lastNumInstances = peers;
-			PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_WINDOW_TITLE_CHANGED, 0, 0);
-		}
-		break;
-	}
-
-	case SystemNotification::MEM_VIEW:
-		if (memoryWindow)
-			PostDialogMessage(memoryWindow, WM_DEB_UPDATE);
-		break;
-
-	case SystemNotification::DISASSEMBLY:
-		if (disasmWindow)
-			PostDialogMessage(disasmWindow, WM_DEB_UPDATE);
-		break;
-
-	case SystemNotification::SYMBOL_MAP_UPDATED:
-		if (g_symbolMap)
-			g_symbolMap->SortSymbols();  // internal locking is performed here
-		PostMessage(MainWindow::GetHWND(), WM_USER + 1, 0, 0);
-		break;
-
-	case SystemNotification::SWITCH_UMD_UPDATED:
-		PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_SWITCHUMD_UPDATED, 0, 0);
-		break;
-
-	case SystemNotification::DEBUG_MODE_CHANGE:
-		if (disasmWindow)
-			PostDialogMessage(disasmWindow, WM_DEB_SETDEBUGLPARAM, 0, (LPARAM)Core_IsStepping());
-		break;
-
-	case SystemNotification::POLL_CONTROLLERS:
-		g_inputManager.PollControllers();
-		break;
-
-	case SystemNotification::TOGGLE_DEBUG_CONSOLE:
-		MainWindow::ToggleDebugConsoleVisibility();
-		break;
-
-	case SystemNotification::ACTIVITY:
-		g_lastActivity = time_now_d();
-		break;
-
-	case SystemNotification::KEEP_SCREEN_AWAKE:
-	{
-		// Keep the system awake for longer than normal for cutscenes and the like.
-		const double now = time_now_d();
-		if (now < g_lastActivity + ACTIVITY_IDLE_TIMEOUT) {
-			// Only resetting it ever prime number seconds in case the call is expensive.
-			// Using a prime number to ensure there's no interaction with other periodic events.
-			if (now - g_lastKeepAwake > 89.0 || now < g_lastKeepAwake) {
-				// Note that this needs to be called periodically.
-				// It's also possible to set ES_CONTINUOUS but let's not, for simplicity.
-#if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
-				SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
-#endif
-				g_lastKeepAwake = now;
-			}
-		}
-		break;
-	}
-	}
-}
-
-std::wstring MakeFilter(std::wstring filter) {
-	for (size_t i = 0; i < filter.length(); i++) {
-		if (filter[i] == '|')
-			filter[i] = '\0';
-	}
-	return filter;
-}
-
-bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int param3) {
-	switch (type) {
-	case SystemRequestType::EXIT_APP:
+void System_SendMessage(const char *command, const char *parameter) {
+	if (!strcmp(command, "finish")) {
 		if (!NativeIsRestarting()) {
 			PostMessage(MainWindow::GetHWND(), WM_CLOSE, 0, 0);
 		}
-		return true;
-	case SystemRequestType::RESTART_APP:
-	{
-		restartArgs = param1;
-		if (!restartArgs.empty())
-			AddDebugRestartArgs();
-		if (System_GetPropertyBool(SYSPROP_DEBUGGER_PRESENT)) {
+	} else if (!strcmp(command, "graphics_restart")) {
+		restartArgs = parameter == nullptr ? "" : parameter;
+		if (IsDebuggerPresent()) {
 			PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_RESTART_EMUTHREAD, 0, 0);
 		} else {
 			g_Config.bRestartRequired = true;
 			PostMessage(MainWindow::GetHWND(), WM_CLOSE, 0, 0);
 		}
-		return true;
-	}
-	case SystemRequestType::COPY_TO_CLIPBOARD:
-	{
-		std::wstring data = ConvertUTF8ToWString(param1);
-		W32Util::CopyTextToClipboard(MainWindow::GetDisplayHWND(), data);
-		return true;
-	}
-	case SystemRequestType::SET_WINDOW_TITLE:
-	{
-		const char *name = System_GetPropertyBool(SYSPROP_APP_GOLD) ? "PPSSPP Gold " : "PPSSPP ";
-		std::wstring winTitle = ConvertUTF8ToWString(std::string(name) + PPSSPP_GIT_VERSION);
-		if (!param1.empty()) {
-			winTitle.append(ConvertUTF8ToWString(" - " + param1));
+	} else if (!strcmp(command, "graphics_failedBackend")) {
+		auto err = GetI18NCategory("Error");
+		const char *backendSwitchError = err->T("GenericBackendSwitchCrash", "PPSSPP crashed while starting. This usually means a graphics driver problem. Try upgrading your graphics drivers.\n\nGraphics backend has been switched:");
+		std::wstring full_error = ConvertUTF8ToWString(StringFromFormat("%s %s", backendSwitchError, parameter));
+		std::wstring title = ConvertUTF8ToWString(err->T("GenericGraphicsError", "Graphics Error"));
+		MessageBox(MainWindow::GetHWND(), full_error.c_str(), title.c_str(), MB_OK);
+	} else if (!strcmp(command, "setclipboardtext")) {
+		if (OpenClipboard(MainWindow::GetDisplayHWND())) {
+			std::wstring data = ConvertUTF8ToWString(parameter);
+			HANDLE handle = GlobalAlloc(GMEM_MOVEABLE, (data.size() + 1) * sizeof(wchar_t));
+			wchar_t *wstr = (wchar_t *)GlobalLock(handle);
+			memcpy(wstr, data.c_str(), (data.size() + 1) * sizeof(wchar_t));
+			GlobalUnlock(wstr);
+			SetClipboardData(CF_UNICODETEXT, handle);
+			GlobalFree(handle);
+			CloseClipboard();
 		}
-#ifdef _DEBUG
-		winTitle.append(L" (debug)");
-#endif
-		MainWindow::SetWindowTitle(winTitle.c_str());
-		PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_WINDOW_TITLE_CHANGED, 0, 0);
-		return true;
-	}
-	case SystemRequestType::INPUT_TEXT_MODAL:
-		std::thread([=] {
-			std::string out;
-			if (InputBox_GetString(MainWindow::GetHInstance(), MainWindow::GetHWND(), ConvertUTF8ToWString(param1).c_str(), param2, out)) {
-				g_requestManager.PostSystemSuccess(requestId, out.c_str());
-			} else {
-				g_requestManager.PostSystemFailure(requestId);
-			}
-		}).detach();
-		return true;
-	case SystemRequestType::ASK_USERNAME_PASSWORD:
-		std::thread([=] {
-			std::string username;
-			std::string password;
-			if (UserPasswordBox_GetStrings(MainWindow::GetHInstance(), MainWindow::GetHWND(), ConvertUTF8ToWString(param1).c_str(), &username, &password)) {
-				g_requestManager.PostSystemSuccess(requestId, (username + '\n' + password).c_str());
-			} else {
-				g_requestManager.PostSystemFailure(requestId);
-			}
-		}).detach();
-		return true;
-	case SystemRequestType::BROWSE_FOR_IMAGE:
-		std::thread([=] {
-			std::string out;
-			if (W32Util::BrowseForFileName(true, MainWindow::GetHWND(), ConvertUTF8ToWString(param1).c_str(), nullptr,
-				MakeFilter(L"All supported images (*.jpg *.jpeg *.png)|*.jpg;*.jpeg;*.png|All files (*.*)|*.*||").c_str(), L"jpg", out)) {
-				g_requestManager.PostSystemSuccess(requestId, out.c_str());
-			} else {
-				g_requestManager.PostSystemFailure(requestId);
-			}
-		}).detach();
-		return true;
-	case SystemRequestType::BROWSE_FOR_FILE:
-	{
-		BrowseFileType type = (BrowseFileType)param3;
-		std::wstring filter;
-		switch (type) {
-		case BrowseFileType::BOOTABLE:
-			filter = MakeFilter(L"All supported file types (*.iso *.cso *.chd *.pbp *.elf *.prx *.zip *.ppdmp)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.prx;*.zip;*.ppdmp|PSP ROMs (*.iso *.cso *.chd *.pbp *.elf *.prx)|*.pbp;*.elf;*.iso;*.cso;*.chd;*.prx|Homebrew/Demos installers (*.zip)|*.zip|All files (*.*)|*.*||");
-			break;
-		case BrowseFileType::INI:
-			filter = MakeFilter(L"Ini files (*.ini)|*.ini|All files (*.*)|*.*||");
-			break;
-		case BrowseFileType::DB:
-			filter = MakeFilter(L"Cheat db files (*.db)|*.db|All files (*.*)|*.*||");
-			break;
-		case BrowseFileType::SOUND_EFFECT:
-			filter = MakeFilter(L"WAVE files (*.wav)|*.wav|All files (*.*)|*.*||");
-			break;
-		case BrowseFileType::ANY:
-			filter = MakeFilter(L"All files (*.*)|*.*||");
-			break;
-		default:
-			return false;
-		}
-
-		std::thread([=] {
-			std::string out;
-			if (W32Util::BrowseForFileName(true, MainWindow::GetHWND(), ConvertUTF8ToWString(param1).c_str(), nullptr, filter.c_str(), L"", out)) {
-				g_requestManager.PostSystemSuccess(requestId, out.c_str());
-			} else {
-				g_requestManager.PostSystemFailure(requestId);
-			}
-		}).detach();
-		return true;
-	}
-	case SystemRequestType::BROWSE_FOR_FOLDER:
-	{
-		std::thread([=] {
-			std::string folder = W32Util::BrowseForFolder(MainWindow::GetHWND(), param1.c_str());
-			if (folder.size()) {
-				g_requestManager.PostSystemSuccess(requestId, folder.c_str());
-			} else {
-				g_requestManager.PostSystemFailure(requestId);
-			}
-		}).detach();
-		return true;
-	}
-
-	case SystemRequestType::SHOW_FILE_IN_FOLDER:
-		W32Util::ShowFileInFolder(param1);
-		return true;
-
-	case SystemRequestType::TOGGLE_FULLSCREEN_STATE:
-	{
+	} else if (!strcmp(command, "browse_file")) {
+		MainWindow::BrowseAndBoot("");
+	} else if (!strcmp(command, "browse_folder")) {
+		auto mm = GetI18NCategory("MainMenu");
+		std::string folder = W32Util::BrowseForFolder(MainWindow::GetHWND(), mm->T("Choose folder"));
+		if (folder.size())
+			NativeMessageReceived("browse_folderSelect", folder.c_str());
+	} else if (!strcmp(command, "bgImage_browse")) {
+		MainWindow::BrowseBackground();
+	} else if (!strcmp(command, "toggle_fullscreen")) {
 		bool flag = !MainWindow::IsFullscreen();
-		if (param1 == "0") {
+		if (strcmp(parameter, "0") == 0) {
 			flag = false;
-		} else if (param1 == "1") {
+		} else if (strcmp(parameter, "1") == 0) {
 			flag = true;
 		}
 		MainWindow::SendToggleFullscreen(flag);
-		return true;
-	}
-	case SystemRequestType::GRAPHICS_BACKEND_FAILED_ALERT:
-	{
-		auto err = GetI18NCategory(I18NCat::ERRORS);
-		const char *backendSwitchError = err->T("GenericBackendSwitchCrash", "PPSSPP crashed while starting. This usually means a graphics driver problem. Try upgrading your graphics drivers.\n\nGraphics backend has been switched:");
-		std::wstring full_error = ConvertUTF8ToWString(StringFromFormat("%s %s", backendSwitchError, param1.c_str()));
-		std::wstring title = ConvertUTF8ToWString(err->T("GenericGraphicsError", "Graphics Error"));
-		MessageBox(MainWindow::GetHWND(), full_error.c_str(), title.c_str(), MB_OK);
-		return true;
-	}
-	case SystemRequestType::CREATE_GAME_SHORTCUT:
-		return W32Util::CreateDesktopShortcut(param1, param2);
-	default:
-		return false;
 	}
 }
 
@@ -645,8 +400,6 @@ void EnableCrashingOnCrashes() {
 	const DWORD EXCEPTION_SWALLOWING = 0x1;
 
 	HMODULE kernel32 = LoadLibrary(L"kernel32.dll");
-	if (!kernel32)
-		return;
 	tGetPolicy pGetPolicy = (tGetPolicy)GetProcAddress(kernel32,
 		"GetProcessUserModeExceptionPolicy");
 	tSetPolicy pSetPolicy = (tSetPolicy)GetProcAddress(kernel32,
@@ -659,6 +412,22 @@ void EnableCrashingOnCrashes() {
 		}
 	}
 	FreeLibrary(kernel32);
+}
+
+void System_InputBoxGetString(const std::string &title, const std::string &defaultValue, std::function<void(bool, const std::string &)> cb) {
+	if (inputBoxRunning) {
+		inputBoxThread.join();
+	}
+
+	inputBoxRunning = true;
+	inputBoxThread = std::thread([=] {
+		std::string out;
+		if (InputBox_GetString(MainWindow::GetHInstance(), MainWindow::GetHWND(), ConvertUTF8ToWString(title).c_str(), defaultValue, out)) {
+			NativeInputBoxReceived(cb, true, out);
+		} else {
+			NativeInputBoxReceived(cb, false, "");
+		}
+	});
 }
 
 void System_Toast(const char *text) {
@@ -698,13 +467,28 @@ static bool DetectVulkanInExternalProcess() {
 
 	const wchar_t *cmdline = L"--vulkan-available-check";
 
-	DWORD exitCode = 0;
-	if (W32Util::ExecuteAndGetReturnCode(moduleFilename.c_str(), cmdline, workingDirectory.c_str(), &exitCode)) {
-		return exitCode == EXIT_CODE_VULKAN_WORKS;
-	} else {
-		ERROR_LOG(G3D, "Failed to detect Vulkan in external process somehow");
+	SHELLEXECUTEINFO info{ sizeof(SHELLEXECUTEINFO) };
+	info.fMask = SEE_MASK_NOCLOSEPROCESS;
+	info.lpFile = moduleFilename.c_str();
+	info.lpParameters = cmdline;
+	info.lpDirectory = workingDirectory.c_str();
+	info.nShow = SW_HIDE;
+	if (ShellExecuteEx(&info) != TRUE) {
 		return false;
 	}
+	if (info.hProcess == nullptr) {
+		return false;
+	}
+
+	DWORD result = WaitForSingleObject(info.hProcess, 10000);
+	DWORD exitCode = 0;
+	if (result == WAIT_FAILED || GetExitCodeProcess(info.hProcess, &exitCode) == 0) {
+		CloseHandle(info.hProcess);
+		return false;
+	}
+	CloseHandle(info.hProcess);
+
+	return exitCode == EXIT_CODE_VULKAN_WORKS;
 }
 #endif
 
@@ -724,65 +508,6 @@ std::vector<std::wstring> GetWideCmdLine() {
 	LocalFree(wargv);
 
 	return wideArgs;
-}
-
-static void InitMemstickDirectory() {
-	if (!g_Config.memStickDirectory.empty() && !g_Config.flash0Directory.empty())
-		return;
-
-	const Path &exePath = File::GetExeDirectory();
-	// Mount a filesystem
-	g_Config.flash0Directory = exePath / "assets/flash0";
-
-	// Caller sets this to the Documents folder.
-	const Path rootMyDocsPath = g_Config.internalDataDirectory;
-	const Path myDocsPath = rootMyDocsPath / "PPSSPP";
-	const Path installedFile = exePath / "installed.txt";
-	const bool installed = File::Exists(installedFile);
-
-	// If installed.txt exists(and we can determine the Documents directory)
-	if (installed && !rootMyDocsPath.empty()) {
-		FILE *fp = File::OpenCFile(installedFile, "rt");
-		if (fp) {
-			char temp[2048];
-			char *tempStr = fgets(temp, sizeof(temp), fp);
-			// Skip UTF-8 encoding bytes if there are any. There are 3 of them.
-			if (tempStr && strncmp(tempStr, "\xEF\xBB\xBF", 3) == 0) {
-				tempStr += 3;
-			}
-			std::string tempString = tempStr ? tempStr : "";
-			if (!tempString.empty() && tempString.back() == '\n')
-				tempString.resize(tempString.size() - 1);
-
-			g_Config.memStickDirectory = Path(tempString);
-			fclose(fp);
-		}
-
-		// Check if the file is empty first, before appending the slash.
-		if (g_Config.memStickDirectory.empty())
-			g_Config.memStickDirectory = myDocsPath;
-	} else {
-		g_Config.memStickDirectory = exePath / "memstick";
-	}
-
-	// Create the memstickpath before trying to write to it, and fall back on Documents yet again
-	// if we can't make it.
-	if (!File::Exists(g_Config.memStickDirectory)) {
-		if (!File::CreateDir(g_Config.memStickDirectory))
-			g_Config.memStickDirectory = myDocsPath;
-		INFO_LOG(COMMON, "Memstick directory not present, creating at '%s'", g_Config.memStickDirectory.c_str());
-	}
-
-	Path testFile = g_Config.memStickDirectory / "_writable_test.$$$";
-
-	// If any directory is read-only, fall back to the Documents directory.
-	// We're screwed anyway if we can't write to Documents, or can't detect it.
-	if (!File::CreateEmptyFile(testFile))
-		g_Config.memStickDirectory = myDocsPath;
-
-	// Clean up our mess.
-	if (File::Exists(testFile))
-		File::Delete(testFile);
 }
 
 static void WinMainInit() {
@@ -806,47 +531,22 @@ static void WinMainInit() {
 	// FMA3 support in the 2013 CRT is broken on Vista and Windows 7 RTM (fixed in SP1). Just disable it.
 	_set_FMA3_enable(0);
 #endif
-
-	InitDarkMode();
 }
 
 static void WinMainCleanup() {
-	// This will ensure no further callbacks are called, which may prevent crashing.
-	g_requestManager.Clear();
+	if (inputBoxRunning) {
+		inputBoxThread.join();
+		inputBoxRunning = false;
+	}
 	net::Shutdown();
 	CoUninitialize();
 
 	if (g_Config.bRestartRequired) {
-		// TODO: ExitAndRestart prevents the Config::~Config destructor from running,
-		// which normally would have done this instance counter update.
-		// ExitAndRestart calls ExitProcess which really bad, we should do something better that
-		// allows us to fall out of main() properly.
-		if (g_Config.bUpdatedInstanceCounter) {
-			ShutdownInstanceCounter();
-		}
 		W32Util::ExitAndRestart(!restartArgs.empty(), restartArgs);
 	}
 }
 
 int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine, int iCmdShow) {
-	std::vector<std::wstring> wideArgs = GetWideCmdLine();
-
-	// Check for the Vulkan workaround before any serious init.
-	for (size_t i = 1; i < wideArgs.size(); ++i) {
-		if (wideArgs[i][0] == L'-') {
-			// This should only be called by DetectVulkanInExternalProcess().
-			if (wideArgs[i] == L"--vulkan-available-check") {
-				// Just call it, this way it will crash here if it doesn't work.
-				// (this is an external process.)
-				bool result = VulkanMayBeAvailable();
-
-				LogManager::Shutdown();
-				WinMainCleanup();
-				return result ? EXIT_CODE_VULKAN_WORKS : EXIT_FAILURE;
-			}
-		}
-	}
-
 	SetCurrentThreadName("Main");
 
 	WinMainInit();
@@ -858,8 +558,8 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 #endif
 
 	const Path &exePath = File::GetExeDirectory();
-	g_VFS.Register("", new DirectoryReader(exePath / "assets"));
-	g_VFS.Register("", new DirectoryReader(exePath));
+	VFSRegister("", new DirectoryAssetReader(exePath / "assets"));
+	VFSRegister("", new DirectoryAssetReader(exePath));
 
 	langRegion = GetDefaultLangRegion();
 	osName = GetWindowsVersion() + " " + GetWindowsSystemArchitecture();
@@ -870,6 +570,7 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 	std::string controlsConfigFilename = "";
 	const std::wstring controlsOption = L"--controlconfig=";
 
+	std::vector<std::wstring> wideArgs = GetWideCmdLine();
 
 	for (size_t i = 1; i < wideArgs.size(); ++i) {
 		if (wideArgs[i][0] == L'\0')
@@ -892,9 +593,23 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 	// On Win32 it makes more sense to initialize the system directories here
 	// because the next place it was called was in the EmuThread, and it's too late by then.
 	g_Config.internalDataDirectory = Path(W32Util::UserDocumentsPath());
-	InitMemstickDirectory();
-	CreateSysDirectories();
+	InitSysDirectories();
 
+	// Check for the Vulkan workaround before any serious init.
+	for (size_t i = 1; i < wideArgs.size(); ++i) {
+		if (wideArgs[i][0] == L'-') {
+			// This should only be called by DetectVulkanInExternalProcess().
+			if (wideArgs[i] == L"--vulkan-available-check") {
+				// Just call it, this way it will crash here if it doesn't work.
+				// (this is an external process.)
+				bool result = VulkanMayBeAvailable();
+
+				LogManager::Shutdown();
+				WinMainCleanup();
+				return result ? EXIT_CODE_VULKAN_WORKS : EXIT_FAILURE;
+			}
+		}
+	}
 
 	// Load config up here, because those changes below would be overwritten
 	// if it's not loaded here first.
@@ -975,7 +690,7 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 	LogManager::GetInstance()->GetConsoleListener()->Init(showLog, 150, 120, "PPSSPP Debug Console");
 
 	if (debugLogLevel) {
-		LogManager::GetInstance()->SetAllLogLevels(LogLevel::LDEBUG);
+		LogManager::GetInstance()->SetAllLogLevels(LogTypes::LDEBUG);
 	}
 
 	// This still seems to improve performance noticeably.
@@ -1004,8 +719,6 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 	if (minimized) {
 		MainWindow::Minimize();
 	}
-
-	g_inputManager.Init();
 
 	// Emu thread (and render thread, if any) is always running!
 	// Only OpenGL uses an externally managed render thread (due to GL's single-threaded context design). Vulkan
@@ -1049,7 +762,7 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 			break;
 		}
 
-		if (!wnd || !accel || !TranslateAccelerator(wnd, accel, &msg)) {
+		if (!TranslateAccelerator(wnd, accel, &msg)) {
 			if (!DialogManager::IsDialogMessage(&msg)) {
 				//and finally translate and dispatch
 				TranslateMessage(&msg);
@@ -1058,7 +771,9 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 		}
 	}
 
-	g_VFS.Clear();
+	MainThread_Stop();
+
+	VFSShutdown();
 
 	MainWindow::DestroyDebugWindows();
 	DialogManager::DestroyAll();

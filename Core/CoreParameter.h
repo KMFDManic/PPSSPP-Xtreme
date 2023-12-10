@@ -19,7 +19,6 @@
 
 #include <string>
 
-#include "Common/File/Path.h"
 #include "Core/Compatibility.h"
 
 enum GPUCore {
@@ -62,11 +61,12 @@ struct CoreParameter {
 	std::string errorString;
 
 	bool startBreak;
-	std::string *collectDebugOutput = nullptr;
+	bool printfEmuLog;  // writes "emulator:" logging to stdout
+	std::string *collectEmuLog = nullptr;
 	bool headLess;   // Try to avoid messageboxes etc
 
 	// Internal PSP rendering resolution and scale factor.
-	int renderScaleFactor = 1;
+	int renderScaleFactor;
 	int renderWidth;
 	int renderHeight;
 

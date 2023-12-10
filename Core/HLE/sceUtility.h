@@ -85,7 +85,6 @@ enum class UtilityDialogType {
 	SCREENSHOT,
 	GAMESHARING,
 	GAMEDATAINSTALL,
-	NPSIGNIN,
 };
 
 void __UtilityInit();

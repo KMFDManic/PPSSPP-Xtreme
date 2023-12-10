@@ -16,7 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-
 #include <deque>
 #include <thread>
 #include <mutex>
@@ -25,23 +24,12 @@
 #include <cstdlib>
 #include <cstdarg>
 
-// for crc32
-extern "C" {
-#include "zlib.h"
-}
-
 #include "Core/Reporting.h"
 #include "Common/File/VFS/VFS.h"
 #include "Common/CPUDetect.h"
 #include "Common/File/FileUtil.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/StringUtils.h"
-#include "Common/System/OSD.h"
-#include "Common/Data/Text/I18n.h"
-#include "Common/Net/HTTPClient.h"
-#include "Common/Net/Resolve.h"
-#include "Common/Net/URL.h"
-#include "Common/Thread/ThreadUtil.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
 #include "Core/Config.h"
@@ -49,15 +37,18 @@ extern "C" {
 #include "Core/Loaders.h"
 #include "Core/SaveState.h"
 #include "Core/System.h"
-#include "Core/ELF/ParamSFO.h"
 #include "Core/FileSystems/BlockDevices.h"
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/HLE/Plugins.h"
 #include "Core/HLE/sceKernelMemory.h"
-#include "Core/HLE/scePower.h"
 #include "Core/HW/Display.h"
+#include "Core/ELF/ParamSFO.h"
 #include "GPU/GPUInterface.h"
 #include "GPU/GPUState.h"
+#include "Common/Net/HTTPClient.h"
+#include "Common/Net/Resolve.h"
+#include "Common/Net/URL.h"
+#include "Common/Thread/ThreadUtil.h"
 
 namespace Reporting
 {
@@ -78,10 +69,6 @@ namespace Reporting
 	static bool serverWorking = true;
 	// The latest compatibility result from the server.
 	static std::vector<std::string> lastCompatResult;
-
-	static std::string lastModuleName;
-	static int lastModuleVersion;
-	static uint32_t lastModuleCrc;
 
 	static std::mutex pendingMessageLock;
 	static std::condition_variable pendingMessageCond;
@@ -117,42 +104,15 @@ namespace Reporting
 	static volatile bool crcCancel = false;
 	static std::thread crcThread;
 
-	static u32 CalculateCRC(BlockDevice *blockDevice, volatile bool *cancel) {
-		auto ga = GetI18NCategory(I18NCat::GAME);
-
-		u32 crc = crc32(0, Z_NULL, 0);
-
-		u8 block[2048];
-		u32 numBlocks = blockDevice->GetNumBlocks();
-		for (u32 i = 0; i < numBlocks; ++i) {
-			if (cancel && *cancel) {
-				g_OSD.RemoveProgressBar("crc", false, 0.0f);
-				return 0;
-			}
-			if (!blockDevice->ReadBlock(i, block, true)) {
-				ERROR_LOG(FILESYS, "Failed to read block for CRC");
-				g_OSD.RemoveProgressBar("crc", false, 0.0f);
-				return 0;
-			}
-			crc = crc32(crc, block, 2048);
-			g_OSD.SetProgressBar("crc", std::string(ga->T("Calculate CRC")), 0.0f, (float)numBlocks, (float)i, 0.5f);
-		}
-
-		g_OSD.RemoveProgressBar("crc", true, 0.0f);
-		return crc;
-	}
-
 	static int CalculateCRCThread() {
 		SetCurrentThreadName("ReportCRC");
-
-		AndroidJNIThreadContext jniContext;
 
 		FileLoader *fileLoader = ResolveFileLoaderTarget(ConstructFileLoader(crcFilename));
 		BlockDevice *blockDevice = constructBlockDevice(fileLoader);
 
 		u32 crc = 0;
 		if (blockDevice) {
-			crc = CalculateCRC(blockDevice, &crcCancel);
+			crc = blockDevice->CalculateCRC(&crcCancel);
 		}
 
 		delete blockDevice;
@@ -162,7 +122,6 @@ namespace Reporting
 		crcResults[crcFilename] = crc;
 		crcPending = false;
 		crcCond.notify_one();
-		
 		return 0;
 	}
 
@@ -177,7 +136,8 @@ namespace Reporting
 		}
 
 		if (crcPending) {
-			// Already in process. This is OK - on the crash screen we call this in a polling fashion.
+			// Already in process.
+			INFO_LOG(SYSTEM, "CRC already pending");
 			return;
 		}
 
@@ -307,7 +267,7 @@ namespace Reporting
 	bool SendReportRequest(const char *uri, const std::string &data, const std::string &mimeType, Buffer *output = NULL)
 	{
 		http::Client http;
-		net::RequestProgress progress(&pendingMessagesDone);
+		http::RequestProgress progress(&pendingMessagesDone);
 		Buffer theVoid = Buffer::Void();
 
 		http.SetUserAgent(StringFromFormat("PPSSPP/%s", PPSSPP_GIT_VERSION));
@@ -392,10 +352,6 @@ namespace Reporting
 		currentSupported = IsSupported();
 		pendingMessagesDone = false;
 		Reporting::SetupCallbacks(&MessageAllowed, &SendReportMessage);
-
-		lastModuleName.clear();
-		lastModuleVersion = 0;
-		lastModuleCrc = 0;
 	}
 
 	void Shutdown()
@@ -434,17 +390,6 @@ namespace Reporting
 			everUnsupported = true;
 	}
 
-	void NotifyDebugger() {
-		currentSupported = false;
-		everUnsupported = true;
-	}
-
-	void NotifyExecModule(const char *name, int ver, uint32_t crc) {
-		lastModuleName = name;
-		lastModuleVersion = ver;
-		lastModuleCrc = crc;
-	}
-
 	std::string CurrentGameID()
 	{
 		// TODO: Maybe ParamSFOData shouldn't include nulls in std::strings?  Don't work to break savedata, though...
@@ -458,9 +403,6 @@ namespace Reporting
 		postdata.Add("game", CurrentGameID());
 		postdata.Add("game_title", StripTrailingNull(g_paramSFO.GetValueString("TITLE")));
 		postdata.Add("sdkver", sceKernelGetCompiledSdkVersion());
-		postdata.Add("module_name", lastModuleName);
-		postdata.Add("module_ver", lastModuleVersion);
-		postdata.Add("module_crc", lastModuleCrc);
 	}
 
 	void AddSystemInfo(UrlEncoder &postdata)
@@ -487,8 +429,7 @@ namespace Reporting
 	void AddGameplayInfo(UrlEncoder &postdata)
 	{
 		// Just to get an idea of how long they played.
-		if (PSP_IsInited())
-			postdata.Add("ticks", (const uint64_t)CoreTiming::GetTicks());
+		postdata.Add("ticks", (const uint64_t)CoreTiming::GetTicks());
 
 		float vps, fps;
 		__DisplayGetAveragedFPS(&vps, &fps);
@@ -514,8 +455,6 @@ namespace Reporting
 	int Process(int pos)
 	{
 		SetCurrentThreadName("Report");
-
-		AndroidJNIThreadContext jniContext;  // destructor detaches
 
 		Payload &payload = payloadBuffer[pos];
 		Buffer output;
@@ -586,7 +525,7 @@ namespace Reporting
 		// Disabled when using certain hacks, because they make for poor reports.
 		if (CheatsInEffect() || HLEPlugins::HasEnabled())
 			return false;
-		if (GetLockedCPUSpeedMhz() != 0)
+		if (g_Config.iLockedCPUSpeed != 0)
 			return false;
 		if (g_Config.uJitDisableFlags != 0)
 			return false;
@@ -606,7 +545,7 @@ namespace Reporting
 			return false;
 #else
 		File::FileInfo fo;
-		if (!g_VFS.GetFileInfo("flash0/font/jpn0.pgf", &fo))
+		if (!VFSGetFileInfo("flash0/font/jpn0.pgf", &fo))
 			return false;
 #endif
 

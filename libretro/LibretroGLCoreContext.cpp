@@ -26,7 +26,7 @@ void LibretroGLCoreContext::CreateDrawContext() {
 		glewInitDone = true;
 		CheckGLExtensions();
 	}
-	draw_ = Draw::T3DCreateGLContext(false);
+	draw_ = Draw::T3DCreateGLContext();
 	renderManager_ = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 	renderManager_->SetInflightFrames(g_Config.iInflightFrames);
 	SetGPUBackend(GPUBackend::OPENGL);

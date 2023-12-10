@@ -55,9 +55,7 @@ void FakeJit::DoState(PointerWrap &p) {
 	Do(p, js.startDefaultPrefix);
 	if (s >= 2) {
 		Do(p, js.hasSetRounding);
-		if (p.mode == PointerWrap::MODE_READ) {
-			js.lastSetRounding = 0;
-		}
+		js.lastSetRounding = 0;
 	} else {
 		js.hasSetRounding = 1;
 	}
@@ -100,10 +98,9 @@ void FakeJit::ClearCache()
 	//GenerateFixedCode();
 }
 
-void FakeJit::InvalidateCacheAt(u32 em_address, int length) {
-	if (blocks.RangeMayHaveEmuHacks(em_address, em_address + length)) {
-		blocks.InvalidateICache(em_address, length);
-	}
+void FakeJit::InvalidateCacheAt(u32 em_address, int length)
+{
+	blocks.InvalidateICache(em_address, length);
 }
 
 void FakeJit::EatInstruction(MIPSOpcode op) {
@@ -128,13 +125,14 @@ void FakeJit::CompileDelaySlot(int flags)
 void FakeJit::Compile(u32 em_address) {
 }
 
-void FakeJit::RunLoopUntil(u64 globalticks) {
-	MIPSInterpret_RunUntil(globalticks);
+void FakeJit::RunLoopUntil(u64 globalticks)
+{
+	((void (*)())enterCode)();
 }
 
-const u8 *FakeJit::DoJit(u32 em_address, JitBlock *b) {
-	_assert_(false);
-	return nullptr;
+const u8 *FakeJit::DoJit(u32 em_address, JitBlock *b)
+{
+	return b->normalEntry;
 }
 
 void FakeJit::AddContinuedBlock(u32 dest)
@@ -151,6 +149,10 @@ void FakeJit::Comp_RunBlock(MIPSOpcode op)
 {
 	// This shouldn't be necessary, the dispatcher should catch us before we get here.
 	ERROR_LOG(JIT, "Comp_RunBlock should never be reached!");
+}
+
+bool FakeJit::ReplaceJalTo(u32 dest) {
+	return true;
 }
 
 void FakeJit::Comp_ReplacementFunc(MIPSOpcode op)

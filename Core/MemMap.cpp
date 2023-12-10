@@ -44,6 +44,7 @@
 #include "Core/MIPS/JitCommon/JitBlockCache.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Common/Thread/ParallelLoop.h"
+#include "UI/OnScreenDisplay.h"
 
 namespace Memory {
 
@@ -95,7 +96,7 @@ static MemoryView views[] =
 	{&m_pPhysicalRAM[0],      0x08000000, g_MemorySize, MV_IS_PRIMARY_RAM},	// only from 0x08800000 is it usable (last 24 megs)
 	{&m_pUncachedRAM[0],      0x48000000, g_MemorySize, MV_MIRROR_PREVIOUS | MV_IS_PRIMARY_RAM},
 	{&m_pKernelRAM[0],        0x88000000, g_MemorySize, MV_MIRROR_PREVIOUS | MV_IS_PRIMARY_RAM | MV_KERNEL},
-	{&m_pUncachedKernelRAM[0],0xC8000000, g_MemorySize, MV_MIRROR_PREVIOUS | MV_IS_PRIMARY_RAM | MV_KERNEL},
+	{&m_pUncachedKernelRAM[0],0xC0000000, g_MemorySize, MV_MIRROR_PREVIOUS | MV_IS_PRIMARY_RAM | MV_KERNEL},
 	// Starts at memory + 31 MB.
 	{&m_pPhysicalRAM[1],      0x09F00000, g_MemorySize, MV_IS_EXTRA1_RAM},
 	{&m_pUncachedRAM[1],      0x49F00000, g_MemorySize, MV_MIRROR_PREVIOUS | MV_IS_EXTRA1_RAM},
@@ -187,7 +188,7 @@ bail:
 		SKIP(flags, views[i].flags);
 		if (*views[j].out_ptr) {
 			if (!CanIgnoreView(views[j])) {
-				g_arena.ReleaseView(0, *views[j].out_ptr, views[j].size);
+				g_arena.ReleaseView(*views[j].out_ptr, views[j].size);
 			}
 			*views[j].out_ptr = NULL;
 		}
@@ -254,9 +255,6 @@ bool MemoryMap_Setup(u32 flags) {
 	{
 #if !PPSSPP_PLATFORM(UWP)
 		base = g_arena.Find4GBBase();
-		if (!base) {
-			return false;
-		}
 #endif
 	}
 
@@ -265,24 +263,13 @@ bool MemoryMap_Setup(u32 flags) {
 }
 
 void MemoryMap_Shutdown(u32 flags) {
-	size_t position = 0;
-	size_t last_position = 0;
-
 	for (int i = 0; i < num_views; i++) {
 		if (views[i].size == 0)
 			continue;
 		SKIP(flags, views[i].flags);
-        
-		if (views[i].flags & MV_MIRROR_PREVIOUS) {
-			position = last_position;
-		}
-
 		if (*views[i].out_ptr)
-			g_arena.ReleaseView(position, *views[i].out_ptr, views[i].size);
+			g_arena.ReleaseView(*views[i].out_ptr, views[i].size);
 		*views[i].out_ptr = nullptr;
-
-		last_position = position;
-		position += g_arena.roundup(views[i].size);
 	}
 	g_arena.ReleaseSpace();
 
@@ -347,8 +334,6 @@ static void DoMemoryVoid(PointerWrap &p, uint32_t start, uint32_t size) {
 			for (int i = l; i < h; i++)
 				_dbg_assert_msg_(d[i] == storage[i], "Savestate verification failure: %d (0x%X) (at %p) != %d (0x%X) (at %p).\n", d[i], d[i], &d[i], storage[i], storage[i], &storage[i]);
 		}, 0, size, 128);
-		break;
-	case PointerWrap::MODE_NOOP:
 		break;
 	}
 	storage += size;
@@ -505,12 +490,3 @@ void Memset(const u32 _Address, const u8 _iValue, const u32 _iLength, const char
 }
 
 } // namespace
-
-void PSPPointerNotifyRW(int rw, uint32_t ptr, uint32_t bytes, const char * tag, size_t tagLen) {
-	if (MemBlockInfoDetailed(bytes)) {
-		if (rw & 1)
-			NotifyMemInfo(MemBlockFlags::WRITE, ptr, bytes, tag, tagLen);
-		if (rw & 2)
-			NotifyMemInfo(MemBlockFlags::READ, ptr, bytes, tag, tagLen);
-	}
-}

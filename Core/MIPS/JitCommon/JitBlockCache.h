@@ -26,10 +26,11 @@
 #include "ppsspp_config.h"
 #include "Common/CommonTypes.h"
 #include "Common/CodeBlock.h"
+#include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPS.h"
 
 #if PPSSPP_ARCH(ARM) || PPSSPP_ARCH(ARM64)
-const int MAX_JIT_BLOCK_EXITS = 4;
+const int MAX_JIT_BLOCK_EXITS = 2;
 #else
 const int MAX_JIT_BLOCK_EXITS = 8;
 #endif
@@ -59,7 +60,7 @@ enum class DestroyType {
 // We should be careful not to access these block structures during runtime as they are large.
 // Fine to mess with them at block compile time though.
 struct JitBlock {
-	bool ContainsAddress(u32 em_address) const;
+	bool ContainsAddress(u32 em_address);
 
 	const u8 *checkedEntry;  // const, we have to translate to writable.
 	const u8 *normalEntry;
@@ -143,8 +144,6 @@ public:
 	// Returns a list of block numbers - only one block can start at a particular address, but they CAN overlap.
 	// This one is slow so should only be used for one-shots from the debugger UI, not for anything during runtime.
 	void GetBlockNumbersFromAddress(u32 em_address, std::vector<int> *block_numbers);
-	// Similar to above, but only the first matching address.
-	int GetBlockNumberFromAddress(u32 em_address);
 	int GetBlockNumberFromEmuHackOp(MIPSOpcode inst, bool ignoreBad = false) const;
 
 	u32 GetAddressFromBlockPtr(const u8 *ptr) const;
@@ -184,10 +183,10 @@ private:
 	MIPSOpcode GetEmuHackOpForBlock(int block_num) const;
 
 	CodeBlockCommon *codeBlock_;
-	JitBlock *blocks_ = nullptr;
+	JitBlock *blocks_;
 	std::unordered_multimap<u32, int> proxyBlockMap_;
 
-	int num_blocks_ = 0;
+	int num_blocks_;
 	std::unordered_multimap<u32, int> links_to_;
 	std::map<std::pair<u32,u32>, u32> block_map_; // (end_addr, start_addr) -> number
 

@@ -19,7 +19,7 @@
 
 #ifdef SDL
 
-#include "headless/HeadlessHost.h"
+#include "headless/StubHost.h"
 
 #undef HEADLESSHOST_CLASS
 #define HEADLESSHOST_CLASS SDLHeadlessHost
@@ -30,12 +30,14 @@ typedef void *SDL_GLContext;
 class SDLHeadlessHost : public HeadlessHost
 {
 public:
-	bool InitGraphics(std::string *error_message, GraphicsContext **ctx, GPUCore core) override;
+	bool InitGraphics(std::string *error_message, GraphicsContext **ctx) override;
 	void ShutdownGraphics() override;
 
 	void SwapBuffers() override;
 
 protected:
+	void LoadNativeAssets();
+
 	enum class RenderThreadState {
 		IDLE,
 		START_REQUESTED,

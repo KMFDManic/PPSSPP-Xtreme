@@ -20,7 +20,6 @@
 // TODO: For text align flags, probably shouldn't be in gfx_es2/...
 #include "Common/Render/DrawBuffer.h"
 #include "Common/GPU/thin3d.h"
-#include "Common/UI/AsyncImageFileView.h"
 #include "Common/UI/Context.h"
 #include "UI/PauseScreen.h"
 #include "UI/ReportScreen.h"
@@ -43,7 +42,7 @@ class RatingChoice : public LinearLayout {
 public:
 	RatingChoice(const char *captionKey, int *value, LayoutParams *layoutParams = 0);
 
-	RatingChoice *SetEnabledPtrs(bool *enabled);
+	RatingChoice *SetEnabledPtr(bool *enabled);
 
 	Event OnChoice;
 
@@ -71,7 +70,7 @@ RatingChoice::RatingChoice(const char *captionKey, int *value, LayoutParams *lay
 		: LinearLayout(ORIENT_VERTICAL, layoutParams), value_(value) {
 	SetSpacing(0.0f);
 
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 	group_ = new LinearLayout(ORIENT_HORIZONTAL);
 	Add(new TextView(rp->T(captionKey), FLAG_WRAP_TEXT, false))->SetShadow(true);
 	Add(group_);
@@ -94,7 +93,7 @@ void RatingChoice::Update() {
 	}
 }
 
-RatingChoice *RatingChoice::SetEnabledPtrs(bool *ptr) {
+RatingChoice *RatingChoice::SetEnabledPtr(bool *ptr) {
 	for (int i = 0; i < TotalChoices(); i++) {
 		GetChoice(i)->SetEnabledPtr(ptr);
 	}
@@ -103,7 +102,7 @@ RatingChoice *RatingChoice::SetEnabledPtrs(bool *ptr) {
 }
 
 void RatingChoice::SetupChoices() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 	AddChoice(0, rp->T("Bad"));
 	AddChoice(1, rp->T("OK"));
 	AddChoice(2, rp->T("Great"));
@@ -139,8 +138,8 @@ public:
 	CompatRatingChoice(const char *captionKey, int *value, LayoutParams *layoutParams = 0);
 
 protected:
-	void SetupChoices() override;
-	int TotalChoices() override {
+	virtual void SetupChoices() override;
+	virtual int TotalChoices() override {
 		return 5;
 	}
 };
@@ -151,7 +150,7 @@ CompatRatingChoice::CompatRatingChoice(const char *captionKey, int *value, Layou
 }
 
 void CompatRatingChoice::SetupChoices() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 	group_->Clear();
 	AddChoice(0, rp->T("Perfect"));
 	AddChoice(1, rp->T("Plays"));
@@ -247,13 +246,13 @@ EventReturn ReportScreen::HandleReportingChange(EventParams &e) {
 }
 
 void ReportScreen::CreateViews() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
-	auto di = GetI18NCategory(I18NCat::DIALOG);
-	auto sy = GetI18NCategory(I18NCat::SYSTEM);
+	auto rp = GetI18NCategory("Reporting");
+	auto di = GetI18NCategory("Dialog");
+	auto sy = GetI18NCategory("System");
 
 	Margins actionMenuMargins(0, 20, 15, 0);
 	Margins contentMargins(0, 20, 5, 5);
-	float leftColumnWidth = g_display.dp_xres - actionMenuMargins.horiz() - contentMargins.horiz() - 300.0f;
+	float leftColumnWidth = dp_xres - actionMenuMargins.horiz() - contentMargins.horiz() - 300.0f;
 	ViewGroup *leftColumn = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(WRAP_CONTENT, FILL_PARENT, 0.4f, contentMargins));
 	LinearLayout *leftColumnItems = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(WRAP_CONTENT, FILL_PARENT));
 	ViewGroup *rightColumn = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(300, FILL_PARENT, actionMenuMargins));
@@ -295,16 +294,16 @@ void ReportScreen::CreateViews() {
 		screenshot_ = nullptr;
 	}
 
-	leftColumnItems->Add(new CompatRatingChoice("Overall", (int *)&overall_))->SetEnabledPtrs(&enableReporting_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
+	leftColumnItems->Add(new CompatRatingChoice("Overall", (int *)&overall_))->SetEnabledPtr(&enableReporting_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
 	overallDescription_ = leftColumnItems->Add(new TextView("", FLAG_WRAP_TEXT, false, new LinearLayoutParams(Margins(10, 0))));
 	overallDescription_->SetShadow(true);
 
 	UI::Orientation ratingsOrient = leftColumnWidth >= 750.0f ? ORIENT_HORIZONTAL : ORIENT_VERTICAL;
 	UI::LinearLayout *ratingsHolder = new LinearLayoutList(ratingsOrient, new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT));
 	leftColumnItems->Add(ratingsHolder);
-	ratingsHolder->Add(new RatingChoice("Graphics", &graphics_))->SetEnabledPtrs(&ratingEnabled_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
-	ratingsHolder->Add(new RatingChoice("Speed", &speed_))->SetEnabledPtrs(&ratingEnabled_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
-	ratingsHolder->Add(new RatingChoice("Gameplay", &gameplay_))->SetEnabledPtrs(&ratingEnabled_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
+	ratingsHolder->Add(new RatingChoice("Graphics", &graphics_))->SetEnabledPtr(&ratingEnabled_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
+	ratingsHolder->Add(new RatingChoice("Speed", &speed_))->SetEnabledPtr(&ratingEnabled_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
+	ratingsHolder->Add(new RatingChoice("Gameplay", &gameplay_))->SetEnabledPtr(&ratingEnabled_)->OnChoice.Handle(this, &ReportScreen::HandleChoice);
 
 	rightColumnItems->SetSpacing(0.0f);
 	rightColumnItems->Add(new Choice(rp->T("Open Browser")))->OnClick.Handle(this, &ReportScreen::HandleBrowser);
@@ -333,12 +332,12 @@ void ReportScreen::UpdateSubmit() {
 }
 
 void ReportScreen::UpdateCRCInfo() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 	std::string updated;
 
 	if (Reporting::HasCRC(gamePath_)) {
 		std::string crc = StringFromFormat("%08X", Reporting::RetrieveCRC(gamePath_));
-		updated = ApplySafeSubstitutions(rp->T("FeedbackCRCValue", "Disc CRC: %1"), crc);
+		updated = ReplaceAll(rp->T("FeedbackCRCValue", "Disc CRC: %1"), "%1", crc);
 	} else if (showCRC_) {
 		updated = rp->T("FeedbackCRCCalculating", "Disc CRC: Calculating...");
 	}
@@ -351,7 +350,7 @@ void ReportScreen::UpdateCRCInfo() {
 }
 
 void ReportScreen::UpdateOverallDescription() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 	const char *desc;
 	uint32_t c = 0xFFFFFFFF;
 	switch (overall_) {
@@ -392,7 +391,7 @@ EventReturn ReportScreen::HandleSubmit(EventParams &e) {
 
 EventReturn ReportScreen::HandleBrowser(EventParams &e) {
 	const std::string url = "https://" + Reporting::ServerHost() + "/";
-	System_LaunchUrl(LaunchUrlType::BROWSER_URL, url.c_str());
+	LaunchBrowser(url.c_str());
 	return EVENT_DONE;
 }
 
@@ -407,8 +406,8 @@ ReportFinishScreen::ReportFinishScreen(const Path &gamePath, ReportingOverallSco
 }
 
 void ReportFinishScreen::CreateViews() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
-	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto rp = GetI18NCategory("Reporting");
+	auto di = GetI18NCategory("Dialog");
 
 	Margins actionMenuMargins(0, 20, 15, 0);
 	Margins contentMargins(0, 20, 5, 5);
@@ -442,7 +441,7 @@ void ReportFinishScreen::CreateViews() {
 }
 
 void ReportFinishScreen::update() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 
 	if (!setStatus_) {
 		Reporting::ReportStatus status = Reporting::GetStatus();
@@ -468,7 +467,7 @@ void ReportFinishScreen::update() {
 }
 
 void ReportFinishScreen::ShowSuggestions() {
-	auto rp = GetI18NCategory(I18NCat::REPORTING);
+	auto rp = GetI18NCategory("Reporting");
 
 	auto suggestions = Reporting::CompatibilitySuggestions();
 	if (score_ == ReportingOverallScore::PERFECT || score_ == ReportingOverallScore::PLAYABLE) {
@@ -485,7 +484,7 @@ void ReportFinishScreen::ShowSuggestions() {
 			const char *suggestion = nullptr;
 			if (item == "Upgrade") {
 				suggestion = rp->T("SuggestionUpgrade", "Upgrade to a newer PPSSPP build");
-			} else if (item == "Downgrade") {
+			} if (item == "Downgrade") {
 				suggestion = rp->T("SuggestionDowngrade", "Downgrade to an older PPSSPP version (please report this bug)");
 			} else if (item == "VerifyDisc") {
 				suggestion = rp->T("SuggestionVerifyDisc", "Check your ISO is a good copy of your disc");
@@ -515,6 +514,6 @@ void ReportFinishScreen::ShowSuggestions() {
 
 UI::EventReturn ReportFinishScreen::HandleViewFeedback(UI::EventParams &e) {
 	const std::string url = "https://" + Reporting::ServerHost() + "/game/" + Reporting::CurrentGameID();
-	System_LaunchUrl(LaunchUrlType::BROWSER_URL, url.c_str());
+	LaunchBrowser(url.c_str());
 	return EVENT_DONE;
 }

@@ -16,13 +16,11 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "Common/Render/TextureAtlas.h"
-#include "Common/Data/Text/I18n.h"
-#include "Common/StringUtils.h"
 
+#include "TouchControlVisibilityScreen.h"
 #include "Core/Config.h"
-
-#include "UI/TouchControlVisibilityScreen.h"
-#include "UI/CustomButtonMappingScreen.h"
+#include "Common/Data/Text/I18n.h"
+#include "ComboKeyMappingScreen.h"
 
 static const int leftColumnWidth = 140;
 
@@ -45,10 +43,10 @@ private:
 
 void TouchControlVisibilityScreen::CreateViews() {
 	using namespace UI;
-	using namespace CustomKeyData;
+	using namespace CustomKey;
 
-	auto di = GetI18NCategory(I18NCat::DIALOG);
-	auto co = GetI18NCategory(I18NCat::CONTROLS);
+	auto di = GetI18NCategory("Dialog");
+	auto co = GetI18NCategory("Controls");
 
 	root_ = new AnchorLayout(new LayoutParams(FILL_PARENT, FILL_PARENT));
 
@@ -86,21 +84,52 @@ void TouchControlVisibilityScreen::CreateViews() {
 	toggles_.push_back({ "Dpad", &g_Config.touchDpad.show, ImageID::invalid(), nullptr });
 	toggles_.push_back({ "Analog Stick", &g_Config.touchAnalogStick.show, ImageID::invalid(), nullptr });
 	toggles_.push_back({ "Right Analog Stick", &g_Config.touchRightAnalogStick.show, ImageID::invalid(), [=](EventParams &e) {
-		screenManager()->push(new RightAnalogMappingScreen(gamePath_));
+		screenManager()->push(new RightAnalogMappingScreen());
 		return UI::EVENT_DONE;
 	}});
 	toggles_.push_back({ "Fast-forward", &g_Config.touchFastForwardKey.show, ImageID::invalid(), nullptr });
+	toggles_.push_back({ "Custom 1", &g_Config.touchCombo0.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(0));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 2", &g_Config.touchCombo1.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(1));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 3", &g_Config.touchCombo2.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(2));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 4", &g_Config.touchCombo3.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(3));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 5", &g_Config.touchCombo4.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(4));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 6", &g_Config.touchCombo5.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(5));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 7", &g_Config.touchCombo6.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(6));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 8", &g_Config.touchCombo7.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(7));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 9", &g_Config.touchCombo8.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(8));
+		return UI::EVENT_DONE;
+	}});
+	toggles_.push_back({ "Custom 10", &g_Config.touchCombo9.show, ImageID::invalid(), [=](EventParams &e) {
+		screenManager()->push(new ComboKeyScreen(9));
+		return UI::EVENT_DONE;
+	}});
 
-	for (int i = 0; i < Config::CUSTOM_BUTTON_COUNT; i++) {
-		char temp[256];
-		snprintf(temp, sizeof(temp), "Custom %d", i + 1);
-		toggles_.push_back({ temp, &g_Config.touchCustom[i].show, ImageID::invalid(), [=](EventParams &e) {
-			screenManager()->push(new CustomButtonMappingScreen(gamePath_, i));
-			return UI::EVENT_DONE;
-		} });
-	}
-
-	auto mc = GetI18NCategory(I18NCat::MAPPABLECONTROLS);
+	auto mc = GetI18NCategory("MappableControls");
 	for (auto toggle : toggles_) {
 		LinearLayout *row = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
 		row->SetSpacing(0);
@@ -109,15 +138,7 @@ void TouchControlVisibilityScreen::CreateViews() {
 		row->Add(checkbox);
 		Choice *choice;
 		if (toggle.handle) {
-			// Handle custom button strings differently, and hackily. But will extend to arbitrary button counts.
-			char translated[256];
-			int i = 0;
-			if (sscanf(toggle.key.c_str(), "Custom %d", &i) == 1) {
-				snprintf(translated, sizeof(translated), mc->T("Custom %d"), i);
-			} else {
-				truncate_cpy(translated, mc->T(toggle.key));
-			}
-			choice = new Choice(std::string(translated) + " (" + mc->T("tap to customize") + ")", "", false, new LinearLayoutParams(1.0f));
+			choice = new Choice(std::string(mc->T(toggle.key))+" ("+mc->T("tap to customize")+")", "", false, new LinearLayoutParams(1.0f));
 			choice->OnClick.Add(toggle.handle);
 		} else if (toggle.img.isValid()) {
 			choice = new CheckBoxChoice(toggle.img, checkbox, new LinearLayoutParams(1.0f));
@@ -137,9 +158,9 @@ void TouchControlVisibilityScreen::onFinish(DialogResult result) {
 void RightAnalogMappingScreen::CreateViews() {
 	using namespace UI;
 
-	auto di = GetI18NCategory(I18NCat::DIALOG);
-	auto co = GetI18NCategory(I18NCat::CONTROLS);
-	auto mc = GetI18NCategory(I18NCat::MAPPABLECONTROLS);
+	auto di = GetI18NCategory("Dialog");
+	auto co = GetI18NCategory("Controls");
+	auto mc = GetI18NCategory("MappableControls");
 
 	root_ = new AnchorLayout(new LayoutParams(FILL_PARENT, FILL_PARENT));
 	Choice *back = new Choice(di->T("Back"), "", false, new AnchorLayoutParams(leftColumnWidth - 10, WRAP_CONTENT, 10, NONE, NONE, 10));
@@ -159,11 +180,11 @@ void RightAnalogMappingScreen::CreateViews() {
 	vert->Add(new CheckBox(&g_Config.bRightAnalogDisableDiagonal, co->T("Disable diagonal input")))->SetEnabledPtr(&g_Config.bRightAnalogCustom);
 
 	vert->Add(new ItemHeader(co->T("Analog Binding")));
-	PopupMultiChoice *rightAnalogUp = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogUp, mc->T("RightAn.Up"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), I18NCat::MAPPABLECONTROLS, screenManager()));
-	PopupMultiChoice *rightAnalogDown = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogDown, mc->T("RightAn.Down"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), I18NCat::MAPPABLECONTROLS, screenManager()));
-	PopupMultiChoice *rightAnalogLeft = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogLeft, mc->T("RightAn.Left"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), I18NCat::MAPPABLECONTROLS, screenManager()));
-	PopupMultiChoice *rightAnalogRight = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogRight, mc->T("RightAn.Right"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), I18NCat::MAPPABLECONTROLS, screenManager()));
-	PopupMultiChoice *rightAnalogPress = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogPress, co->T("Keep this button pressed when right analog is pressed"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), I18NCat::MAPPABLECONTROLS, screenManager()));
+	PopupMultiChoice *rightAnalogUp = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogUp, mc->T("RightAn.Up"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), mc->GetName(), screenManager()));
+	PopupMultiChoice *rightAnalogDown = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogDown, mc->T("RightAn.Down"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), mc->GetName(), screenManager()));
+	PopupMultiChoice *rightAnalogLeft = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogLeft, mc->T("RightAn.Left"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), mc->GetName(), screenManager()));
+	PopupMultiChoice *rightAnalogRight = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogRight, mc->T("RightAn.Right"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), mc->GetName(), screenManager()));
+	PopupMultiChoice *rightAnalogPress = vert->Add(new PopupMultiChoice(&g_Config.iRightAnalogPress, co->T("Keep this button pressed when right analog is pressed"), rightAnalogButton, 0, ARRAY_SIZE(rightAnalogButton), mc->GetName(), screenManager()));
 	rightAnalogUp->SetEnabledPtr(&g_Config.bRightAnalogCustom);
 	rightAnalogDown->SetEnabledPtr(&g_Config.bRightAnalogCustom);
 	rightAnalogLeft->SetEnabledPtr(&g_Config.bRightAnalogCustom);

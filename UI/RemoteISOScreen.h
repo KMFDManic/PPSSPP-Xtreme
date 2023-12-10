@@ -25,11 +25,9 @@
 #include "UI/MiscScreens.h"
 #include "UI/MainScreen.h"
 
-class RemoteISOScreen : public UIDialogScreenWithGameBackground {
+class RemoteISOScreen : public UIScreenWithBackground {
 public:
-	RemoteISOScreen(const Path &filename);
-
-	const char *tag() const override { return "RemoteISO"; }
+	RemoteISOScreen();
 
 protected:
 	void update() override;
@@ -54,12 +52,10 @@ enum class ScanStatus {
 	LOADED,
 };
 
-class RemoteISOConnectScreen : public UIDialogScreenWithBackground {
+class RemoteISOConnectScreen : public UIScreenWithBackground {
 public:
 	RemoteISOConnectScreen();
-	~RemoteISOConnectScreen();
-
-	const char *tag() const override { return "RemoteISOConnect"; }
+	~RemoteISOConnectScreen() override;
 
 protected:
 	void update() override;
@@ -70,7 +66,7 @@ protected:
 	void ExecuteLoad();
 	bool FindServer(std::string &resultHost, int &resultPort);
 
-	UI::TextView *statusView_ = nullptr;
+	UI::TextView *statusView_;
 
 	ScanStatus status_ = ScanStatus::SCANNING;
 	std::string statusMessage_;
@@ -78,7 +74,7 @@ protected:
 	std::thread *scanThread_;
 	std::mutex statusLock_;
 	std::string host_;
-	int port_ = -1;
+	int port_;
 	std::string url_;
 	std::vector<Path> games_;
 };
@@ -86,8 +82,6 @@ protected:
 class RemoteISOBrowseScreen : public MainScreen {
 public:
 	RemoteISOBrowseScreen(const std::string &url, const std::vector<Path> &games);
-
-	const char *tag() const override { return "RemoteISOBrowse"; }
 
 protected:
 	void CreateViews() override;
@@ -100,9 +94,10 @@ class RemoteISOSettingsScreen : public UIDialogScreenWithBackground {
 public:
 	RemoteISOSettingsScreen();
 
-	const char *tag() const override { return "RemoteISOSettings"; }
-
+	UI::EventReturn OnClickRemoteISOSubdir(UI::EventParams &e);
+	UI::EventReturn OnClickRemoteServer(UI::EventParams &e);
 protected:
+
 	void update() override;
 	void CreateViews() override;
 

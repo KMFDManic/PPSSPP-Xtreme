@@ -26,8 +26,9 @@
 #define	DEBUG_LEVEL   5  // Detailed debugging - might make things slow.
 #define	VERBOSE_LEVEL 6  // Noisy debugging - sometimes needed but usually unimportant.
 
-// NOTE: Needs to be kept in sync with the g_logTypeNames array.
-enum class LogType {
+namespace LogTypes {
+
+enum LOG_TYPE {
 	SYSTEM = 0,  // Catch-all for uncategorized things
 	BOOT,
 	COMMON,
@@ -44,9 +45,6 @@ enum class LogType {
 	FRAMEBUF,
 	AUDIO,
 	IO,
-	ACHIEVEMENTS,
-	HTTP,
-	PRINTF,
 
 	SCEAUDIO,
 	SCECTRL,
@@ -66,7 +64,7 @@ enum class LogType {
 	NUMBER_OF_LOGS,  // Must be last
 };
 
-enum class LogLevel : int {
+enum LOG_LEVELS : int {
 	LNOTICE = NOTICE_LEVEL,
 	LERROR = ERROR_LEVEL,
 	LWARNING = WARNING_LEVEL,
@@ -75,18 +73,18 @@ enum class LogLevel : int {
 	LVERBOSE = VERBOSE_LEVEL,
 };
 
-void GenericLog(LogLevel level, LogType type,
+}  // namespace
+
+void GenericLog(LogTypes::LOG_LEVELS level, LogTypes::LOG_TYPE type,
 		const char *file, int line, const char *fmt, ...)
 #ifdef __GNUC__
 		__attribute__((format(printf, 5, 6)))
 #endif
 		;
-bool GenericLogEnabled(LogLevel level, LogType type);
+bool GenericLogEnabled(LogTypes::LOG_LEVELS level, LogTypes::LOG_TYPE type);
 
-// Exception for Windows - enable more log levels in release mode than on other platforms.
 #if defined(_DEBUG) || defined(_WIN32)
 
-// Needs to be an int (and not use the enum) because it's used by the preprocessor!
 #define MAX_LOGLEVEL DEBUG_LEVEL
 
 #else
@@ -100,16 +98,16 @@ bool GenericLogEnabled(LogLevel level, LogType type);
 // Let the compiler optimize this out.
 // TODO: Compute a dynamic max level as well that can be checked here.
 #define GENERIC_LOG(t, v, ...) { \
-	if ((int)v <= MAX_LOGLEVEL) \
+	if (v <= MAX_LOGLEVEL) \
 		GenericLog(v, t, __FILE__, __LINE__, __VA_ARGS__); \
 	}
 
-#define ERROR_LOG(t,...)   do { GENERIC_LOG(LogType::t, LogLevel::LERROR,   __VA_ARGS__) } while (false)
-#define WARN_LOG(t,...)    do { GENERIC_LOG(LogType::t, LogLevel::LWARNING, __VA_ARGS__) } while (false)
-#define NOTICE_LOG(t,...)  do { GENERIC_LOG(LogType::t, LogLevel::LNOTICE,  __VA_ARGS__) } while (false)
-#define INFO_LOG(t,...)    do { GENERIC_LOG(LogType::t, LogLevel::LINFO,    __VA_ARGS__) } while (false)
-#define DEBUG_LOG(t,...)   do { GENERIC_LOG(LogType::t, LogLevel::LDEBUG,   __VA_ARGS__) } while (false)
-#define VERBOSE_LOG(t,...) do { GENERIC_LOG(LogType::t, LogLevel::LVERBOSE, __VA_ARGS__) } while (false)
+#define ERROR_LOG(t,...)   do { GENERIC_LOG(LogTypes::t, LogTypes::LERROR,   __VA_ARGS__) } while (false)
+#define WARN_LOG(t,...)    do { GENERIC_LOG(LogTypes::t, LogTypes::LWARNING, __VA_ARGS__) } while (false)
+#define NOTICE_LOG(t,...)  do { GENERIC_LOG(LogTypes::t, LogTypes::LNOTICE,  __VA_ARGS__) } while (false)
+#define INFO_LOG(t,...)    do { GENERIC_LOG(LogTypes::t, LogTypes::LINFO,    __VA_ARGS__) } while (false)
+#define DEBUG_LOG(t,...)   do { GENERIC_LOG(LogTypes::t, LogTypes::LDEBUG,   __VA_ARGS__) } while (false)
+#define VERBOSE_LOG(t,...) do { GENERIC_LOG(LogTypes::t, LogTypes::LVERBOSE, __VA_ARGS__) } while (false)
 
 // Currently only actually shows a dialog box on Windows.
 bool HandleAssert(const char *function, const char *file, int line, const char *expression, const char* format, ...)
@@ -120,7 +118,6 @@ __attribute__((format(printf, 5, 6)))
 
 bool HitAnyAsserts();
 void ResetHitAnyAsserts();
-void SetExtraAssertInfo(const char *info);
 
 #if defined(__ANDROID__)
 // Tricky macro to get the basename, that also works if *built* on Win32.
@@ -130,12 +127,12 @@ void SetExtraAssertInfo(const char *info);
 #define __FILENAME__ __FILE__
 #endif
 
-// If we're a debug build, _dbg_assert_ is active. Not otherwise, even on Windows.
-#if defined(_DEBUG)
+// If we're in "debug" assert mode
+#if MAX_LOGLEVEL >= DEBUG_LEVEL
 
 #define _dbg_assert_(_a_) \
 	if (!(_a_)) {\
-		if (!HandleAssert(__FUNCTION__, __FILENAME__, __LINE__, #_a_, "Assert!\n")) Crash(); \
+		if (!HandleAssert(__FUNCTION__, __FILENAME__, __LINE__, #_a_, "*** Assertion ***\n")) Crash(); \
 	}
 
 #define _dbg_assert_msg_(_a_, ...) \
@@ -154,7 +151,7 @@ void SetExtraAssertInfo(const char *info);
 
 #define _assert_(_a_) \
 	if (!(_a_)) {\
-		if (!HandleAssert(__FUNCTION__, __FILENAME__, __LINE__, #_a_, "Assert!\n")) Crash(); \
+		if (!HandleAssert(__FUNCTION__, __FILENAME__, __LINE__, #_a_, "*** Assertion ***\n")) Crash(); \
 	}
 
 #define _assert_msg_(_a_, ...) \

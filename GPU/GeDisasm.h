@@ -15,8 +15,6 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#pragma once
-
 #include "Common/CommonTypes.h"
 
 void GeDescribeVertexType(u32 op, char *buffer, int len = 256);

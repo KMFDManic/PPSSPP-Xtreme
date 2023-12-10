@@ -10,7 +10,6 @@ import javax.microedition.khronos.egl.EGLContext;
 import javax.microedition.khronos.egl.EGLDisplay;
 import javax.microedition.khronos.opengles.GL10;
 
-// Only used for the OpenGL backend.
 public class NativeRenderer implements GLSurfaceView.Renderer {
 	private static String TAG = "NativeRenderer";
 	private NativeActivity mActivity;
@@ -36,7 +35,7 @@ public class NativeRenderer implements GLSurfaceView.Renderer {
 
 	public void onSurfaceCreated(GL10 gl, EGLConfig config) {
 		failed = false;
-		Log.i(TAG, "NativeRenderer (OpenGL): onSurfaceCreated");
+		Log.i(TAG, "NativeRenderer: onSurfaceCreated");
 
 		EGL10 egl = (EGL10)EGLContext.getEGL();
 		if (egl != null) {
@@ -57,6 +56,7 @@ public class NativeRenderer implements GLSurfaceView.Renderer {
 
 		if (!displayInit()) {
 			Log.e(TAG, "Display init failed");
+			Toast.makeText(mActivity, "Failed to initialize rendering. Close the app and try again.", Toast.LENGTH_LONG);
 			failed = true;
 		}
 	}

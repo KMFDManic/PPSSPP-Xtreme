@@ -35,14 +35,6 @@ public:
 	}
 	std::string GetFriendlyPath() const;
 
-	void SetUserAgent(const std::string &s) {
-		userAgent_ = s;
-	}
-	void SetRootAlias(const std::string &alias, const std::string &longValue) {
-		aliasDisplay_ = alias;
-		aliasMatch_ = longValue;
-	}
-
 	bool empty() const {
 		return path_.empty();
 	}
@@ -53,9 +45,6 @@ private:
 
 	Path path_;
 	Path pendingPath_;
-	std::string userAgent_;
-	std::string aliasDisplay_;
-	std::string aliasMatch_;
 	std::vector<File::FileInfo> pendingFiles_;
 	std::condition_variable pendingCond_;
 	std::mutex pendingLock_;

@@ -37,12 +37,18 @@
 #include <string>
 #include <deque>
 
-struct UPnPArgs {
+#ifdef _MSC_VER
+#pragma pack(push,1)
+#endif
+typedef struct UPnPArgs {
 	int cmd;
 	std::string protocol;
 	unsigned short port;
 	unsigned short intport;
-};
+} PACK;
+#ifdef _MSC_VER
+#pragma pack(pop)
+#endif
 
 #define IP_PROTOCOL_TCP	"TCP"
 #define IP_PROTOCOL_UDP	"UDP"
@@ -77,6 +83,9 @@ public:
 	// timeout: milliseconds to wait for a router to respond (default = 2000 ms)
 	bool Initialize(const unsigned int timeout = 2000);
 
+	// Uninitialize/Reset the state
+	void Terminate();
+
 	// Get UPnP Initialization status
 	int GetInitState();
 
@@ -86,24 +95,18 @@ public:
 	// Remove a port mapping (external port)
 	bool Remove(const char* protocol, unsigned short port);
 
-	// Call on exit. Does a full shutdown.
-	void Shutdown();
-
-private:
-	// Retrieves port lists mapped by PPSSPP for current LAN IP & other's applications
-	bool RefreshPortList();
-
 	// Removes any lingering mapped ports created by PPSSPP (including from previous crashes)
 	bool Clear();
 
 	// Restore ports mapped by others that were taken by PPSSPP, better used after Clear()
 	bool Restore();
 
-	// Uninitialize/Reset the state
-	void Terminate();
+	// Retrieves port lists mapped by PPSSPP for current LAN IP & other's applications
+	bool RefreshPortList();
 
-	struct UPNPUrls* urls = nullptr;
-	struct IGDdatas* datas = nullptr;
+protected:
+	struct UPNPUrls* urls = NULL;
+	struct IGDdatas* datas = NULL;
 
 	int m_InitState = UPNP_INITSTATE_NONE;
 	int m_LocalPort = UPNP_LOCAL_PORT_ANY;

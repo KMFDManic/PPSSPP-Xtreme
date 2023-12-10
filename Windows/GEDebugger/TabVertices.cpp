@@ -15,10 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "Common/CommonWindows.h"
 #include <commctrl.h>
 #include "Common/CommonTypes.h"
-#include "Common/Data/Encoding/Utf8.h"
 #include "Common/StringUtils.h"
 #include "Core/System.h"
 #include "Windows/resource.h"
@@ -294,7 +292,7 @@ int CtrlVertexList::GetRowCount() {
 	DisplayList list;
 	if (gpuDebug->GetCurrentDisplayList(list)) {
 		u32 cmd = Memory::Read_U32(list.pc);
-		if ((cmd >> 24) == GE_CMD_PRIM || (cmd >> 24) == GE_CMD_BOUNDINGBOX) {
+		if ((cmd >> 24) == GE_CMD_PRIM) {
 			rowCount_ = cmd & 0xFFFF;
 		} else if ((cmd >> 24) == GE_CMD_BEZIER || (cmd >> 24) == GE_CMD_SPLINE) {
 			u32 u = (cmd & 0x00FF) >> 0;
@@ -307,8 +305,6 @@ int CtrlVertexList::GetRowCount() {
 		rowCount_ = 0;
 	}
 	VertexDecoderOptions options{};
-	// TODO: Maybe an option?
-	options.applySkinInDecode = true;
 	decoder->SetVertexType(state.vertType, options);
 	return rowCount_;
 }
@@ -554,52 +550,23 @@ static constexpr MatrixCmdPair matrixCmds[] = {
 	{ MATRIXLIST_ROW_COUNT, GE_CMD_NOP },
 };
 
-static const MatrixCmdPair *FindCmdPair(int row) {
+void CtrlMatrixList::ToggleBreakpoint(int row) {
 	for (int i = 0; i < ARRAY_SIZE(matrixCmds) - 1; ++i) {
 		if (row < matrixCmds[i].row || row >= matrixCmds[i + 1].row)
 			continue;
 
-		return &matrixCmds[i];
-	}
-	return nullptr;
-}
+		// Okay, this command is in range.  Toggle the actual breakpoint.
+		auto &info = matrixCmds[i];
+		bool state = !GPUBreakpoints::IsCmdBreakpoint(info.cmd);
+		if (state)
+			GPUBreakpoints::AddCmdBreakpoint(info.cmd);
+		else
+			GPUBreakpoints::RemoveCmdBreakpoint(info.cmd);
 
-void CtrlMatrixList::ToggleBreakpoint(int row) {
-	const MatrixCmdPair *info = FindCmdPair(row);
-	if (!info)
-		return;
-
-	// Okay, this command is in range.  Toggle the actual breakpoint.
-	bool state = !GPUBreakpoints::IsCmdBreakpoint(info->cmd);
-	if (state) {
-		GPUBreakpoints::AddCmdBreakpoint(info->cmd);
-	} else {
-		if (GPUBreakpoints::GetCmdBreakpointCond(info->cmd, nullptr)) {
-			int ret = MessageBox(GetHandle(), L"This breakpoint has a custom condition.\nDo you want to remove it?", L"Confirmation", MB_YESNO);
-			if (ret != IDYES)
-				return;
+		for (int r = matrixCmds[i].row; r < matrixCmds[i + 1].row; ++r) {
+			SetItemState(r, state ? 1 : 0);
 		}
-		GPUBreakpoints::RemoveCmdBreakpoint(info->cmd);
 	}
-
-	for (int r = info->row; r < (info + 1)->row; ++r) {
-		SetItemState(r, state ? 1 : 0);
-	}
-}
-
-void CtrlMatrixList::PromptBreakpointCond(int row) {
-	const MatrixCmdPair *info = FindCmdPair(row);
-	if (!info)
-		return;
-
-	std::string expression;
-	GPUBreakpoints::GetCmdBreakpointCond(info->cmd, &expression);
-	if (!InputBox_GetString(GetModuleHandle(NULL), GetHandle(), L"Expression", expression, expression))
-		return;
-
-	std::string error;
-	if (!GPUBreakpoints::SetCmdBreakpointCond(info->cmd, expression, &error))
-		MessageBox(GetHandle(), ConvertUTF8ToWString(error).c_str(), L"Invalid expression", MB_OK | MB_ICONEXCLAMATION);
 }
 
 void CtrlMatrixList::OnDoubleClick(int row, int column) {
@@ -657,22 +624,16 @@ void CtrlMatrixList::OnDoubleClick(int row, int column) {
 void CtrlMatrixList::OnRightClick(int row, int column, const POINT &point) {
 	if (row >= GetRowCount())
 		return;
-	const MatrixCmdPair *info = FindCmdPair(row);
 
 	POINT screenPt(point);
 	ClientToScreen(GetHandle(), &screenPt);
 
 	HMENU subMenu = GetContextMenu(ContextMenuID::GEDBG_MATRIX);
 	SetMenuDefaultItem(subMenu, ID_REGLIST_CHANGE, FALSE);
-	EnableMenuItem(subMenu, ID_GEDBG_SETCOND, info && GPUBreakpoints::IsCmdBreakpoint(info->cmd) ? MF_ENABLED : MF_GRAYED);
 
 	switch (TriggerContextMenu(ContextMenuID::GEDBG_MATRIX, GetHandle(), ContextPoint::FromClient(point))) {
 	case ID_DISASM_TOGGLEBREAKPOINT:
 		ToggleBreakpoint(row);
-		break;
-
-	case ID_GEDBG_SETCOND:
-		PromptBreakpointCond(row);
 		break;
 
 	case ID_DISASM_COPYINSTRUCTIONDISASM:

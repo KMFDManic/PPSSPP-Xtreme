@@ -50,7 +50,24 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 	}
 
 	shaderInfo.clear();
+	ShaderInfo off{};
+	off.visible = true;
+	off.name = "Off";
+	off.section = "Off";
+	for (size_t i = 0; i < ARRAY_SIZE(off.settings); ++i) {
+		off.settings[i].name = "";
+		off.settings[i].value = 0.0f;
+		off.settings[i].minValue = -1.0f;
+		off.settings[i].maxValue = 1.0f;
+		off.settings[i].step = 0.01f;
+	}
+	shaderInfo.push_back(off);
+
 	textureShaderInfo.clear();
+	TextureShaderInfo textureOff{};
+	textureOff.name = "Off";
+	textureOff.section = "Off";
+	textureShaderInfo.push_back(textureOff);
 
 	auto appendShader = [&](const ShaderInfo &info) {
 		auto beginErase = std::remove(shaderInfo.begin(), shaderInfo.end(), info.name);
@@ -70,7 +87,7 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 
 	for (size_t d = 0; d < directories.size(); d++) {
 		std::vector<File::FileInfo> fileInfo;
-		g_VFS.GetFileListing(directories[d].c_str(), &fileInfo, "ini:");
+		VFSGetFileListing(directories[d].c_str(), &fileInfo, "ini:");
 
 		if (fileInfo.empty()) {
 			File::GetFilesInDir(directories[d], &fileInfo, "ini:");
@@ -90,7 +107,7 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 			if (path.ToString().substr(0, 7) == "assets/")
 				path = Path(path.ToString().substr(7));
 
-			if (ini.LoadFromVFS(g_VFS, name.ToString()) || ini.Load(fileInfo[f].fullName)) {
+			if (ini.LoadFromVFS(name.ToString()) || ini.Load(fileInfo[f].fullName)) {
 				success = true;
 				// vsh load. meh.
 			}
@@ -100,7 +117,7 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 
 			// Alright, let's loop through the sections and see if any is a shader.
 			for (size_t i = 0; i < ini.Sections().size(); i++) {
-				Section &section = *(ini.Sections()[i].get());
+				Section &section = ini.Sections()[i];
 				std::string shaderType;
 				section.Get("Type", &shaderType, "render");
 
@@ -126,8 +143,6 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 						blacklistedVendor = Draw::GPUVendor::VENDOR_APPLE;
 					} else if (item == "Intel") {
 						blacklistedVendor = Draw::GPUVendor::VENDOR_INTEL;
-					} else if (item == "Mesa") {
-						blacklistedVendor = Draw::GPUVendor::VENDOR_MESA;
 					}
 					if (blacklistedVendor == gpuVendor && blacklistedVendor != Draw::GPUVendor::VENDOR_UNKNOWN) {
 						skipped = true;
@@ -139,11 +154,9 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 					continue;
 				}
 
-				if (section.Exists("Fragment") && section.Exists("Vertex") &&
-					(strncasecmp(shaderType.c_str(), "render", shaderType.size()) == 0 ||
-					 strncasecmp(shaderType.c_str(), "StereoToMono", shaderType.size()) == 0)) {
+				if (section.Exists("Fragment") && section.Exists("Vertex") && strncasecmp(shaderType.c_str(), "render", shaderType.size()) == 0) {
 					// Valid shader!
-					ShaderInfo info{};
+					ShaderInfo info;
 					std::string temp;
 					info.section = section.name();
 
@@ -161,13 +174,7 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 					section.Get("UsePreviousFrame", &info.usePreviousFrame, false);
 
 					if (info.parent == "Off")
-						info.parent.clear();
-
-					if (strncasecmp(shaderType.c_str(), "stereotomono", shaderType.size()) == 0) {
-						info.isStereo = true;
-						info.isUpscalingFilter = false;
-						info.parent.clear();
-					}
+						info.parent = "";
 
 					for (size_t i = 0; i < ARRAY_SIZE(info.settings); ++i) {
 						auto &setting = info.settings[i];
@@ -176,6 +183,12 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 						section.Get(StringFromFormat("SettingMinValue%d", i + 1).c_str(), &setting.minValue, -1.0f);
 						section.Get(StringFromFormat("SettingMaxValue%d", i + 1).c_str(), &setting.maxValue, 1.0f);
 						section.Get(StringFromFormat("SettingStep%d", i + 1).c_str(), &setting.step, 0.01f);
+
+						// Populate the default setting value.
+						std::string section = StringFromFormat("%sSettingValue%d", info.section.c_str(), i + 1);
+						if (!setting.name.empty() && g_Config.mPostShaderSetting.find(section) == g_Config.mPostShaderSetting.end()) {
+							g_Config.mPostShaderSetting.insert(std::pair<std::string, float>(section, setting.value));
+						}
 					}
 
 					// Let's ignore shaders we can't support. TODO: Not a very good check
@@ -193,7 +206,7 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 					}
 				} else if (section.Exists("Compute") && strncasecmp(shaderType.c_str(), "texture", shaderType.size()) == 0) {
 					// This is a texture shader.
-					TextureShaderInfo info{};
+					TextureShaderInfo info;
 					std::string temp;
 					info.section = section.name();
 					section.Get("Name", &info.name, section.name().c_str());
@@ -203,34 +216,10 @@ void LoadPostShaderInfo(Draw::DrawContext *draw, const std::vector<Path> &direct
 					if (info.scaleFactor >= 2 && info.scaleFactor < 8) {
 						appendTextureShader(info);
 					}
-				} else if (!section.name().empty()) {
-					WARN_LOG(G3D, "Unrecognized shader type '%s' or invalid shader in section '%s'", shaderType.c_str(), section.name().c_str());
 				}
 			}
 		}
 	}
-
-	// Sort shaders alphabetically.
-	std::sort(shaderInfo.begin(), shaderInfo.end());
-	std::sort(textureShaderInfo.begin(), textureShaderInfo.end());
-
-	ShaderInfo off{};
-	off.visible = true;
-	off.name = "Off";
-	off.section = "Off";
-	for (size_t i = 0; i < ARRAY_SIZE(off.settings); ++i) {
-		off.settings[i].name.clear();
-		off.settings[i].value = 0.0f;
-		off.settings[i].minValue = -1.0f;
-		off.settings[i].maxValue = 1.0f;
-		off.settings[i].step = 0.01f;
-	}
-	shaderInfo.insert(shaderInfo.begin(), off);
-
-	TextureShaderInfo textureOff{};
-	textureOff.name = "Off";
-	textureOff.section = "Off";
-	textureShaderInfo.insert(textureShaderInfo.begin(), textureOff);
 
 	// We always want the not visible ones at the end.  Makes menus easier.
 	for (const auto &info : notVisible) {
@@ -244,16 +233,6 @@ void ReloadAllPostShaderInfo(Draw::DrawContext *draw) {
 	directories.push_back(Path("shaders"));  // For VFS
 	directories.push_back(GetSysDirectory(DIRECTORY_CUSTOM_SHADERS));
 	LoadPostShaderInfo(draw, directories);
-}
-
-void RemoveUnknownPostShaders(std::vector<std::string> *names) {
-	for (auto iter = names->begin(); iter != names->end(); ) {
-		if (GetPostShaderInfo(*iter) == nullptr) {
-			iter = names->erase(iter);
-		} else {
-			++iter;
-		}
-	}
 }
 
 const ShaderInfo *GetPostShaderInfo(const std::string &name) {
@@ -319,26 +298,4 @@ const TextureShaderInfo *GetTextureShaderInfo(const std::string &name) {
 }
 const std::vector<TextureShaderInfo> &GetAllTextureShaderInfo() {
 	return textureShaderInfo;
-}
-
-void FixPostShaderOrder(std::vector<std::string> *names) {
-	// There's one rule only that we enforce - only one shader can use UsePreviousFrame,
-	// and it has to be the last one. So we simply remove any we find from the list,
-	// and then append it to the end if there is one.
-	std::string prevFrameShader;
-	for (auto iter = names->begin(); iter != names->end(); ) {
-		const ShaderInfo *info = GetPostShaderInfo(*iter);
-		if (info) {
-			if (info->usePreviousFrame) {
-				prevFrameShader = *iter;
-				iter = names->erase(iter++);
-				continue;
-			}
-		}
-		++iter;
-	}
-
-	if (!prevFrameShader.empty()) {
-		names->push_back(prevFrameShader);
-	}
 }

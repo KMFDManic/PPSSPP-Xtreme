@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <cstring>
 
-#define ATLAS_MAGIC ('A' | ('T' << 8) | ('L' << 16) | ('A' << 24))
+#define ATLAS_MAGIC ('A' + ('T' << 8) + ('L' << 16) | ('A' << 24))
 
 // Metadata file structure v0:
 //
@@ -110,7 +110,7 @@ struct AtlasFont {
 	char name[32];
 
 	// Returns 0 on no match.
-	const AtlasChar *getChar(int utf32) const;
+	const AtlasChar *getChar(int utf32) const ;
 };
 
 struct AtlasImage {

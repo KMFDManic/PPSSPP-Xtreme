@@ -26,6 +26,7 @@
 #include "Core/Reporting.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/HLETables.h"
+#include "Core/Host.h"
 #include "Core/MemMap.h"
 
 #include "Core/MIPS/MIPS.h"
@@ -62,7 +63,7 @@ using namespace MIPSAnalyst;
 #define DO_CONDITIONAL_LOG 0
 
 // We can also disable nice delay slots.
-// #define CONDITIONAL_NICE_DELAYSLOT branchInfo.delaySlotIsNice = false;
+// #define CONDITIONAL_NICE_DELAYSLOT delaySlotIsNice = false;
 #define CONDITIONAL_NICE_DELAYSLOT ;
 
 #if DO_CONDITIONAL_LOG
@@ -107,7 +108,7 @@ static void JitBranchLog(MIPSOpcode op, u32 pc) {
 static void JitBranchLogMismatch(MIPSOpcode op, u32 pc)
 {
 	char temp[256];
-	MIPSDisAsm(op, pc, temp, sizeof(temp), true);
+	MIPSDisAsm(op, pc, temp, true);
 	ERROR_LOG(JIT, "Bad jump: %s - int:%08x jit:%08x", temp, currentMIPS->intBranchExit, currentMIPS->jitBranchExit);
 	Core_EnableStepping(true, "jit.branchdebug", pc);
 }
@@ -196,22 +197,22 @@ bool Jit::PredictTakeBranch(u32 targetAddr, bool likely) {
 	return targetAddr > GetCompilerPC();
 }
 
-void Jit::CompBranchExits(CCFlags cc, u32 targetAddr, u32 notTakenAddr, const BranchInfo &branchInfo) {
-	if (branchInfo.andLink)
+void Jit::CompBranchExits(CCFlags cc, u32 targetAddr, u32 notTakenAddr, bool delaySlotIsNice, bool likely, bool andLink) {
+	if (andLink)
 		gpr.SetImm(MIPS_REG_RA, GetCompilerPC() + 8);
 
 	// We may want to try to continue along this branch a little while, to reduce reg flushing.
-	bool predictTakeBranch = PredictTakeBranch(targetAddr, branchInfo.likely);
-	if (!branchInfo.delaySlotIsBranch && CanContinueBranch(predictTakeBranch ? targetAddr : notTakenAddr))
+	bool predictTakeBranch = PredictTakeBranch(targetAddr, likely);
+	if (CanContinueBranch(predictTakeBranch ? targetAddr : notTakenAddr))
 	{
 		if (predictTakeBranch)
 			cc = FlipCCFlag(cc);
 
 		Gen::FixupBranch ptr;
 		RegCacheState state;
-		if (!branchInfo.likely)
+		if (!likely)
 		{
-			if (!branchInfo.delaySlotIsNice)
+			if (!delaySlotIsNice)
 				CompileDelaySlot(DELAYSLOT_SAFE);
 			ptr = J_CC(cc, true);
 			GetStateAndFlushAll(state);
@@ -242,7 +243,7 @@ void Jit::CompBranchExits(CCFlags cc, u32 targetAddr, u32 notTakenAddr, const Br
 			CONDITIONAL_LOG_EXIT(targetAddr);
 
 			// Don't forget to run the delay slot if likely.
-			if (branchInfo.likely)
+			if (likely)
 				CompileDelaySlot(DELAYSLOT_NICE);
 
 			AddContinuedBlock(targetAddr);
@@ -271,9 +272,9 @@ void Jit::CompBranchExits(CCFlags cc, u32 targetAddr, u32 notTakenAddr, const Br
 	else
 	{
 		Gen::FixupBranch ptr;
-		if (!branchInfo.likely)
+		if (!likely)
 		{
-			if (!branchInfo.delaySlotIsNice && !branchInfo.delaySlotIsBranch)
+			if (!delaySlotIsNice)
 				CompileDelaySlot(DELAYSLOT_SAFE_FLUSH);
 			else
 				FlushAll();
@@ -283,19 +284,7 @@ void Jit::CompBranchExits(CCFlags cc, u32 targetAddr, u32 notTakenAddr, const Br
 		{
 			FlushAll();
 			ptr = J_CC(cc, true);
-			if (!branchInfo.delaySlotIsBranch)
-				CompileDelaySlot(DELAYSLOT_FLUSH);
-		}
-
-		// Handle the linkage of a delay slot, even when we're taking the branch.
-		if (branchInfo.delaySlotIsBranch) {
-			// We still link when the branch is taken (targetAddr case.)
-			// Remember, it's from the perspective of the delay slot, so +12.
-			if ((branchInfo.delaySlotInfo & OUT_RA) != 0)
-				gpr.SetImm(MIPS_REG_RA, GetCompilerPC() + 12);
-			if ((branchInfo.delaySlotInfo & OUT_RD) != 0)
-				gpr.SetImm(MIPS_GET_RD(branchInfo.delaySlotOp), GetCompilerPC() + 12);
-			FlushAll();
+			CompileDelaySlot(DELAYSLOT_FLUSH);
 		}
 
 		// Take the branch
@@ -310,25 +299,14 @@ void Jit::CompBranchExits(CCFlags cc, u32 targetAddr, u32 notTakenAddr, const Br
 	}
 }
 
-void Jit::CompBranchExit(bool taken, u32 targetAddr, u32 notTakenAddr, const BranchInfo &branchInfo) {
+void Jit::CompBranchExit(bool taken, u32 targetAddr, u32 notTakenAddr, bool delaySlotIsNice, bool likely, bool andLink) {
 	// Continuing is handled in the imm branch case... TODO: move it here?
-	if (branchInfo.andLink)
+	if (andLink)
 		gpr.SetImm(MIPS_REG_RA, GetCompilerPC() + 8);
-	if (branchInfo.delaySlotIsBranch) {
-		if (taken) {
-			// We still link when the branch is taken (targetAddr case.)
-			// Remember, it's from the perspective of the delay slot, so +12.
-			if ((branchInfo.delaySlotInfo & OUT_RA) != 0)
-				gpr.SetImm(MIPS_REG_RA, GetCompilerPC() + 12);
-			if ((branchInfo.delaySlotInfo & OUT_RD) != 0)
-				gpr.SetImm(MIPS_GET_RD(branchInfo.delaySlotOp), GetCompilerPC() + 12);
-		}
-		FlushAll();
-	} else if (taken || !branchInfo.likely) {
+	if (taken || !likely)
 		CompileDelaySlot(DELAYSLOT_FLUSH);
-	} else {
+	else
 		FlushAll();
-	}
 
 	const u32 destAddr = taken ? targetAddr : notTakenAddr;
 	CONDITIONAL_LOG_EXIT(destAddr);
@@ -348,13 +326,9 @@ void Jit::BranchRSRTComp(MIPSOpcode op, Gen::CCFlags cc, bool likely)
 	MIPSGPReg rs = _RS;
 	u32 targetAddr = GetCompilerPC() + offset + 4;
 
-	BranchInfo branchInfo(GetCompilerPC(), op, GetOffsetInstruction(1), false, likely);
-	branchInfo.delaySlotIsNice = IsDelaySlotNiceReg(op, branchInfo.delaySlotOp, rt, rs);
-	CONDITIONAL_NICE_DELAYSLOT;
-
 	bool immBranch = false;
 	bool immBranchTaken = false;
-	if (gpr.IsImm(rs) && gpr.IsImm(rt) && !branchInfo.delaySlotIsBranch) {
+	if (gpr.IsImm(rs) && gpr.IsImm(rt)) {
 		// The cc flags are opposites: when NOT to take the branch.
 		bool immBranchNotTaken;
 		s32 rsImm = (s32)gpr.GetImm(rs);
@@ -390,14 +364,16 @@ void Jit::BranchRSRTComp(MIPSOpcode op, Gen::CCFlags cc, bool likely)
 		return;
 	}
 
-	js.downcountAmount += MIPSGetInstructionCycleEstimate(branchInfo.delaySlotOp);
+	MIPSOpcode delaySlotOp = GetOffsetInstruction(1);
+	js.downcountAmount += MIPSGetInstructionCycleEstimate(delaySlotOp);
+	bool delaySlotIsNice = IsDelaySlotNiceReg(op, delaySlotOp, rt, rs);
+	CONDITIONAL_NICE_DELAYSLOT;
 
-	u32 notTakenTarget = ResolveNotTakenTarget(branchInfo);
 	if (immBranch)
-		CompBranchExit(immBranchTaken, targetAddr, notTakenTarget, branchInfo);
+		CompBranchExit(immBranchTaken, targetAddr, GetCompilerPC() + 8, delaySlotIsNice, likely, false);
 	else
 	{
-		if (!likely && branchInfo.delaySlotIsNice && !branchInfo.delaySlotIsBranch)
+		if (!likely && delaySlotIsNice)
 			CompileDelaySlot(DELAYSLOT_NICE);
 
 		if (gpr.IsImm(rt) && gpr.GetImm(rt) == 0)
@@ -411,7 +387,7 @@ void Jit::BranchRSRTComp(MIPSOpcode op, Gen::CCFlags cc, bool likely)
 			CMP(32, gpr.R(rs), gpr.R(rt));
 		}
 
-		CompBranchExits(cc, targetAddr, notTakenTarget, branchInfo);
+		CompBranchExits(cc, targetAddr, GetCompilerPC() + 8, delaySlotIsNice, likely, false);
 	}
 }
 
@@ -426,14 +402,9 @@ void Jit::BranchRSZeroComp(MIPSOpcode op, Gen::CCFlags cc, bool andLink, bool li
 	MIPSGPReg rs = _RS;
 	u32 targetAddr = GetCompilerPC() + offset + 4;
 
-	BranchInfo branchInfo(GetCompilerPC(), op, GetOffsetInstruction(1), andLink, likely);
-	branchInfo.delaySlotIsNice = IsDelaySlotNiceReg(op, branchInfo.delaySlotOp, rs);
-	js.downcountAmount += MIPSGetInstructionCycleEstimate(branchInfo.delaySlotOp);
-	CONDITIONAL_NICE_DELAYSLOT;
-
 	bool immBranch = false;
 	bool immBranchTaken = false;
-	if (gpr.IsImm(rs) && !branchInfo.delaySlotIsBranch) {
+	if (gpr.IsImm(rs)) {
 		// The cc flags are opposites: when NOT to take the branch.
 		bool immBranchNotTaken;
 		s32 imm = (s32)gpr.GetImm(rs);
@@ -475,20 +446,22 @@ void Jit::BranchRSZeroComp(MIPSOpcode op, Gen::CCFlags cc, bool andLink, bool li
 		return;
 	}
 
-	js.downcountAmount += MIPSGetInstructionCycleEstimate(branchInfo.delaySlotOp);
+	MIPSOpcode delaySlotOp = GetOffsetInstruction(1);
+	js.downcountAmount += MIPSGetInstructionCycleEstimate(delaySlotOp);
+	bool delaySlotIsNice = IsDelaySlotNiceReg(op, delaySlotOp, rs);
+	CONDITIONAL_NICE_DELAYSLOT;
 
-	u32 notTakenTarget = ResolveNotTakenTarget(branchInfo);
 	if (immBranch)
-		CompBranchExit(immBranchTaken, targetAddr, notTakenTarget, branchInfo);
+		CompBranchExit(immBranchTaken, targetAddr, GetCompilerPC() + 8, delaySlotIsNice, likely, andLink);
 	else
 	{
-		if (!likely && branchInfo.delaySlotIsNice && !branchInfo.delaySlotIsBranch)
+		if (!likely && delaySlotIsNice)
 			CompileDelaySlot(DELAYSLOT_NICE);
 
 		gpr.MapReg(rs, true, false);
 		CMP(32, gpr.R(rs), Imm32(0));
 
-		CompBranchExits(cc, targetAddr, notTakenTarget, branchInfo);
+		CompBranchExits(cc, targetAddr, GetCompilerPC() + 8, delaySlotIsNice, likely, andLink);
 	}
 }
 
@@ -545,19 +518,17 @@ void Jit::BranchFPFlag(MIPSOpcode op, Gen::CCFlags cc, bool likely)
 	int offset = TARGET16;
 	u32 targetAddr = GetCompilerPC() + offset + 4;
 
-	BranchInfo branchInfo(GetCompilerPC(), op, GetOffsetInstruction(1), false, likely);
-	branchInfo.delaySlotIsNice = IsDelaySlotNiceFPU(op, branchInfo.delaySlotOp);
+	MIPSOpcode delaySlotOp = GetOffsetInstruction(1);
+	js.downcountAmount += MIPSGetInstructionCycleEstimate(delaySlotOp);
+	bool delaySlotIsNice = IsDelaySlotNiceFPU(op, delaySlotOp);
 	CONDITIONAL_NICE_DELAYSLOT;
-
-	js.downcountAmount += MIPSGetInstructionCycleEstimate(branchInfo.delaySlotOp);
-	if (!likely && branchInfo.delaySlotIsNice && !branchInfo.delaySlotIsBranch)
+	if (!likely && delaySlotIsNice)
 		CompileDelaySlot(DELAYSLOT_NICE);
 
 	gpr.KillImmediate(MIPS_REG_FPCOND, true, false);
 	TEST(32, gpr.R(MIPS_REG_FPCOND), Imm32(1));
 
-	u32 notTakenTarget = ResolveNotTakenTarget(branchInfo);
-	CompBranchExits(cc, targetAddr, notTakenTarget, branchInfo);
+	CompBranchExits(cc, targetAddr, GetCompilerPC() + 8, delaySlotIsNice, likely, false);
 }
 
 
@@ -588,16 +559,19 @@ void Jit::BranchVFPUFlag(MIPSOpcode op, Gen::CCFlags cc, bool likely)
 	int offset = TARGET16;
 	u32 targetAddr = GetCompilerPC() + offset + 4;
 
-	BranchInfo branchInfo(GetCompilerPC(), op, GetOffsetInstruction(1), false, likely);
+	MIPSOpcode delaySlotOp = GetOffsetInstruction(1);
+	js.downcountAmount += MIPSGetInstructionCycleEstimate(delaySlotOp);
+
 	// Sometimes there's a VFPU branch in a delay slot (Disgaea 2: Dark Hero Days, Zettai Hero Project, La Pucelle)
 	// The behavior is undefined - the CPU may take the second branch even if the first one passes.
 	// However, it does consistently try each branch, which these games seem to expect.
-	branchInfo.delaySlotIsNice = IsDelaySlotNiceVFPU(op, branchInfo.delaySlotOp);
+	bool delaySlotIsBranch = MIPSCodeUtils::IsVFPUBranch(delaySlotOp);
+	bool delaySlotIsNice = !delaySlotIsBranch && IsDelaySlotNiceVFPU(op, delaySlotOp);
 	CONDITIONAL_NICE_DELAYSLOT;
-
-	js.downcountAmount += MIPSGetInstructionCycleEstimate(branchInfo.delaySlotOp);
-	if (!likely && branchInfo.delaySlotIsNice && !branchInfo.delaySlotIsBranch)
+	if (!likely && delaySlotIsNice)
 		CompileDelaySlot(DELAYSLOT_NICE);
+	if (delaySlotIsBranch && (signed short)(delaySlotOp & 0xFFFF) != (signed short)(op & 0xFFFF) - 1)
+		ERROR_LOG_REPORT(JIT, "VFPU branch in VFPU delay slot at %08x with different target %d / %d", GetCompilerPC(), (signed short)(delaySlotOp & 0xFFFF), (signed short)(op & 0xFFFF) - 1);
 
 	// THE CONDITION
 	int imm3 = (op >> 18) & 7;
@@ -605,8 +579,8 @@ void Jit::BranchVFPUFlag(MIPSOpcode op, Gen::CCFlags cc, bool likely)
 	gpr.KillImmediate(MIPS_REG_VFPUCC, true, false);
 	TEST(32, gpr.R(MIPS_REG_VFPUCC), Imm32(1 << imm3));
 
-	u32 notTakenTarget = ResolveNotTakenTarget(branchInfo);
-	CompBranchExits(cc, targetAddr, notTakenTarget, branchInfo);
+	u32 notTakenTarget = GetCompilerPC() + (delaySlotIsBranch ? 4 : 8);
+	CompBranchExits(cc, targetAddr, notTakenTarget, delaySlotIsNice, likely, false);
 }
 
 
@@ -638,7 +612,7 @@ void Jit::Comp_Jump(MIPSOpcode op) {
 	u32 targetAddr = (GetCompilerPC() & 0xF0000000) | off;
 
 	// Might be a stubbed address or something?
-	if (!Memory::IsValidAddress(targetAddr) || (targetAddr & 3) != 0) {
+	if (!Memory::IsValidAddress(targetAddr)) {
 		if (js.nextExit == 0) {
 			ERROR_LOG_REPORT(JIT, "Jump to invalid address: %08x PC %08x LR %08x", targetAddr, GetCompilerPC(), currentMIPS->r[MIPS_REG_RA]);
 		} else {

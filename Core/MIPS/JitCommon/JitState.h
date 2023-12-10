@@ -53,6 +53,8 @@ namespace MIPSComp {
 		{
 			AFTER_NONE = 0x00,
 			AFTER_CORE_STATE = 0x01,
+			AFTER_REWIND_PC_BAD_STATE = 0x02,
+			AFTER_MEMCHECK_CLEANUP = 0x04,
 		};
 
 		u32 compilerPC;
@@ -77,7 +79,6 @@ namespace MIPSComp {
 
 		// VFPU prefix magic
 		bool startDefaultPrefix = true;
-		bool blockWrotePrefixes = false;
 		u32 prefixS;
 		u32 prefixT;
 		u32 prefixD;
@@ -234,7 +235,6 @@ namespace MIPSComp {
 		bool downcountInRegister;
 		// ARM64 only
 		bool useASIMDVFPU;
-		// ARM64 and RV64
 		bool useStaticAlloc;
 		bool enablePointerify;
 

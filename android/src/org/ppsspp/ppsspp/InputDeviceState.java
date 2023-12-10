@@ -18,11 +18,6 @@ public class InputDeviceState {
 
 	private InputDevice mDevice;
 	private int[] mAxes;
-	private float[] mAxisPrevValue;
-
-	// Buffers for the native calls.
-	private int[] mAxisIds = null;
-	private float[] mValues = null;
 
 	private int sources;
 
@@ -99,12 +94,6 @@ public class InputDeviceState {
 		return str;
 	}
 
-	public static boolean inputSourceIsJoystick(int source) {
-		return (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
-				(source & InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD ||
-				(source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD;
-	}
-
 	public InputDeviceState(InputDevice device) {
 		sources = device.getSources();
 		// First, anything that's a gamepad is a gamepad, even if it has a keyboard or pointer.
@@ -112,7 +101,8 @@ public class InputDeviceState {
 			this.deviceId = NativeApp.DEVICE_ID_PAD_0;
 		} else if ((sources & InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD && device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
 			this.deviceId = NativeApp.DEVICE_ID_KEYBOARD;
-		} else if (inputSourceIsJoystick(sources)) {
+		} else if ((sources & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
+				(sources & InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD) {
 			this.deviceId = NativeApp.DEVICE_ID_PAD_0;
 		} else if ((sources & InputDevice.SOURCE_CLASS_POINTER) == InputDevice.SOURCE_CLASS_POINTER) {
 			this.deviceId = NativeApp.DEVICE_ID_MOUSE;
@@ -128,9 +118,6 @@ public class InputDeviceState {
 		}
 
 		mAxes = new int[numAxes];
-		mAxisPrevValue = new float[numAxes];
-		mAxisIds = new int[numAxes];
-		mValues = new float[numAxes];
 
 		int i = 0;
 		for (MotionRange range : device.getMotionRanges()) {
@@ -141,40 +128,32 @@ public class InputDeviceState {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
 			logAdvanced(device);
 		}
-		NativeApp.sendMessageFromJava("inputDeviceConnectedID", String.valueOf(this.deviceId));
-		NativeApp.sendMessageFromJava("inputDeviceConnected", device.getName());
+		NativeApp.sendMessage("inputDeviceConnectedID", String.valueOf(this.deviceId));
+		NativeApp.sendMessage("inputDeviceConnected", device.getName());
 	}
 
-	// This is called from dispatchKeyEvent.
 	public boolean onKeyDown(KeyEvent event) {
 		int keyCode = event.getKeyCode();
 		boolean repeat = event.getRepeatCount() > 0;
 		return NativeApp.keyDown(deviceId, keyCode, repeat);
 	}
 
-	// This is called from dispatchKeyEvent.
 	public boolean onKeyUp(KeyEvent event) {
 		int keyCode = event.getKeyCode();
 		return NativeApp.keyUp(deviceId, keyCode);
 	}
 
 	public boolean onJoystickMotion(MotionEvent event) {
-		if (!inputSourceIsJoystick(event.getSource())) {
-			Log.i(TAG, "Not a joystick event: source = " + event.getSource());
+		if ((event.getSource() & InputDevice.SOURCE_CLASS_JOYSTICK) == 0) {
 			return false;
 		}
-		int count = 0;
+		NativeApp.beginJoystickEvent();
 		for (int i = 0; i < mAxes.length; i++) {
 			int axisId = mAxes[i];
 			float value = event.getAxisValue(axisId);
-			if (value != mAxisPrevValue[i]) {
-				mAxisIds[count] = axisId;
-				mValues[count] = value;
-				count++;
-				mAxisPrevValue[i] = value;
-			}
+			NativeApp.joystickAxis(deviceId, axisId, value);
 		}
-		NativeApp.joystickAxis(deviceId, mAxisIds, mValues, count);
+		NativeApp.endJoystickEvent();
 		return true;
 	}
 }

@@ -14,8 +14,6 @@
 #include "Common/Log.h"
 #include "Common/StringUtils.h"
 
-#include "Common/Math/math_util.h"
-
 DrawBuffer::DrawBuffer() {
 	verts_ = new Vertex[MAX_VERTS];
 	fontscalex = 1.0f;
@@ -34,16 +32,24 @@ void DrawBuffer::Init(Draw::DrawContext *t3d, Draw::Pipeline *pipeline) {
 
 	draw_ = t3d;
 	inited_ = true;
+
+	if (pipeline->RequiresBuffer()) {
+		vbuf_ = draw_->CreateBuffer(MAX_VERTS * sizeof(Vertex), BufferUsageFlag::DYNAMIC | BufferUsageFlag::VERTEXDATA);
+	} else {
+		vbuf_ = nullptr;
+	}
 }
 
 Draw::InputLayout *DrawBuffer::CreateInputLayout(Draw::DrawContext *t3d) {
 	using namespace Draw;
 	InputLayoutDesc desc = {
-		sizeof(Vertex),
 		{
-			{ SEM_POSITION, DataFormat::R32G32B32_FLOAT, 0 },
-			{ SEM_TEXCOORD0, DataFormat::R32G32_FLOAT, 12 },
-			{ SEM_COLOR0, DataFormat::R8G8B8A8_UNORM, 20 },
+			{ sizeof(Vertex), false },
+		},
+		{
+			{ 0, SEM_POSITION, DataFormat::R32G32B32_FLOAT, 0 },
+			{ 0, SEM_TEXCOORD0, DataFormat::R32G32_FLOAT, 12 },
+			{ 0, SEM_COLOR0, DataFormat::R8G8B8A8_UNORM, 20 },
 		},
 	};
 
@@ -51,6 +57,10 @@ Draw::InputLayout *DrawBuffer::CreateInputLayout(Draw::DrawContext *t3d) {
 }
 
 void DrawBuffer::Shutdown() {
+	if (vbuf_) {
+		vbuf_->Release();
+		vbuf_ = nullptr;
+	}
 	inited_ = false;
 	alphaStack_.clear();
 	drawMatrixStack_.clear();
@@ -80,18 +90,19 @@ void DrawBuffer::Flush(bool set_blend_state) {
 	ub.tint = tint_;
 	ub.saturation = saturation_;
 	draw_->UpdateDynamicUniformBuffer(&ub, sizeof(ub));
-	draw_->DrawUP((const void *)verts_, count_);
+	if (vbuf_) {
+		draw_->UpdateBuffer(vbuf_, (const uint8_t *)verts_, 0, sizeof(Vertex) * count_, Draw::UPDATE_DISCARD);
+		draw_->BindVertexBuffers(0, 1, &vbuf_, nullptr);
+		int offset = 0;
+		draw_->Draw(count_, offset);
+	} else {
+		draw_->DrawUP((const void *)verts_, count_);
+	}
 	count_ = 0;
 }
 
 void DrawBuffer::V(float x, float y, float z, uint32_t color, float u, float v) {
-	_dbg_assert_msg_(count_ < MAX_VERTS, "Overflowed the DrawBuffer");
-
-#ifdef _DEBUG
-	if (my_isnanorinf(x) || my_isnanorinf(y) || my_isnanorinf(z)) {
-		_assert_(false);
-	}
-#endif
+	_assert_msg_(count_ < MAX_VERTS, "Overflowed the DrawBuffer");
 
 	Vertex *vert = &verts_[count_++];
 	vert->x = x;
@@ -104,43 +115,43 @@ void DrawBuffer::V(float x, float y, float z, uint32_t color, float u, float v) 
 
 void DrawBuffer::Rect(float x, float y, float w, float h, uint32_t color, int align) {
 	DoAlign(align, &x, &y, &w, &h);
-	RectVGradient(x, y, x + w, y + h, color, color);
+	RectVGradient(x, y, w, h, color, color);
 }
 
 void DrawBuffer::hLine(float x1, float y, float x2, uint32_t color) {
 	// Round Y to the closest full pixel, since we're making it 1-pixel-thin.
-	y -= fmodf(y, g_display.pixel_in_dps_y);
-	Rect(x1, y, x2 - x1, g_display.pixel_in_dps_y, color);
+	y -= fmodf(y, pixel_in_dps_y);
+	Rect(x1, y, x2 - x1, pixel_in_dps_y, color);
 }
 
 void DrawBuffer::vLine(float x, float y1, float y2, uint32_t color) {
 	// Round X to the closest full pixel, since we're making it 1-pixel-thin.
-	x -= fmodf(x, g_display.pixel_in_dps_x);
-	Rect(x, y1, g_display.pixel_in_dps_x, y2 - y1, color);
+	x -= fmodf(x, pixel_in_dps_x);
+	Rect(x, y1, pixel_in_dps_x, y2 - y1, color);
 }
 
-void DrawBuffer::RectVGradient(float x1, float y1, float x2, float y2, uint32_t colorTop, uint32_t colorBottom) {
-	V(x1, y1, 0, colorTop,    0, 0);
-	V(x2, y1, 0, colorTop,    1, 0);
-	V(x2, y2, 0, colorBottom, 1, 1);
-	V(x1, y1, 0, colorTop,    0, 0);
-	V(x2, y2, 0, colorBottom, 1, 1);
-	V(x1, y2, 0, colorBottom, 0, 1);
+void DrawBuffer::RectVGradient(float x, float y, float w, float h, uint32_t colorTop, uint32_t colorBottom) {
+	V(x,		 y,     0, colorTop,    0, 0);
+	V(x + w, y,		 0, colorTop,    1, 0);
+	V(x + w, y + h, 0, colorBottom, 1, 1);
+	V(x,		 y,     0, colorTop,    0, 0);
+	V(x + w, y + h, 0, colorBottom, 1, 1);
+	V(x,		 y + h, 0, colorBottom, 0, 1);
 }
 
 void DrawBuffer::RectOutline(float x, float y, float w, float h, uint32_t color, int align) {
-	hLine(x, y, x + w + g_display.pixel_in_dps_x, color);
-	hLine(x, y + h, x + w + g_display.pixel_in_dps_x, color);
+	hLine(x, y, x + w + pixel_in_dps_x, color);
+	hLine(x, y + h, x + w + pixel_in_dps_x, color);
 
-	vLine(x, y, y + h + g_display.pixel_in_dps_y, color);
-	vLine(x + w, y, y + h + g_display.pixel_in_dps_y, color);
+	vLine(x, y, y + h + pixel_in_dps_y, color);
+	vLine(x + w, y, y + h + pixel_in_dps_y, color);
 }
 
-void DrawBuffer::MultiVGradient(float x, float y, float w, float h, const GradientStop *stops, int numStops) {
+void DrawBuffer::MultiVGradient(float x, float y, float w, float h, GradientStop *stops, int numStops) {
 	for (int i = 0; i < numStops - 1; i++) {
 		float t0 = stops[i].t, t1 = stops[i+1].t;
 		uint32_t c0 = stops[i].color, c1 = stops[i+1].color;
-		RectVGradient(x, y + h * t0, x + w, y + h * (t1 - t0), c0, c1);
+		RectVGradient(x, y + h * t0, w, h * (t1 - t0), c0, c1);
 	}
 }
 
@@ -291,9 +302,7 @@ void DrawBuffer::DrawImageRotated(ImageID atlas_image, float x, float y, float s
 		{u1, image->v2},
 	};
 	for (int i = 0; i < 6; i++) {
-		if (angle != 0.0f) {
-			rot(v[i], angle, x, y);
-		}
+		rot(v[i], angle, x, y);
 		V(v[i][0], v[i][1], 0, color, uv[i][0], uv[i][1]);
 	}
 }

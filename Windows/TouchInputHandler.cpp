@@ -15,12 +15,15 @@
 #include "Windows/MainWindow.h"
 
 TouchInputHandler::TouchInputHandler() {
-	HMODULE user32 = GetModuleHandle(TEXT("User32.dll"));
-	if (!user32)
-		return;
-	touchInfo = (getTouchInputProc)GetProcAddress(user32, "GetTouchInputInfo");
-	closeTouch = (closeTouchInputProc)GetProcAddress(user32, "CloseTouchInputHandle");
-	registerTouch = (registerTouchProc)GetProcAddress(user32, "RegisterTouchWindow");
+	touchInfo = (getTouchInputProc) GetProcAddress(
+		GetModuleHandle(TEXT("User32.dll")),
+		"GetTouchInputInfo");
+	closeTouch = (closeTouchInputProc) GetProcAddress(
+		GetModuleHandle(TEXT("User32.dll")),
+		"CloseTouchInputHandle");
+	registerTouch = (registerTouchProc) GetProcAddress(
+		GetModuleHandle(TEXT("User32.dll")),
+		"RegisterTouchWindow");
 }
 
 int TouchInputHandler::ToTouchID(int windowsID, bool allowAllocate) {
@@ -54,8 +57,8 @@ bool TouchInputHandler::GetTouchPoint(HWND hWnd, const TOUCHINPUT &input, float 
 	point.x = (LONG)(TOUCH_COORD_TO_PIXEL(input.x));
 	point.y = (LONG)(TOUCH_COORD_TO_PIXEL(input.y));
 	if (ScreenToClient(hWnd, &point)) {
-		x = point.x * g_display.dpi_scale_x;
-		y = point.y * g_display.dpi_scale_y;
+		x = point.x * g_dpi_scale_x;
+		y = point.y * g_dpi_scale_y;
 		return true;
 	}
 
@@ -98,18 +101,24 @@ void TouchInputHandler::handleTouchEvent(HWND hWnd, UINT message, WPARAM wParam,
 
 // from http://msdn.microsoft.com/en-us/library/ms812373.aspx
 // disable the press and hold gesture for the given window
-void TouchInputHandler::disablePressAndHold(HWND hWnd) {
+void TouchInputHandler::disablePressAndHold(HWND hWnd)
+{
 	// The atom identifier and Tablet PC atom
+	ATOM atomID = 0;
 	LPCTSTR tabletAtom = _T("MicrosoftTabletPenServiceProperty");
-	ATOM atomID = GlobalAddAtom(tabletAtom);
+	
+	// Get the Tablet PC atom ID
+	atomID = GlobalAddAtom(tabletAtom);
 	
 	// If getting the ID failed, return false
-	if (atomID != 0) {
-		// Try to disable press and hold gesture by setting the window property.
-		SetProp(hWnd, tabletAtom, (HANDLE)1);
+	if (atomID == 0)
+	{
+	 return;
 	}
-
-	GlobalDeleteAtom(atomID);
+	
+	// Try to disable press and hold gesture by 
+	// setting the window property, return the result
+	SetProp(hWnd, tabletAtom, (HANDLE)1);
 }
 
 void TouchInputHandler::touchUp(int id, float x, float y){

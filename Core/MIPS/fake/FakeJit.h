@@ -60,7 +60,6 @@ public:
 
 	// Ops
 	void Comp_ITypeMem(MIPSOpcode op) override {}
-	void Comp_StoreSync(MIPSOpcode op) override {}
 	void Comp_Cache(MIPSOpcode op) override {}
 
 	void Comp_RelBranch(MIPSOpcode op) override {}
@@ -163,6 +162,8 @@ private:
 	void MovFromPC(FakeReg r);
 	void MovToPC(FakeReg r);
 
+	bool ReplaceJalTo(u32 dest);
+
 	void SaveDowncount();
 	void RestoreDowncount();
 
@@ -178,6 +179,19 @@ private:
 
 	int dontLogBlocks;
 	int logBlocks;
+
+public:
+	// Code pointers
+	const u8 *enterCode;
+
+	const u8 *outerLoop;
+	const u8 *outerLoopPCInR0;
+	const u8 *dispatcherCheckCoreState;
+	const u8 *dispatcherPCInR0;
+	const u8 *dispatcher;
+	const u8 *dispatcherNoCheck;
+
+	const u8 *breakpointBailout;
 };
 
 }	// namespace MIPSComp

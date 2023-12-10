@@ -17,13 +17,12 @@
 
 #pragma once
 
-#include "Common/Common.h"
 #include "Common/GPU/Shader.h"
 #include "Common/GPU/thin3d.h"
 
 struct FShaderID;
 
-// D3D9 float constants
+// D3D9 constants
 
 #define CONST_PS_TEXENV 0
 #define CONST_PS_ALPHACOLORREF 1
@@ -35,19 +34,8 @@ struct FShaderID;
 #define CONST_PS_FBOTEXSIZE 7
 #define CONST_PS_TEXCLAMP 8
 #define CONST_PS_TEXCLAMPOFF 9
-#define CONST_PS_MIPBIAS 10
-#define CONST_PS_TEX_NO_ALPHA_MUL 11
 
 // For stencil upload
-#define BCONST_PS_STENCILVALUE 13
+#define CONST_PS_STENCILVALUE 10
 
-// D3D9 bool constants, they have their own register space.
-
-
-// Can technically be deduced from the fragment shader ID, but this is safer.
-enum class FragmentShaderFlags : u32 {
-	USES_DISCARD = 2,
-};
-ENUM_CLASS_BITOPS(FragmentShaderFlags);
-
-bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLanguageDesc &compat, Draw::Bugs bugs, uint64_t *uniformMask, FragmentShaderFlags *fragmentShaderFlags, std::string *errorString);
+bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLanguageDesc &compat, Draw::Bugs bugs, uint64_t *uniformMask, std::string *errorString);

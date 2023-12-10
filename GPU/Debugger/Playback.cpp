@@ -28,7 +28,6 @@
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
-#include "Core/Debugger/MemBlockInfo.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/HLE/sceDisplay.h"
@@ -46,7 +45,6 @@
 namespace GPURecord {
 
 static std::string lastExecFilename;
-static uint32_t lastExecVersion;
 static std::vector<Command> lastExecCommands;
 static std::vector<u8> lastExecPushbuf;
 static std::mutex executeLock;
@@ -284,8 +282,8 @@ int BufMapping::slabGeneration_ = 0;
 
 class DumpExecute {
 public:
-	DumpExecute(const std::vector<u8> &pushbuf, const std::vector<Command> &commands, uint32_t version)
-		: pushbuf_(pushbuf), commands_(commands), mapping_(pushbuf), version_(version) {
+	DumpExecute(const std::vector<u8> &pushbuf, const std::vector<Command> &commands)
+		: pushbuf_(pushbuf), commands_(commands), mapping_(pushbuf) {
 	}
 	~DumpExecute();
 
@@ -300,7 +298,6 @@ private:
 	void Registers(u32 ptr, u32 sz);
 	void Vertices(u32 ptr, u32 sz);
 	void Indices(u32 ptr, u32 sz);
-	void ClutAddr(u32 ptr, u32 sz);
 	void Clut(u32 ptr, u32 sz);
 	void TransferSrc(u32 ptr, u32 sz);
 	void Memset(u32 ptr, u32 sz);
@@ -309,11 +306,8 @@ private:
 	void Texture(int level, u32 ptr, u32 sz);
 	void Framebuf(int level, u32 ptr, u32 sz);
 	void Display(u32 ptr, u32 sz);
-	void EdramTrans(u32 ptr, u32 sz);
 
 	u32 execMemcpyDest = 0;
-	u32 execClutAddr = 0;
-	u32 execClutFlags = 0;
 	u32 execListBuf = 0;
 	u32 execListPos = 0;
 	u32 execListID = 0;
@@ -326,14 +320,9 @@ private:
 	const std::vector<u8> &pushbuf_;
 	const std::vector<Command> &commands_;
 	BufMapping mapping_;
-	uint32_t version_ = 0;
 };
 
 void DumpExecute::SyncStall() {
-	if (execListBuf == 0) {
-		return;
-	}
-
 	gpu->UpdateStall(execListID, execListPos);
 	s64 listTicks = gpu->GetListTicks(execListID);
 	if (listTicks != -1) {
@@ -377,7 +366,6 @@ bool DumpExecute::SubmitCmds(const void *p, u32 sz) {
 		Memory::Write_U32((GE_CMD_JUMP << 24) | (execListBuf & 0x00FFFFFF), execListPos + 4);
 
 		execListPos = execListBuf;
-		lastBase_ = execListBuf & 0xFF000000;
 
 		// Don't continue until we've stalled.
 		SyncStall();
@@ -392,11 +380,6 @@ bool DumpExecute::SubmitCmds(const void *p, u32 sz) {
 	// TODO: Unfortunate.  Maybe Texture commands should contain the bufw instead.
 	// The goal here is to realistically combine prims in dumps.  Stalling for the bufw flushes.
 	u32_le *ops = (u32_le *)Memory::GetPointerUnchecked(writePos);
-
-	u32 lastTexHigh[8]{};
-	for (int i = 0; i < 8; ++i)
-		lastTexHigh[i] = ((lastTex_[i] & 0xFF000000) >> 8) | ((GE_CMD_TEXBUFWIDTH0 + i) << 24);
-
 	for (u32 i = 0; i < sz / 4; ++i) {
 		u32 cmd = ops[i] >> 24;
 		if (cmd >= GE_CMD_TEXBUFWIDTH0 && cmd <= GE_CMD_TEXBUFWIDTH7) {
@@ -407,7 +390,7 @@ bool DumpExecute::SubmitCmds(const void *p, u32 sz) {
 			if (bufw == lastBufw_[level])
 				ops[i] = GE_CMD_NOP << 24;
 			else
-				ops[i] = lastTexHigh[level] | bufw;
+				ops[i] = (gstate.texbufwidth[level] & 0xFFFF0000) | bufw;
 			lastBufw_[level] = bufw;
 		}
 
@@ -466,9 +449,9 @@ void DumpExecute::Vertices(u32 ptr, u32 sz) {
 		return;
 	}
 
-	if (lastBase_ != (psp & 0xFF000000)) {
+	if (lastBase_ != (psp & 0x0FF000000)) {
 		execListQueue.push_back((GE_CMD_BASE << 24) | ((psp >> 8) & 0x00FF0000));
-		lastBase_ = psp & 0xFF000000;
+		lastBase_ = psp & 0x0FF000000;
 	}
 	execListQueue.push_back((GE_CMD_VADDR << 24) | (psp & 0x00FFFFFF));
 }
@@ -480,46 +463,22 @@ void DumpExecute::Indices(u32 ptr, u32 sz) {
 		return;
 	}
 
-	if (lastBase_ != (psp & 0xFF000000)) {
+	if (lastBase_ != (psp & 0x0FF000000)) {
 		execListQueue.push_back((GE_CMD_BASE << 24) | ((psp >> 8) & 0x00FF0000));
-		lastBase_ = psp & 0xFF000000;
+		lastBase_ = psp & 0x0FF000000;
 	}
 	execListQueue.push_back((GE_CMD_IADDR << 24) | (psp & 0x00FFFFFF));
 }
 
-void DumpExecute::ClutAddr(u32 ptr, u32 sz) {
-	struct ClutAddrData {
-		u32 addr;
-		u32 flags;
-	};
-	const ClutAddrData *data = (const ClutAddrData *)(pushbuf_.data() + ptr);
-	execClutAddr = data->addr;
-	execClutFlags = data->flags;
-}
-
 void DumpExecute::Clut(u32 ptr, u32 sz) {
-	// This is always run when we have the actual address set.
-	if (execClutAddr != 0) {
-		const bool isTarget = (execClutFlags & 1) != 0;
-
-		// Could potentially always skip if !isTarget, but playing it safe for offset texture behavior.
-		if (Memory::IsValidRange(execClutAddr, sz) && (!isTarget || !g_Config.bSoftwareRendering)) {
-			// Intentionally don't trigger an upload here.
-			Memory::MemcpyUnchecked(execClutAddr, pushbuf_.data() + ptr, sz);
-			NotifyMemInfo(MemBlockFlags::WRITE, execClutAddr, sz, "ReplayClut");
-		}
-
-		execClutAddr = 0;
-	} else {
-		u32 psp = mapping_.Map(ptr, sz, std::bind(&DumpExecute::SyncStall, this));
-		if (psp == 0) {
-			ERROR_LOG(SYSTEM, "Unable to allocate for clut");
-			return;
-		}
-
-		execListQueue.push_back((GE_CMD_CLUTADDRUPPER << 24) | ((psp >> 8) & 0x00FF0000));
-		execListQueue.push_back((GE_CMD_CLUTADDR << 24) | (psp & 0x00FFFFFF));
+	u32 psp = mapping_.Map(ptr, sz, std::bind(&DumpExecute::SyncStall, this));
+	if (psp == 0) {
+		ERROR_LOG(SYSTEM, "Unable to allocate for clut");
+		return;
 	}
+
+	execListQueue.push_back((GE_CMD_CLUTADDRUPPER << 24) | ((psp >> 8) & 0x00FF0000));
+	execListQueue.push_back((GE_CMD_CLUTADDR << 24) | (psp & 0x00FFFFFF));
 }
 
 void DumpExecute::TransferSrc(u32 ptr, u32 sz) {
@@ -561,8 +520,7 @@ void DumpExecute::Memcpy(u32 ptr, u32 sz) {
 	if (Memory::IsVRAMAddress(execMemcpyDest)) {
 		SyncStall();
 		Memory::MemcpyUnchecked(execMemcpyDest, pushbuf_.data() + ptr, sz);
-		NotifyMemInfo(MemBlockFlags::WRITE, execMemcpyDest, sz, "ReplayMemcpy");
-		gpu->PerformWriteColorFromMemory(execMemcpyDest, sz);
+		gpu->PerformMemoryUpload(execMemcpyDest, sz);
 	}
 }
 
@@ -606,13 +564,12 @@ void DumpExecute::Framebuf(int level, u32 ptr, u32 sz) {
 	u32 headerSize = (u32)sizeof(FramebufData);
 	u32 pspSize = sz - headerSize;
 	const bool isTarget = (framebuf->flags & 1) != 0;
-	const bool unchangedVRAM = version_ >= 6 && (framebuf->flags & 2) != 0;
+	const bool unchangedVRAM = (framebuf->flags & 2) != 0;
 	// TODO: Could use drawnVRAM flag, but it can be wrong.
 	// Could potentially always skip if !isTarget, but playing it safe for offset texture behavior.
 	if (Memory::IsValidRange(framebuf->addr, pspSize) && !unchangedVRAM && (!isTarget || !g_Config.bSoftwareRendering)) {
 		// Intentionally don't trigger an upload here.
 		Memory::MemcpyUnchecked(framebuf->addr, pushbuf_.data() + ptr + headerSize, pspSize);
-		NotifyMemInfo(MemBlockFlags::WRITE, framebuf->addr, pspSize, "ReplayTex");
 	}
 }
 
@@ -631,17 +588,6 @@ void DumpExecute::Display(u32 ptr, u32 sz) {
 	__DisplaySetFramebuf(disp->topaddr.ptr, disp->linesize, disp->pixelFormat, 0);
 }
 
-void DumpExecute::EdramTrans(u32 ptr, u32 sz) {
-	uint32_t value;
-	memcpy(&value, pushbuf_.data() + ptr, 4);
-
-	// Sync up drawing.
-	SyncStall();
-
-	if (gpu)
-		gpu->SetAddrTranslation(value);
-}
-
 DumpExecute::~DumpExecute() {
 	execMemcpyDest = 0;
 	if (execListBuf) {
@@ -653,10 +599,6 @@ DumpExecute::~DumpExecute() {
 }
 
 bool DumpExecute::Run() {
-	// Start with the default value.
-	if (gpu)
-		gpu->SetAddrTranslation(0x400);
-
 	for (const Command &cmd : commands_) {
 		switch (cmd.type) {
 		case CommandType::INIT:
@@ -673,10 +615,6 @@ bool DumpExecute::Run() {
 
 		case CommandType::INDICES:
 			Indices(cmd.ptr, cmd.sz);
-			break;
-
-		case CommandType::CLUTADDR:
-			ClutAddr(cmd.ptr, cmd.sz);
 			break;
 
 		case CommandType::CLUT:
@@ -697,10 +635,6 @@ bool DumpExecute::Run() {
 
 		case CommandType::MEMCPYDATA:
 			Memcpy(cmd.ptr, cmd.sz);
-			break;
-
-		case CommandType::EDRAMTRANS:
-			EdramTrans(cmd.ptr, cmd.sz);
 			break;
 
 		case CommandType::TEXTURE0:
@@ -767,7 +701,6 @@ static void ReplayStop() {
 	lastExecFilename.clear();
 	lastExecCommands.clear();
 	lastExecPushbuf.clear();
-	lastExecVersion = 0;
 }
 
 bool RunMountedReplay(const std::string &filename) {
@@ -775,14 +708,11 @@ bool RunMountedReplay(const std::string &filename) {
 
 	std::lock_guard<std::mutex> guard(executeLock);
 	Core_ListenStopRequest(&ReplayStop);
-
-	uint32_t version = lastExecVersion;
 	if (lastExecFilename != filename) {
 		PROFILE_THIS_SCOPE("ReplayLoad");
 		u32 fp = pspFileSystem.OpenFile(filename, FILEACCESS_READ);
 		Header header;
 		pspFileSystem.ReadFile(fp, (u8 *)&header, sizeof(header));
-		version = header.version;
 
 		if (memcmp(header.magic, HEADER_MAGIC, sizeof(header.magic)) != 0 || header.version > VERSION || header.version < MIN_VERSION) {
 			ERROR_LOG(SYSTEM, "Invalid GE dump or unsupported version");
@@ -819,10 +749,9 @@ bool RunMountedReplay(const std::string &filename) {
 		}
 
 		lastExecFilename = filename;
-		lastExecVersion = version;
 	}
 
-	DumpExecute executor(lastExecPushbuf, lastExecCommands, version);
+	DumpExecute executor(lastExecPushbuf, lastExecCommands);
 	return executor.Run();
 }
 

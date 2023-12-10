@@ -1,3 +1,5 @@
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
 #pragma once
 #include "Windows/W32Util/DialogManager.h"
 
@@ -17,7 +19,7 @@ private:
 	HWND memViewHdl, symListHdl, editWnd, searchBoxHdl, srcListHdl;
 	HWND layerDropdown_;
 	HWND status_;
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 
 public:
 	int index; //helper 
@@ -31,8 +33,10 @@ public:
 	~CMemoryDlg(void);
 	
 	void Goto(u32 addr);
-	void Update(void) override;
+	void Update(void);	
 	void NotifyMapLoaded();
+
+	void NotifySearchCompleted();
 
 	void Size(void);
 

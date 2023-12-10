@@ -81,33 +81,6 @@ static const char *logSectionName = "LogDebug";
 static const char *logSectionName = "Log";
 #endif
 
-std::string GPUBackendToString(GPUBackend backend) {
-	switch (backend) {
-	case GPUBackend::OPENGL:
-		return "OPENGL";
-	case GPUBackend::DIRECT3D9:
-		return "DIRECT3D9";
-	case GPUBackend::DIRECT3D11:
-		return "DIRECT3D11";
-	case GPUBackend::VULKAN:
-		return "VULKAN";
-	}
-	// Intentionally not a default so we get a warning.
-	return "INVALID";
-}
-
-GPUBackend GPUBackendFromString(std::string_view backend) {
-	if (!equalsNoCase(backend, "OPENGL") || backend == "0")
-		return GPUBackend::OPENGL;
-	if (!equalsNoCase(backend, "DIRECT3D9") || backend == "1")
-		return GPUBackend::DIRECT3D9;
-	if (!equalsNoCase(backend, "DIRECT3D11") || backend == "2")
-		return GPUBackend::DIRECT3D11;
-	if (!equalsNoCase(backend, "VULKAN") || backend == "3")
-		return GPUBackend::VULKAN;
-	return GPUBackend::OPENGL;
-}
-
 const char *DefaultLangRegion() {
 	// Unfortunate default.  There's no need to use bFirstRun, since this is only a default.
 	static std::string defaultLangRegion = "en_US";
@@ -184,7 +157,7 @@ static bool DefaultVSync() {
 }
 
 static bool DefaultEnableStateUndo() {
-#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS)
+#ifdef MOBILE_DEVICE
 	// Off on mobile to save disk space.
 	return false;
 #endif
@@ -306,11 +279,10 @@ static bool DefaultSasThread() {
 static const ConfigSetting achievementSettings[] = {
 	// Core settings
 	ConfigSetting("AchievementsEnable", &g_Config.bAchievementsEnable, true, CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsChallengeMode", &g_Config.bAchievementsChallengeMode, true, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsEncoreMode", &g_Config.bAchievementsEncoreMode, false, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsUnofficial", &g_Config.bAchievementsUnofficial, false, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsChallengeMode", &g_Config.bAchievementsChallengeMode, false, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsEncoreMode", &g_Config.bAchievementsEncoreMode, false, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsUnofficial", &g_Config.bAchievementsUnofficial, false, CfgFlag::DEFAULT),
 	ConfigSetting("AchievementsLogBadMemReads", &g_Config.bAchievementsLogBadMemReads, false, CfgFlag::DEFAULT),
-	ConfigSetting("bAchievementsSaveStateInChallengeMode", &g_Config.bAchievementsSaveStateInHardcoreMode, false, CfgFlag::DEFAULT),
 
 	// Achievements login info. Note that password is NOT stored, only a login token.
 	// And that login token is stored separately from the ini, see NativeSaveSecret, but it can also be loaded
@@ -323,12 +295,12 @@ static const ConfigSetting achievementSettings[] = {
 	ConfigSetting("AchievementsUnlockAudioFile", &g_Config.sAchievementsUnlockAudioFile, "", CfgFlag::DEFAULT),
 	ConfigSetting("AchievementsLeaderboardSubmitAudioFile", &g_Config.sAchievementsLeaderboardSubmitAudioFile, "", CfgFlag::DEFAULT),
 
-	ConfigSetting("AchievementsLeaderboardTrackerPos", &g_Config.iAchievementsLeaderboardTrackerPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsLeaderboardStartedOrFailedPos", &g_Config.iAchievementsLeaderboardStartedOrFailedPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsLeaderboardSubmittedPos", &g_Config.iAchievementsLeaderboardSubmittedPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsProgressPos", &g_Config.iAchievementsProgressPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsChallengePos", &g_Config.iAchievementsChallengePos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
-	ConfigSetting("AchievementsUnlockedPos", &g_Config.iAchievementsUnlockedPos, (int)ScreenEdgePosition::TOP_CENTER, CfgFlag::PER_GAME | CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsLeaderboardTrackerPos", &g_Config.iAchievementsLeaderboardTrackerPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsLeaderboardStartedOrFailedPos", &g_Config.iAchievementsLeaderboardStartedOrFailedPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsLeaderboardSubmittedPos", &g_Config.iAchievementsLeaderboardSubmittedPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsProgressPos", &g_Config.iAchievementsProgressPos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsChallengePos", &g_Config.iAchievementsChallengePos, (int)ScreenEdgePosition::TOP_LEFT, CfgFlag::DEFAULT),
+	ConfigSetting("AchievementsUnlockedPos", &g_Config.iAchievementsUnlockedPos, (int)ScreenEdgePosition::TOP_CENTER, CfgFlag::DEFAULT),
 };
 
 static const ConfigSetting cpuSettings[] = {
@@ -344,7 +316,7 @@ static const ConfigSetting cpuSettings[] = {
 	ConfigSetting("CPUSpeed", &g_Config.iLockedCPUSpeed, 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
 };
 
-static int DefaultInternalResolution() {
+static float DefaultInternalResolution() {
 	// Auto on Windows and Linux, 2x on large screens, 1x elsewhere.
 #if defined(USING_WIN_UI) || defined(USING_QT_UI)
 	return 0;
@@ -541,7 +513,7 @@ bool Config::IsBackendEnabled(GPUBackend backend, bool validate) {
 	return true;
 }
 
-template <typename T, std::string (*FTo)(T), T (*FFrom)(std::string_view)>
+template <typename T, std::string (*FTo)(T), T (*FFrom)(const std::string &)>
 struct ConfigTranslator {
 	static std::string To(int v) {
 		return StringFromInt(v) + " (" + FTo(T(v)) + ")";
@@ -618,6 +590,7 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("AnisotropyLevel", &g_Config.iAnisotropyLevel, 4, CfgFlag::PER_GAME),
 	ConfigSetting("MultiSampleLevel", &g_Config.iMultiSampleLevel, 0, CfgFlag::PER_GAME),  // Number of samples is 1 << iMultiSampleLevel
 
+	ConfigSetting("VertexDecCache", &g_Config.bVertexCache, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("TextureBackoffCache", &g_Config.bTextureBackoffCache, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("VertexDecJit", &g_Config.bVertexDecoderJit, &DefaultCodeGen, CfgFlag::DONT_SAVE | CfgFlag::REPORT),
 
@@ -789,7 +762,6 @@ static const ConfigSetting controlSettings[] = {
 	ConfigSetting("TouchButtonOpacity", &g_Config.iTouchButtonOpacity, 65, CfgFlag::PER_GAME),
 	ConfigSetting("TouchButtonHideSeconds", &g_Config.iTouchButtonHideSeconds, 20, CfgFlag::PER_GAME),
 	ConfigSetting("AutoCenterTouchAnalog", &g_Config.bAutoCenterTouchAnalog, false, CfgFlag::PER_GAME),
-	ConfigSetting("StickyTouchDPad", &g_Config.bStickyTouchDPad, false, CfgFlag::PER_GAME),
 
 	// Snap touch control position
 	ConfigSetting("TouchSnapToGrid", &g_Config.bTouchSnapToGrid, false, CfgFlag::PER_GAME),
@@ -935,6 +907,7 @@ static const ConfigSetting vrSettings[] = {
 	ConfigSetting("VRCameraPitch", &g_Config.iCameraPitch, 0, CfgFlag::PER_GAME),
 	ConfigSetting("VRCanvasDistance", &g_Config.fCanvasDistance, 12.0f, CfgFlag::DEFAULT),
 	ConfigSetting("VRCanvas3DDistance", &g_Config.fCanvas3DDistance, 3.0f, CfgFlag::DEFAULT),
+	ConfigSetting("VRFieldOfView", &g_Config.fFieldOfViewPercentage, 100.0f, CfgFlag::PER_GAME),
 	ConfigSetting("VRHeadUpDisplayScale", &g_Config.fHeadUpDisplayScale, 0.3f, CfgFlag::PER_GAME),
 	ConfigSetting("VRMotionLength", &g_Config.fMotionLength, 0.5f, CfgFlag::DEFAULT),
 	ConfigSetting("VRHeadRotationScale", &g_Config.fHeadRotationScale, 5.0f, CfgFlag::PER_GAME),
@@ -1095,8 +1068,6 @@ void Config::UpdateAfterSettingAutoFrameSkip() {
 }
 
 void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
-	double startTime = time_now_d();
-
 	if (!bUpdatedInstanceCounter) {
 		InitInstanceCounter();
 		bUpdatedInstanceCounter = true;
@@ -1156,10 +1127,6 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 			}
 		}
 	}
-
-	// Time tracking
-	Section *playTime = iniFile.GetOrCreateSection("PlayTime");
-	playTimeTracker_.Load(playTime);
 
 	auto pinnedPaths = iniFile.GetOrCreateSection("PinnedPaths")->ToMap();
 	vPinnedPaths.clear();
@@ -1242,11 +1209,10 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 
 	PostLoadCleanup(false);
 
-	INFO_LOG(LOADER, "Config loaded: '%s' (%0.1f ms)", iniFilename_.c_str(), (time_now_d() - startTime) * 1000.0);
+	INFO_LOG(LOADER, "Config loaded: '%s'", iniFilename_.c_str());
 }
 
 bool Config::Save(const char *saveReason) {
-	double startTime = time_now_d();
 	if (!IsFirstInstance()) {
 		// TODO: Should we allow saving config if started from a different directory?
 		// How do we tell?
@@ -1321,15 +1287,11 @@ bool Config::Save(const char *saveReason) {
 		if (LogManager::GetInstance())
 			LogManager::GetInstance()->SaveConfig(log);
 
-		// Time tracking
-		Section *playTime = iniFile.GetOrCreateSection("PlayTime");
-		playTimeTracker_.Save(playTime);
-
 		if (!iniFile.Save(iniFilename_)) {
 			ERROR_LOG(LOADER, "Error saving config (%s)- can't write ini '%s'", saveReason, iniFilename_.c_str());
 			return false;
 		}
-		INFO_LOG(LOADER, "Config saved (%s): '%s' (%0.1f ms)", saveReason, iniFilename_.c_str(), (time_now_d() - startTime) * 1000.0);
+		INFO_LOG(LOADER, "Config saved (%s): '%s'", saveReason, iniFilename_.c_str());
 
 		if (!bGameSpecific) //otherwise we already did this in saveGameConfig()
 		{
@@ -1834,93 +1796,4 @@ int Config::GetPSPLanguage() {
 	} else {
 		return g_Config.iLanguage;
 	}
-}
-
-void PlayTimeTracker::Start(std::string gameId) {
-	if (gameId.empty()) {
-		return;
-	}
-	INFO_LOG(SYSTEM, "GameTimeTracker::Start(%s)", gameId.c_str());
-
-	auto iter = tracker_.find(std::string(gameId));
-	if (iter != tracker_.end()) {
-		if (iter->second.startTime == 0.0) {
-			iter->second.lastTimePlayed = time_now_unix_utc();
-			iter->second.startTime = time_now_d();
-		}
-		return;
-	}
-
-	PlayTime playTime;
-	playTime.lastTimePlayed = time_now_unix_utc();
-	playTime.totalTimePlayed = 0.0;
-	playTime.startTime = time_now_d();
-	tracker_[gameId] = playTime;
-}
-
-void PlayTimeTracker::Stop(std::string gameId) {
-	if (gameId.empty()) {
-		return;
-	}
-
-	INFO_LOG(SYSTEM, "GameTimeTracker::Stop(%s)", gameId.c_str());
-
-	auto iter = tracker_.find(std::string(gameId));
-	if (iter != tracker_.end()) {
-		if (iter->second.startTime != 0.0) {
-			iter->second.totalTimePlayed += time_now_d() - iter->second.startTime;
-			iter->second.startTime = 0.0;
-		}
-		iter->second.lastTimePlayed = time_now_unix_utc();
-		return;
-	}
-
-	// Shouldn't happen, ignore this case.
-	WARN_LOG(SYSTEM, "GameTimeTracker::Stop called without corresponding GameTimeTracker::Start");
-}
-
-void PlayTimeTracker::Load(const Section *section) {
-	tracker_.clear();
-
-	std::vector<std::string> keys;
-	section->GetKeys(keys);
-
-	for (auto key : keys) {
-		std::string value;
-		if (!section->Get(key.c_str(), &value, nullptr)) {
-			continue;
-		}
-
-		// Parse the string.
-		PlayTime gameTime{};
-		if (2 == sscanf(value.c_str(), "%d,%llu", &gameTime.totalTimePlayed, (long long *)&gameTime.lastTimePlayed)) {
-			tracker_[key] = gameTime;
-		}
-	}
-}
-
-void PlayTimeTracker::Save(Section *section) {
-	for (auto iter : tracker_) {
-		std::string formatted = StringFromFormat("%d,%llu", iter.second.totalTimePlayed, iter.second.lastTimePlayed);
-		section->Set(iter.first.c_str(), formatted);
-	}
-}
-
-bool PlayTimeTracker::GetPlayedTimeString(const std::string &gameId, std::string *str) const {
-	auto ga = GetI18NCategory(I18NCat::GAME);
-
-	auto iter = tracker_.find(gameId);
-	if (iter == tracker_.end()) {
-		return false;
-	}
-
-	int totalSeconds = iter->second.totalTimePlayed;
-	int seconds = totalSeconds % 60;
-	totalSeconds /= 60;
-	int minutes = totalSeconds % 60;
-	totalSeconds /= 60;
-	int hours = totalSeconds;
-
-	*str = ApplySafeSubstitutions(ga->T("Time Played: %1h %2m %3s"), hours, minutes, seconds);
-	return true;
 }

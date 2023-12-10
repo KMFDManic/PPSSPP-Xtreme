@@ -42,7 +42,7 @@ void Buffer::Append(const Buffer &other) {
 void Buffer::AppendValue(int value) {
 	char buf[16];
 	// This is slow.
-	snprintf(buf, sizeof(buf), "%i", value);
+	sprintf(buf, "%i", value);
 	Append(buf);
 }
 
@@ -67,9 +67,7 @@ int Buffer::TakeLineCRLF(std::string *dest) {
 	if (after_next_line < 0) {
 		return after_next_line;
 	} else {
-		_dbg_assert_(after_next_line >= 2);
-		if (after_next_line != 2)
-			Take((size_t)after_next_line - 2, dest);
+		Take(after_next_line - 2, dest);
 		Skip(2);  // Skip the CRLF
 		return after_next_line - 2;
 	}

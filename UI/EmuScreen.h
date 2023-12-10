@@ -32,6 +32,7 @@
 struct AxisInput;
 
 class AsyncImageFileView;
+class OnScreenMessagesView;
 class ChatMenu;
 
 class EmuScreen : public UIScreen {
@@ -39,28 +40,17 @@ public:
 	EmuScreen(const Path &filename);
 	~EmuScreen();
 
-	const char *tag() const override { return "Emu"; }
-
 	void update() override;
 	void render() override;
 	void preRender() override;
 	void postRender() override;
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
-	void sendMessage(UIMessage message, const char *value) override;
+	void sendMessage(const char *msg, const char *value) override;
 	void resized() override;
 
-	// Note: Unlike your average boring UIScreen, here we override the Unsync* functions
-	// to get minimal latency and full control. We forward to UIScreen when needed.
-	bool UnsyncTouch(const TouchInput &touch) override;
-	bool UnsyncKey(const KeyInput &key) override;
-	void UnsyncAxis(const AxisInput *axes, size_t count) override;
-
-	// We also need to do some special handling of queued UI events to handle closing the chat window.
+	bool touch(const TouchInput &touch) override;
 	bool key(const KeyInput &key) override;
-
-protected:
-
-	void focusChanged(ScreenFocusChange focusChange) override;
+	bool axis(const AxisInput &axis) override;
 
 private:
 	void CreateViews() override;
@@ -76,11 +66,11 @@ private:
 	bool hasVisibleUI();
 	void renderUI();
 
-	void onVKey(int virtualKeyCode, bool down);
-	void onVKeyAnalog(int virtualKeyCode, float value);
+	void onVKeyDown(int virtualKeyCode);
+	void onVKeyUp(int virtualKeyCode);
 
 	void autoLoad();
-	bool checkPowerDown();
+	void checkPowerDown();
 
 	UI::Event OnDevMenu;
 	UI::Event OnChatMenu;
@@ -119,6 +109,7 @@ private:
 	ChatMenu *chatMenu_ = nullptr;
 
 	UI::Button *cardboardDisableButton_ = nullptr;
+	OnScreenMessagesView *onScreenMessagesView_ = nullptr;
 
 	ControlMapper controlMapper_;
 };

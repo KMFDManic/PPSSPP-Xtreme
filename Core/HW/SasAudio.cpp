@@ -25,7 +25,6 @@
 #include "Core/Config.h"
 #include "Core/Reporting.h"
 #include "Core/Util/AudioFormat.h"
-#include "Core/Core.h"
 #include "SasAudio.h"
 
 // #define AUDIO_TO_FILE
@@ -70,8 +69,6 @@ void VagDecoder::DecodeBlock(const u8 *&read_pointer) {
 		end_ = true;
 		return;
 	}
-
-	_dbg_assert_(curBlock_ < numBlocks_);
 
 	const u8 *readp = read_pointer;
 	int predict_nr = *readp++;
@@ -123,11 +120,10 @@ void VagDecoder::GetSamples(s16 *outSamples, int numSamples) {
 		memset(outSamples, 0, numSamples * sizeof(s16));
 		return;
 	}
-	if (!Memory::IsValidRange(read_, numBlocks_ * 16)) {
-		WARN_LOG_REPORT(SASMIX, "Bad VAG samples address? %08x / %d", read_, numBlocks_);
+	if (!Memory::IsValidAddress(read_)) {
+		WARN_LOG(SASMIX, "Bad VAG samples address?");
 		return;
 	}
-
 	const u8 *readp = Memory::GetPointerUnchecked(read_);
 	const u8 *origp = readp;
 
@@ -149,7 +145,6 @@ void VagDecoder::GetSamples(s16 *outSamples, int numSamples) {
 				return;
 			}
 		}
-		_dbg_assert_(curSample < 28);
 		outSamples[i] = samples[curSample++];
 	}
 
@@ -322,46 +317,16 @@ static int getSustainLevel(int bitfield1) {
 	return ((bitfield1 & 0x000F) + 1) << 26;
 }
 
-void ADSREnvelope::SetEnvelope(int flag, int a, int d, int s, int r) {
-	if ((flag & 0x1) != 0)
-		attackType = (SasADSRCurveMode)a;
-	if ((flag & 0x2) != 0)
-		decayType = (SasADSRCurveMode)d;
-	if ((flag & 0x4) != 0)
-		sustainType = (SasADSRCurveMode)s;
-	if ((flag & 0x8) != 0)
-		releaseType = (SasADSRCurveMode)r;
-
-	if (PSP_CoreParameter().compat.flags().RockmanDash2SoundFix && sustainType == PSP_SAS_ADSR_CURVE_MODE_LINEAR_INCREASE) {
-		sustainType = PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE;
-	}
-}
-
-void ADSREnvelope::SetRate(int flag, int a, int d, int s, int r) {
-	if ((flag & 0x1) != 0)
-		attackRate = a;
-	if ((flag & 0x2) != 0)
-		decayRate = d;
-	if ((flag & 0x4) != 0)
-		sustainRate = s;
-	if ((flag & 0x8) != 0)
-		releaseRate = r;
-}
-
 void ADSREnvelope::SetSimpleEnvelope(u32 ADSREnv1, u32 ADSREnv2) {
 	attackRate 		= getAttackRate(ADSREnv1);
-	attackType 		= (SasADSRCurveMode)getAttackType(ADSREnv1);
+	attackType 		= getAttackType(ADSREnv1);
 	decayRate 		= getDecayRate(ADSREnv1);
 	decayType 		= PSP_SAS_ADSR_CURVE_MODE_EXPONENT_DECREASE;
 	sustainRate 	= getSustainRate(ADSREnv2);
-	sustainType 	= (SasADSRCurveMode)getSustainType(ADSREnv2);
+	sustainType 	= getSustainType(ADSREnv2);
 	releaseRate 	= getReleaseRate(ADSREnv2);
-	releaseType 	= (SasADSRCurveMode)getReleaseType(ADSREnv2);
+	releaseType 	= getReleaseType(ADSREnv2);
 	sustainLevel 	= getSustainLevel(ADSREnv1);
-
-	if (PSP_CoreParameter().compat.flags().RockmanDash2SoundFix && sustainType == PSP_SAS_ADSR_CURVE_MODE_LINEAR_INCREASE) {
-		sustainType = PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE;
-	}
 
 	if (attackRate < 0 || decayRate < 0 || sustainRate < 0 || releaseRate < 0) {
 		ERROR_LOG_REPORT(SASMIX, "Simple ADSR resulted in invalid rates: %04x, %04x", ADSREnv1, ADSREnv2);
@@ -375,7 +340,6 @@ SasInstance::SasInstance() {
 	memset(&waveformEffect, 0, sizeof(waveformEffect));
 	waveformEffect.type = PSP_SAS_EFFECT_TYPE_OFF;
 	waveformEffect.isDryOn = 1;
-	memset(mixTemp_, 0, sizeof(mixTemp_));  // just to avoid a static analysis warning.
 }
 
 SasInstance::~SasInstance() {
@@ -388,26 +352,7 @@ void SasInstance::GetDebugText(char *text, size_t bufsize) {
 	char *p = voiceBuf;
 	for (int i = 0; i < maxVoices; i++) {
 		if (voices[i].playing) {
-			uint32_t readAddr = voices[i].GetReadAddress();
-			const char *indicator = "";
-			switch (voices[i].type) {
-			case VOICETYPE_VAG:
-				if (readAddr < voices[i].vagAddr || readAddr > voices[i].vagAddr + voices[i].vagSize) {
-					indicator = " (BAD!)";
-				}
-				break;
-			default:
-				break;
-			}
-			p += snprintf(p, sizeof(voiceBuf) - (p - voiceBuf), " %d: Pitch %04x L/R,FX: %d,%d|%d,%d VAG: %08x:%d:%08x%s Height:%d%%\n", i,
-				voices[i].pitch, voices[i].volumeLeft, voices[i].volumeRight, voices[i].effectLeft, voices[i].effectRight,
-				voices[i].vagAddr, voices[i].vagSize, voices[i].GetReadAddress(), indicator, (int)((int64_t)voices[i].envelope.GetHeight() * 100 / PSP_SAS_ENVELOPE_HEIGHT_MAX));
-			p += snprintf(p, sizeof(voiceBuf) - (p - voiceBuf), "  - ADSR: %s/%s/%s/%s\n",
-				ADSRCurveModeAsString(voices[i].envelope.attackType),
-				ADSRCurveModeAsString(voices[i].envelope.decayType),
-				ADSRCurveModeAsString(voices[i].envelope.sustainType),
-				ADSRCurveModeAsString(voices[i].envelope.releaseType)
-			);
+			p += snprintf(p, sizeof(voiceBuf) - (p - voiceBuf), " %d: Pitch %d L/R,FX: %d,%d|%d,%d VAG: %08x:%d:%08x Height:%d%%\n", i, voices[i].pitch, voices[i].volumeLeft, voices[i].volumeRight, voices[i].effectLeft, voices[i].effectRight, voices[i].vagAddr, voices[i].vagSize, voices[i].vag.GetReadPtr(), (int)((int64_t)voices[i].envelope.GetHeight() * 100 / PSP_SAS_ENVELOPE_HEIGHT_MAX));
 		}
 	}
 
@@ -632,11 +577,9 @@ void SasInstance::Mix(u32 outAddr, u32 inAddr, int leftVol, int rightVol) {
 	// Then mix the send buffer in with the rest.
 
 	// Alright, all voices mixed. Let's convert and clip, and at the same time, wipe mixBuffer for next time. Could also dither.
-	s16 *outp = (s16 *)Memory::GetPointerWriteRange(outAddr, 4 * grainSize);
-	const s16 *inp = inAddr ? (const s16 *)Memory::GetPointerRange(inAddr, 4 * grainSize) : 0;
-	if (!outp) {
-		WARN_LOG_REPORT(SCESAS, "Bad SAS Mix output address: %08x, grain=%d", outAddr, grainSize);
-	} else if (outputMode == PSP_SAS_OUTPUTMODE_MIXED) {
+	s16 *outp = (s16 *)Memory::GetPointer(outAddr);
+	const s16 *inp = inAddr ? (s16*)Memory::GetPointer(inAddr) : 0;
+	if (outputMode == PSP_SAS_OUTPUTMODE_MIXED) {
 		// Okay, apply effects processing to the Send buffer.
 		WriteMixedOutput(outp, inp, leftVol, rightVol);
 		if (MemBlockInfoDetailed()) {
@@ -662,7 +605,7 @@ void SasInstance::Mix(u32 outAddr, u32 inAddr, int leftVol, int rightVol) {
 	memset(sendBuffer, 0, grainSize * sizeof(int) * 2);
 
 #ifdef AUDIO_TO_FILE
-	fwrite(Memory::GetPointer(outAddr, grainSize * 2 * 2), 1, grainSize * 2 * 2, audioDump);
+	fwrite(Memory::GetPointer(outAddr), 1, grainSize * 2 * 2, audioDump);
 #endif
 }
 
@@ -816,6 +759,15 @@ void SasVoice::KeyOff() {
 	envelope.KeyOff();
 }
 
+void SasVoice::ChangedParams(bool changedVag) {
+	if (!playing && on) {
+		playing = true;
+		if (changedVag)
+			vag.Start(vagAddr, vagSize, loop);
+	}
+	// TODO: restart VAG somehow
+}
+
 void SasVoice::DoState(PointerWrap &p) {
 	auto s = p.Section("SasVoice", 1, 3);
 	if (!s)
@@ -864,6 +816,20 @@ void SasVoice::DoState(PointerWrap &p) {
 	envelope.DoState(p);
 	vag.DoState(p);
 	atrac3.DoState(p);
+}
+
+ADSREnvelope::ADSREnvelope()
+	: attackRate(0),
+		decayRate(0),
+		sustainRate(0),
+		releaseRate(0),
+		attackType(PSP_SAS_ADSR_CURVE_MODE_LINEAR_INCREASE),
+		decayType(PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE),
+		sustainType(PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE),
+		sustainLevel(0),
+		releaseType(PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE),
+		state_(STATE_OFF),
+		height_(0) {
 }
 
 void ADSREnvelope::WalkCurve(int type, int rate) {
@@ -999,16 +965,4 @@ void ADSREnvelope::DoState(PointerWrap &p) {
 		Do(p, state_);
 	}
 	Do(p, height_);
-}
-
-const char *ADSRCurveModeAsString(SasADSRCurveMode mode) {
-	switch (mode) {
-	case PSP_SAS_ADSR_CURVE_MODE_DIRECT: return "D";
-	case PSP_SAS_ADSR_CURVE_MODE_LINEAR_INCREASE: return "L+";
-	case PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE: return "L-";
-	case PSP_SAS_ADSR_CURVE_MODE_LINEAR_BENT: return "LB";
-	case PSP_SAS_ADSR_CURVE_MODE_EXPONENT_DECREASE: return "E-";
-	case PSP_SAS_ADSR_CURVE_MODE_EXPONENT_INCREASE: return "E+";
-	default: return "N/A";
-	}
 }

@@ -27,6 +27,8 @@
 #include "GPU/Common/ShaderId.h"
 #include "Common/Math/lin/matrix4x4.h"
 
+namespace DX9 {
+
 class PSShader;
 class VSShader;
 
@@ -77,18 +79,16 @@ public:
 	ShaderManagerDX9(Draw::DrawContext *draw, LPDIRECT3DDEVICE9 device);
 	~ShaderManagerDX9();
 
-	void ClearShaders() override;
-	VSShader *ApplyShader(bool useHWTransform, bool useHWTessellation, VertexDecoder *decoder, bool weightsAsFloat, bool useSkinInDecode, const ComputedPipelineState &pipelineState);
+	void ClearCache(bool deleteThem);  // TODO: deleteThem currently not respected
+	VSShader *ApplyShader(bool useHWTransform, bool useHWTessellation, u32 vertType, bool weightsAsFloat);
+	void DirtyShader();
 	void DirtyLastShader() override;
 
 	int GetNumVertexShaders() const { return (int)vsCache_.size(); }
 	int GetNumFragmentShaders() const { return (int)fsCache_.size(); }
 
-	void DeviceLost() override { draw_ = nullptr; }
-	void DeviceRestore(Draw::DrawContext *draw) override { draw_ = draw; }
-
-	std::vector<std::string> DebugGetShaderIDs(DebugShaderType type) override;
-	std::string DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType) override;
+	std::vector<std::string> DebugGetShaderIDs(DebugShaderType type);
+	std::string DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType);
 
 private:
 	void PSUpdateUniforms(u64 dirtyUniforms);
@@ -106,8 +106,7 @@ private:
 	void VSSetFloat(int creg, float value);
 	void VSSetFloatArray(int creg, const float *value, int count);
 	void VSSetFloat24Uniform3(int creg, const u32 data[3]);
-	void VSSetFloat24Uniform3Normalized(int creg, const u32 data[3]);
-	void VSSetFloatUniform4(int creg, const float data[4]);
+	void VSSetFloatUniform4(int creg, float data[4]);
 
 	void Clear();
 
@@ -126,4 +125,6 @@ private:
 
 	typedef std::map<VShaderID, VSShader *> VSCache;
 	VSCache vsCache_;
+};
+
 };

@@ -21,7 +21,6 @@
 #endif
 
 #if !defined(_WIN32)
-#include <sys/types.h>
 #include <netinet/tcp.h>
 #endif
 
@@ -31,24 +30,22 @@
 #endif
 
 #include <mutex>
+#include "Common/Thread/ThreadUtil.h"
 // sceNetAdhoc
 
 // This is a direct port of Coldbird's code from http://code.google.com/p/aemu/
 // All credit goes to him!
-#include "Common/Data/Text/I18n.h"
+#include "Core/Config.h"
+#include "Core/Core.h"
+#include "Core/Host.h"
+#include "Core/Reporting.h"
+#include "Core/MemMapHelpers.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/Serialize/SerializeMap.h"
-#include "Common/System/OSD.h"
-#include "Common/Thread/ThreadUtil.h"
 #include "Common/TimeUtil.h"
-
 #include "Core/MIPS/MIPSCodeUtils.h"
 #include "Core/Util/PortManager.h"
-#include "Core/Config.h"
-#include "Core/Core.h"
-#include "Core/Reporting.h"
-#include "Core/MemMapHelpers.h"
 
 #include "Core/HLE/HLEHelperThread.h"
 #include "Core/HLE/FunctionWrappers.h"
@@ -61,6 +58,7 @@
 #include "Core/HLE/sceNet.h"
 #include "Core/HLE/proAdhocServer.h"
 #include "Core/HLE/KernelWaitHelpers.h"
+#include "Common/Data/Text/I18n.h"
 
 
 // shared in sceNetAdhoc.h since it need to be used from sceNet.cpp also
@@ -271,13 +269,13 @@ static void __GameModeNotify(u64 userdata, int cyclesLate) {
 					// Shows a warning if the sender/source port is different than what it supposed to be.
 					if (senderport != ADHOC_GAMEMODE_PORT && senderport != gameModePeerPorts[sendermac]) {
 						char name[9] = {};
-						auto n = GetI18NCategory(I18NCat::NETWORKING);
+						auto n = GetI18NCategory("Networking");
 						peerlock.lock();
 						SceNetAdhocctlPeerInfo* peer = findFriend(&sendermac);
 						if (peer != NULL)
 							truncate_cpy(name, sizeof(name), (const char*)peer->nickname.data);
 						WARN_LOG(SCENET, "GameMode: Unknown Source Port from [%s][%s:%u -> %u] (Result=%i, Size=%i)", name, mac2str(&sendermac).c_str(), senderport, ADHOC_GAMEMODE_PORT, ret, bufsz);
-						g_OSD.Show(OSDType::MESSAGE_WARNING, std::string(n->T("GM: Data from Unknown Port")) + std::string(" [") + std::string(name) + std::string("]:") + std::to_string(senderport) + std::string(" -> ") + std::to_string(ADHOC_GAMEMODE_PORT) + std::string(" (") + std::to_string(portOffset) + std::string(")"));
+						host->NotifyUserMessage(std::string(n->T("GM: Data from Unknown Port")) + std::string(" [") + std::string(name) + std::string("]:") + std::to_string(senderport) + std::string(" -> ") + std::to_string(ADHOC_GAMEMODE_PORT) + std::string(" (") + std::to_string(portOffset) + std::string(")"), 2.0, 0x0080ff);
 						peerlock.unlock();
 					}
 					// Keeping track of the source port for further communication, in case it was re-mapped by router or ISP for some reason.
@@ -1305,10 +1303,8 @@ static u32 sceNetAdhocctlInit(int stackSize, int prio, u32 productAddr) {
 	if (netAdhocctlInited)
 		return ERROR_NET_ADHOCCTL_ALREADY_INITIALIZED;
 
-	auto product = PSPPointer<SceNetAdhocctlAdhocId>::Create(productAddr);
-	if (product.IsValid()) {
-		product_code = *product;
-		product.NotifyRead("NetAdhocctlInit");
+	if (Memory::IsValidAddress(productAddr)) {
+		Memory::ReadStruct(productAddr, &product_code);
 	}
 
 	adhocctlEvents.clear();
@@ -1492,8 +1488,7 @@ static int sceNetAdhocPdpCreate(const char *mac, int port, int bufferSize, u32 f
 								changeBlockingMode(usocket, 1);
 
 								// Success
-								INFO_LOG(SCENET, "sceNetAdhocPdpCreate - PSP Socket id: %i, Host Socket id: %i", i + 1, usocket);
-								return i + 1;
+								return hleLogDebug(SCENET, i + 1, "success");
 							} 
 
 							// Free Memory for Internal Data
@@ -1507,8 +1502,8 @@ static int sceNetAdhocPdpCreate(const char *mac, int port, int bufferSize, u32 f
 					// Port not available (exclusively in use?)
 					if (iResult == SOCKET_ERROR) {
 						ERROR_LOG(SCENET, "Socket error (%i) when binding port %u", errno, ntohs(addr.sin_port));
-						auto n = GetI18NCategory(I18NCat::NETWORKING);
-						g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("Failed to Bind Port")) + " " + std::to_string(port + portOffset) + "\n" + std::string(n->T("Please change your Port Offset")));
+						auto n = GetI18NCategory("Networking");
+						host->NotifyUserMessage(std::string(n->T("Failed to Bind Port")) + " " + std::to_string(port + portOffset) + "\n" + std::string(n->T("Please change your Port Offset")), 3.0, 0x0000ff);
 						
 						return hleLogDebug(SCENET, ERROR_NET_ADHOC_PORT_NOT_AVAIL, "port not available");
 					}
@@ -1544,17 +1539,21 @@ static int sceNetAdhocctlGetParameter(u32 paramAddr) {
 	}
 
 	// Library initialized
-	if (!netAdhocctlInited) {
-		return hleLogError(SCENET, ERROR_NET_ADHOCCTL_NOT_INITIALIZED);
+	if (netAdhocctlInited) {
+		// Valid Arguments
+		if (Memory::IsValidAddress(paramAddr)) {
+			// Copy Parameter
+			Memory::WriteStruct(paramAddr,&parameter);
+			// Return Success
+			return 0;
+		}
+
+		// Invalid Arguments
+		return ERROR_NET_ADHOCCTL_INVALID_ARG;
 	}
 
-	auto ptr = PSPPointer<SceNetAdhocctlParameter>::Create(paramAddr);
-	if (!ptr.IsValid())
-		return hleLogError(SCENET, ERROR_NET_ADHOCCTL_INVALID_ARG);
-
-	*ptr = parameter;
-	ptr.NotifyWrite("NetAdhocctlGetParameter");
-	return 0;
+	// Library uninitialized
+	return ERROR_NET_ADHOCCTL_NOT_INITIALIZED;
 }
 
 /**
@@ -2259,17 +2258,25 @@ static int sceNetAdhocPdpDelete(int id, int unknown) {
 static int sceNetAdhocctlGetAdhocId(u32 productStructAddr) {
 	INFO_LOG(SCENET, "sceNetAdhocctlGetAdhocId(%08x) at %08x", productStructAddr, currentMIPS->pc);
 	
-	if (!netAdhocctlInited)
-		return hleLogDebug(SCENET, ERROR_NET_ADHOCCTL_NOT_INITIALIZED, "not initialized");
+	// Library initialized
+	if (netAdhocctlInited)
+	{
+		// Valid Arguments
+		if (Memory::IsValidAddress(productStructAddr))
+		{
+			// Copy Product ID
+			Memory::WriteStruct(productStructAddr, &product_code);
 
-	auto productStruct = PSPPointer<SceNetAdhocctlAdhocId>::Create(productStructAddr);
-	if (!productStruct.IsValid())
+			// Return Success
+			return hleLogDebug(SCENET, 0, "type = %d, code = %s", product_code.type, product_code.data);
+		}
+
+		// Invalid Arguments
 		return hleLogDebug(SCENET, ERROR_NET_ADHOCCTL_INVALID_ARG, "invalid arg");
+	}
 
-	*productStruct = product_code;
-	productStruct.NotifyWrite("NetAdhocctlGetAdhocId");
-
-	return hleLogDebug(SCENET, 0, "type = %d, code = %s", product_code.type, product_code.data);
+	// Library uninitialized
+	return hleLogDebug(SCENET, ERROR_NET_ADHOCCTL_NOT_INITIALIZED, "not initialized");
 }
 
 // FIXME: Scan probably not a blocking function since there is ADHOCCTL_STATE_SCANNING state that can be polled by the game, right? But apparently it need to be delayed for Naruto Shippuden Ultimate Ninja Heroes 3
@@ -2472,8 +2479,7 @@ u32 NetAdhocctl_Disconnect() {
 	// Library initialized
 	if (netAdhocctlInited) {
 		int iResult, error;
-		// We might need to have at least 16ms (1 frame?) delay before the game calls the next Adhocctl syscall for Tekken 6 not to stuck when exiting Lobby
-		hleEatMicro(16667);
+		hleEatMicro(1000);
 
 		if (isAdhocctlBusy && CoreTiming::IsScheduled(adhocctlNotifyEvent)) {
 			return ERROR_NET_ADHOCCTL_BUSY;
@@ -2542,8 +2548,12 @@ u32 NetAdhocctl_Disconnect() {
 		adhocctlCurrentMode = ADHOCCTL_MODE_NONE;
 		// Notify Event Handlers (even if we weren't connected, not doing this will freeze games like God Eater, which expect this behaviour)
 		// FIXME: When there are no handler the state will immediately became ADHOCCTL_STATE_DISCONNECTED ?
-		// Note: Metal Gear Acid [2] never register a handler until it's successfully connected to a group and have a connected socket to other player, thus adhocctlHandlers is always empty here.
-		notifyAdhocctlHandlers(ADHOCCTL_EVENT_DISCONNECT, 0);
+		if (adhocctlHandlers.empty()) {
+			adhocctlState = ADHOCCTL_STATE_DISCONNECTED;
+		}
+		else {
+			notifyAdhocctlHandlers(ADHOCCTL_EVENT_DISCONNECT, 0);
+		}
 
 		// Return Success, some games might ignore returned value and always treat it as success, otherwise repeatedly calling this function
 		return 0;
@@ -3511,9 +3521,8 @@ static int sceNetAdhocPtpOpen(const char *srcmac, int sport, const char *dstmac,
 								if (g_Config.bForcedFirstConnect && internal->attemptCount == 1)
 									hleDelayResult(i + 1, "delayed ptpopen", rexmt_int);
 
-								// Return PTP Socket id
-								INFO_LOG(SCENET, "sceNetAdhocPtpOpen - PSP Socket id: %i, Host Socket id: %i", i + 1, tcpsocket);
-								return i + 1;
+								// Return PTP Socket Pointer
+								return hleLogDebug(SCENET, i + 1, "success");
 							}
 
 							// Free Memory
@@ -3522,8 +3531,8 @@ static int sceNetAdhocPtpOpen(const char *srcmac, int sport, const char *dstmac,
 					}
 					else {
 						ERROR_LOG(SCENET, "Socket error (%i) when binding port %u", errno, ntohs(addr.sin_port));
-						auto n = GetI18NCategory(I18NCat::NETWORKING);
-						g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("Failed to Bind Port")) + " " + std::to_string(sport + portOffset) + "\n" + std::string(n->T("Please change your Port Offset")));
+						auto n = GetI18NCategory("Networking");
+						host->NotifyUserMessage(std::string(n->T("Failed to Bind Port")) + " " + std::to_string(sport + portOffset) + "\n" + std::string(n->T("Please change your Port Offset")), 3.0, 0x0000ff);
 					}
 
 					// Close Socket
@@ -3638,7 +3647,7 @@ int AcceptPtpSocket(int ptpId, int newsocket, sockaddr_in& peeraddr, SceNetEther
 					// Switch to non-blocking for futher usage
 					changeBlockingMode(newsocket, 1);
 
-					INFO_LOG(SCENET, "sceNetAdhocPtpAccept[%i->%i(%i):%u]: Established (%s:%u) - state: %d", ptpId, i + 1, newsocket, internal->data.ptp.lport, ip2str(peeraddr.sin_addr).c_str(), internal->data.ptp.pport, internal->data.ptp.state);
+					INFO_LOG(SCENET, "sceNetAdhocPtpAccept[%i->%i:%u]: Established (%s:%u) - state: %d", ptpId, i + 1, internal->data.ptp.lport, ip2str(peeraddr.sin_addr).c_str(), internal->data.ptp.pport, internal->data.ptp.state);
 
 					// Return Socket
 					return i + 1;
@@ -4105,9 +4114,8 @@ static int sceNetAdhocPtpListen(const char *srcmac, int sport, int bufsize, int 
 									// Switch to non-blocking for futher usage
 									changeBlockingMode(tcpsocket, 1);
 
-									// Return PTP Socket id
-									INFO_LOG(SCENET, "sceNetAdhocPtpListen - PSP Socket id: %i, Host Socket id: %i", i + 1, tcpsocket);
-									return i + 1;
+									// Return PTP Socket Pointer
+									return hleLogDebug(SCENET, i + 1, "success");
 								}
 
 								// Free Memory
@@ -4116,8 +4124,8 @@ static int sceNetAdhocPtpListen(const char *srcmac, int sport, int bufsize, int 
 						}
 					}
 					else {
-						auto n = GetI18NCategory(I18NCat::NETWORKING);
-						g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("Failed to Bind Port")) + " " + std::to_string(sport + portOffset) + "\n" + std::string(n->T("Please change your Port Offset")));
+						auto n = GetI18NCategory("Networking");
+						host->NotifyUserMessage(std::string(n->T("Failed to Bind Port")) + " " + std::to_string(sport + portOffset) + "\n" + std::string(n->T("Please change your Port Offset")), 3.0, 0x0000ff);
 					}
 
 					if (iResult == SOCKET_ERROR) {
@@ -5065,8 +5073,7 @@ static int sceNetAdhocMatchingStart(int matchingId, int evthPri, int evthStack, 
 
 	int retval = NetAdhocMatching_Start(matchingId, evthPri, USER_PARTITION_ID, evthStack, inthPri, USER_PARTITION_ID, inthStack, optLen, optDataAddr);
 	// Give a little time to make sure matching Threads are ready before the game use the next sceNet functions, should've checked for status instead of guessing the time?
-	hleEatMicro(adhocMatchingEventDelay);
-	return retval;
+	return hleDelayResult(retval, "give some time", adhocMatchingEventDelay);
 }
 
 // With params for Partition ID for the event & input handler stack
@@ -5077,8 +5084,7 @@ static int sceNetAdhocMatchingStart2(int matchingId, int evthPri, int evthPartit
 
 	int retval = NetAdhocMatching_Start(matchingId, evthPri, evthPartitionId, evthStack, inthPri, inthPartitionId, inthStack, optLen, optDataAddr);
 	// Give a little time to make sure matching Threads are ready before the game use the next sceNet functions, should've checked for status instead of guessing the time?
-	hleEatMicro(adhocMatchingEventDelay);
-	return retval;
+	return hleDelayResult(retval, "give some time", adhocMatchingEventDelay);
 }
 
 
@@ -7628,7 +7634,7 @@ int matchingEventThread(int matchingId)
 int matchingInputThread(int matchingId) // TODO: The MatchingInput thread is using sceNetAdhocPdpRecv & sceNetAdhocPdpSend functions so it might be better to run this on PSP thread instead of real thread
 {
 	SetCurrentThreadName("MatchingInput");
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
+	auto n = GetI18NCategory("Networking");
 	// Multithreading Lock
 	peerlock.lock();
 	// Cast Context
@@ -7782,7 +7788,7 @@ int matchingInputThread(int matchingId) // TODO: The MatchingInput thread is usi
 						if (peer != NULL)
 							truncate_cpy(name, sizeof(name), (const char*)peer->nickname.data);
 						WARN_LOG(SCENET, "InputLoop[%d]: Unknown Source Port from [%s][%s:%u -> %u] (Recved=%i, Length=%i)", matchingId, name, mac2str(&sendermac).c_str(), senderport, context->port, recvresult, rxbuflen);
-						g_OSD.Show(OSDType::MESSAGE_WARNING, std::string(n->T("AM: Data from Unknown Port")) + std::string(" [") + std::string(name) + std::string("]:") + std::to_string(senderport) + std::string(" -> ") + std::to_string(context->port) + std::string(" (") + std::to_string(portOffset) + std::string(")"));
+						host->NotifyUserMessage(std::string(n->T("AM: Data from Unknown Port")) + std::string(" [") + std::string(name) + std::string("]:") + std::to_string(senderport) + std::string(" -> ") + std::to_string(context->port) + std::string(" (") + std::to_string(portOffset) + std::string(")"), 2.0, 0x0080ff);
 					}
 					// Keep tracks of re-mapped peer's ports for further communication. 
 					// Note: This will only works if this player were able to receives data on normal port from other players (ie. this player's port wasn't remapped)

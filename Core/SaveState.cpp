@@ -23,7 +23,6 @@
 #include "Common/Data/Text/I18n.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/Data/Text/Parsers.h"
-#include "Common/System/System.h"
 
 #include "Common/File/FileUtil.h"
 #include "Common/Serialize/Serializer.h"
@@ -35,6 +34,7 @@
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
+#include "Core/Host.h"
 #include "Core/Screenshot.h"
 #include "Core/System.h"
 #include "Core/FileSystems/MetaFileSystem.h"
@@ -47,7 +47,6 @@
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/JitCommon/JitBlockCache.h"
-#include "Core/RetroAchievements.h"
 #include "HW/MemoryStick.h"
 #include "GPU/GPUState.h"
 
@@ -92,7 +91,10 @@ namespace SaveState
 
 	CChunkFileReader::Error SaveToRam(std::vector<u8> &data) {
 		SaveStart state;
-		return CChunkFileReader::MeasureAndSavePtr(state, &data);
+		size_t sz = CChunkFileReader::MeasurePtr(state);
+		if (data.size() < sz)
+			data.resize(sz);
+		return CChunkFileReader::SavePtr(&data[0], state, sz);
 	}
 
 	CChunkFileReader::Error LoadFromRam(std::vector<u8> &data, std::string *errorString) {
@@ -100,41 +102,24 @@ namespace SaveState
 		return CChunkFileReader::LoadPtr(&data[0], state, errorString);
 	}
 
-	// This ring buffer of states is for rewind save states, which are kept in RAM.
-	// Save states are compressed against one of two reference saves (bases_), and the reference
-	// is switched to a fresh save every N saves, where N is BASE_USAGE_INTERVAL.
-	// The compression is a simple block based scheme where 0 means to copy a block from the base,
-	// and 1 means that the following bytes are the next block. See Compress/LockedDecompress.
-	class StateRingbuffer {
-	public:
-		StateRingbuffer() {
-			size_ = REWIND_NUM_STATES;
-			states_.resize(size_);
-			baseMapping_.resize(size_);
-		}
-
-		~StateRingbuffer() {
-			if (compressThread_.joinable()) {
-				compressThread_.join();
-			}
+	struct StateRingbuffer
+	{
+		StateRingbuffer(int size) : first_(0), next_(0), size_(size), base_(-1)
+		{
+			states_.resize(size);
+			baseMapping_.resize(size);
 		}
 
 		CChunkFileReader::Error Save()
 		{
-			rewindLastTime_ = time_now_d();
-
-			// Make sure we're not processing a previous save. That'll cause a hitch though, but at least won't
-			// crash due to contention over buffer_.
-			if (compressThread_.joinable())
-				compressThread_.join();
-
 			std::lock_guard<std::mutex> guard(lock_);
 
 			int n = next_++ % size_;
 			if ((next_ % size_) == first_)
 				++first_;
 
-			std::vector<u8> *compressBuffer = &buffer_;
+			static std::vector<u8> buffer;
+			std::vector<u8> *compressBuffer = &buffer;
 			CChunkFileReader::Error err;
 
 			if (base_ == -1 || ++baseUsage_ > BASE_USAGE_INTERVAL)
@@ -146,13 +131,12 @@ namespace SaveState
 				compressBuffer = &bases_[base_];
 			}
 			else
-				err = SaveToRam(buffer_);
+				err = SaveToRam(buffer);
 
 			if (err == CChunkFileReader::ERROR_NONE)
 				ScheduleCompress(&states_[n], compressBuffer, &bases_[base_]);
 			else
 				states_[n].clear();
-
 			baseMapping_[n] = base_;
 			return err;
 		}
@@ -171,9 +155,7 @@ namespace SaveState
 
 			static std::vector<u8> buffer;
 			LockedDecompress(buffer, states_[n], bases_[baseMapping_[n]]);
-			CChunkFileReader::Error error = LoadFromRam(buffer, errorString);
-			rewindLastTime_ = time_now_d();
-			return error;
+			return LoadFromRam(buffer, errorString);
 		}
 
 		void ScheduleCompress(std::vector<u8> *result, const std::vector<u8> *state, const std::vector<u8> *base)
@@ -182,8 +164,6 @@ namespace SaveState
 				compressThread_.join();
 			compressThread_ = std::thread([=]{
 				SetCurrentThreadName("SaveStateCompress");
-
-				// Should do no I/O, so no JNI thread context needed.
 				Compress(*result, *state, *base);
 			});
 		}
@@ -195,23 +175,18 @@ namespace SaveState
 			if (first_ == 0 && next_ == 0)
 				return;
 
-			double start_time = time_now_d();
 			result.clear();
-			result.reserve(512 * 1024);
 			for (size_t i = 0; i < state.size(); i += BLOCK_SIZE)
 			{
 				int blockSize = std::min(BLOCK_SIZE, (int)(state.size() - i));
 				if (i + blockSize > base.size() || memcmp(&state[i], &base[i], blockSize) != 0)
 				{
 					result.push_back(1);
-					result.insert(result.end(), state.begin() + i, state.begin() + i + blockSize);
+					result.insert(result.end(), state.begin() + i, state.begin() +i + blockSize);
 				}
 				else
 					result.push_back(0);
 			}
-
-			double taken_s = time_now_d() - start_time;
-			DEBUG_LOG(SAVESTATE, "Rewind: Compressed save from %d bytes to %d in %0.2f ms.", (int)state.size(), (int)result.size(), taken_s * 1000.0);
 		}
 
 		void LockedDecompress(std::vector<u8> &result, const std::vector<u8> &compressed, const std::vector<u8> &base)
@@ -234,11 +209,7 @@ namespace SaveState
 					int blockSize = std::min(BLOCK_SIZE, (int)(compressed.size() - i));
 					result.insert(result.end(), compressed.begin() + i, compressed.begin() + i + blockSize);
 					i += blockSize;
-					// This check is to avoid advancing basePos out of range, which MSVC catches.
-					// When this happens, we're at the end of decoding anyway.
-					if (base.end() - basePos >= blockSize) {
-						basePos += blockSize;
-					}
+					basePos += blockSize;
 				}
 			}
 		}
@@ -252,18 +223,6 @@ namespace SaveState
 			std::lock_guard<std::mutex> guard(lock_);
 			first_ = 0;
 			next_ = 0;
-			for (auto &b : bases_) {
-				b.clear();
-			}
-			baseMapping_.clear();
-			baseMapping_.resize(size_);
-			for (auto &s : states_) {
-				s.clear();
-			}
-			buffer_.clear();
-			base_ = -1;
-			baseUsage_ = 0;
-			rewindLastTime_ = time_now_d();
 		}
 
 		bool Empty() const
@@ -271,36 +230,14 @@ namespace SaveState
 			return next_ == first_;
 		}
 
-		void Process() {
-			if (g_Config.iRewindSnapshotInterval <= 0) {
-				return;
-			}
-
-			// For fast-forwarding, otherwise they may be useless and too close.
-			double now = time_now_d();
-			double diff = now - rewindLastTime_;
-			if (diff < g_Config.iRewindSnapshotInterval)
-				return;
-
-			DEBUG_LOG(SAVESTATE, "Saving rewind state");
-			Save();
-		}
-
-		void NotifyState() {
-			// Prevent saving snapshots immediately after loading or saving a state.
-			rewindLastTime_ = time_now_d();
-		}
-
-	private:
-		const int BLOCK_SIZE = 8192;
-		const int REWIND_NUM_STATES = 20;
+		static const int BLOCK_SIZE;
 		// TODO: Instead, based on size of compressed state?
-		const int BASE_USAGE_INTERVAL = 15;
+		static const int BASE_USAGE_INTERVAL;
 
 		typedef std::vector<u8> StateBuffer;
 
-		int first_ = 0;
-		int next_ = 0;
+		int first_;
+		int next_;
 		int size_;
 
 		std::vector<StateBuffer> states_;
@@ -308,12 +245,9 @@ namespace SaveState
 		std::vector<int> baseMapping_;
 		std::mutex lock_;
 		std::thread compressThread_;
-		std::vector<u8> buffer_;
 
-		int base_ = -1;
-		int baseUsage_ = 0;
-
-		double rewindLastTime_ = 0.0f;
+		int base_;
+		int baseUsage_;
 	};
 
 	static bool needsProcess = false;
@@ -331,12 +265,18 @@ namespace SaveState
 	static std::string saveStateInitialGitVersion = "";
 
 	// TODO: Should this be configurable?
+	static const int REWIND_NUM_STATES = 20;
 	static const int SCREENSHOT_FAILURE_RETRIES = 15;
-	static StateRingbuffer rewindStates;
+	static StateRingbuffer rewindStates(REWIND_NUM_STATES);
+	// TODO: Any reason for this to be configurable?
+	const static float rewindMaxWallFrequency = 1.0f;
+	static double rewindLastTime = 0.0f;
+	const int StateRingbuffer::BLOCK_SIZE = 8192;
+	const int StateRingbuffer::BASE_USAGE_INTERVAL = 15;
 
 	void SaveStart::DoState(PointerWrap &p)
 	{
-		auto s = p.Section("SaveStart", 1, 3);
+		auto s = p.Section("SaveStart", 1, 2);
 		if (!s)
 			return;
 
@@ -358,10 +298,8 @@ namespace SaveState
 			saveDataGeneration = 0;
 		}
 
-		// Gotta do CoreTiming before HLE, but from v3 we've moved it after the memory stuff.
-		if (s <= 2) {
-			CoreTiming::DoState(p);
-		}
+		// Gotta do CoreTiming first since we'll restore into it.
+		CoreTiming::DoState(p);
 
 		// Memory is a bit tricky when jit is enabled, since there's emuhacks in it.
 		auto savedReplacements = SaveAndClearReplacements();
@@ -378,36 +316,18 @@ namespace SaveState
 		} else {
 			Memory::DoState(p);
 		}
-
-		if (s >= 3) {
-			CoreTiming::DoState(p);
-		}
-
-		// Don't bother restoring if reading, we'll deal with that in KernelModuleDoState.
-		// In theory, different functions might have been runtime loaded in the state.
-		if (p.mode != p.MODE_READ)
-			RestoreSavedReplacements(savedReplacements);
+		RestoreSavedReplacements(savedReplacements);
 
 		MemoryStick_DoState(p);
 		currentMIPS->DoState(p);
 		HLEDoState(p);
 		__KernelDoState(p);
-		Achievements::DoState(p);
 		// Kernel object destructors might close open files, so do the filesystem last.
 		pspFileSystem.DoState(p);
 	}
 
 	void Enqueue(SaveState::Operation op)
 	{
-		if (Achievements::HardcoreModeActive()) {
-			if (g_Config.bAchievementsSaveStateInHardcoreMode && ((op.type == SaveState::SAVESTATE_SAVE) || (op.type == SAVESTATE_SAVE_SCREENSHOT))) {
-				// We allow saving in hardcore mode if this setting is on.
-			} else {
-				// Operation not allowed
-				return;
-			}
-		}
-
 		std::lock_guard<std::mutex> guard(mutex);
 		pending.push_back(op);
 
@@ -419,7 +339,6 @@ namespace SaveState
 
 	void Load(const Path &filename, int slot, Callback callback, void *cbUserData)
 	{
-		rewindStates.NotifyState();
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
 			Core_EnableStepping(true, "savestate.load", 0);
 		Enqueue(Operation(SAVESTATE_LOAD, filename, slot, callback, cbUserData));
@@ -427,7 +346,6 @@ namespace SaveState
 
 	void Save(const Path &filename, int slot, Callback callback, void *cbUserData)
 	{
-		rewindStates.NotifyState();
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
 			Core_EnableStepping(true, "savestate.save", 0);
 		Enqueue(Operation(SAVESTATE_SAVE, filename, slot, callback, cbUserData));
@@ -490,7 +408,7 @@ namespace SaveState
 			return StringFromFormat("%s (%c)", title.c_str(), slotChar);
 		}
 		if (detectSlot(UNDO_STATE_EXTENSION)) {
-			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			auto sy = GetI18NCategory("System");
 			// Allow the number to be positioned where it makes sense.
 			std::string undo = sy->T("undo %c");
 			return title + " (" + StringFromFormat(undo.c_str(), slotChar) + ")";
@@ -511,7 +429,7 @@ namespace SaveState
 		}
 
 		// The file can't be loaded - let's note that.
-		auto sy = GetI18NCategory(I18NCat::SYSTEM);
+		auto sy = GetI18NCategory("System");
 		return filename.GetFilename() + " " + sy->T("(broken)");
 	}
 
@@ -534,11 +452,6 @@ namespace SaveState
 	int GetCurrentSlot()
 	{
 		return g_Config.iCurrentStateSlot;
-	}
-
-	void PrevSlot()
-	{
-		g_Config.iCurrentStateSlot = (g_Config.iCurrentStateSlot - 1 + NUM_SLOTS) % NUM_SLOTS;
 	}
 
 	void NextSlot()
@@ -598,7 +511,7 @@ namespace SaveState
 				Load(fn, slot, callback, cbUserData);
 			}
 		} else {
-			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			auto sy = GetI18NCategory("System");
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to load state. Error in the file system."), cbUserData);
 		}
@@ -607,7 +520,7 @@ namespace SaveState
 	bool UndoLoad(const Path &gameFilename, Callback callback, void *cbUserData)
 	{
 		if (g_Config.sStateLoadUndoGame != GenerateFullDiscId(gameFilename)) {
-			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			auto sy = GetI18NCategory("System");
 			if (callback)
 				callback(Status::FAILURE, sy->T("Error: load undo state is from a different game"), cbUserData);
 			return false;
@@ -618,7 +531,7 @@ namespace SaveState
 			Load(fn, LOAD_UNDO_SLOT, callback, cbUserData);
 			return true;
 		} else {
-			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			auto sy = GetI18NCategory("System");
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to load state for load undo. Error in the file system."), cbUserData);
 			return false;
@@ -657,7 +570,7 @@ namespace SaveState
 			SaveScreenshot(shot, Callback(), 0);
 			Save(fn.WithExtraExtension(".tmp"), slot, renameCallback, cbUserData);
 		} else {
-			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			auto sy = GetI18NCategory("System");
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to save state. Error in the file system."), cbUserData);
 		}
@@ -828,8 +741,6 @@ namespace SaveState
 
 	bool HandleLoadFailure()
 	{
-		WARN_LOG(SAVESTATE, "HandleLoadFailure - trying a rewind state.");
-
 		// Okay, first, let's give the rewind state a shot - maybe we can at least not reset entirely.
 		// Even if this was a rewind, maybe we can still load a previous one.
 		CChunkFileReader::Error result;
@@ -847,6 +758,22 @@ namespace SaveState
 		// Make sure we don't proceed to run anything yet.
 		coreState = CORE_NEXTFRAME;
 		return false;
+	}
+
+	static inline void CheckRewindState()
+	{
+		if (gpuStats.numFlips % g_Config.iRewindFlipFrequency != 0)
+			return;
+
+		// For fast-forwarding, otherwise they may be useless and too close.
+		double now = time_now_d();
+		float diff = now - rewindLastTime;
+		if (diff < rewindMaxWallFrequency)
+			return;
+
+		rewindLastTime = now;
+		DEBUG_LOG(BOOT, "Saving rewind state");
+		rewindStates.Save();
 	}
 
 	bool HasLoadedState() {
@@ -873,7 +800,7 @@ namespace SaveState
 	}
 
 	static Status TriggerLoadWarnings(std::string &callbackMessage) {
-		auto sc = GetI18NCategory(I18NCat::SCREEN);
+		auto sc = GetI18NCategory("Screen");
 
 		if (g_Config.bHideStateWarnings)
 			return Status::SUCCESS;
@@ -884,12 +811,12 @@ namespace SaveState
 			// Sometimes this exposes game bugs that were rarely seen on real devices,
 			// because few people played on a real PSP for 10 hours straight.
 			callbackMessage = sc->T("Loaded. Save in game, restart, and load for less bugs.");
-			return Status::SUCCESS;
+			return Status::WARNING;
 		}
 		if (IsOldVersion()) {
 			// Save states also preserve bugs from old PPSSPP versions, so warn.
 			callbackMessage = sc->T("Loaded. Save in game, restart, and load for less bugs.");
-			return Status::SUCCESS;
+			return Status::WARNING;
 		}
 		// If the loaded state (saveDataGeneration) is older, the game may prevent saving again.
 		// This can happen with newer too, but ignore to/from 0 as a common likely safe case.
@@ -905,7 +832,8 @@ namespace SaveState
 
 	void Process()
 	{
-		rewindStates.Process();
+		if (g_Config.iRewindFlipFrequency != 0 && gpuStats.numFlips != 0)
+			CheckRewindState();
 
 		if (!needsProcess)
 			return;
@@ -929,7 +857,7 @@ namespace SaveState
 			std::string callbackMessage;
 			std::string title;
 
-			auto sc = GetI18NCategory(I18NCat::SCREEN);
+			auto sc = GetI18NCategory("Screen");
 			const char *i18nLoadFailure = sc->T("Load savestate failed", "");
 			const char *i18nSaveFailure = sc->T("Save State Failed", "");
 			if (strlen(i18nLoadFailure) == 0)
@@ -1094,8 +1022,8 @@ namespace SaveState
 				Core_Stop();
 				return;
 			}
-			System_Notify(SystemNotification::BOOT_DONE);
-			System_Notify(SystemNotification::DISASSEMBLY);
+			host->BootDone();
+			host->UpdateDisassembly();
 			needsRestart = false;
 		}
 	}

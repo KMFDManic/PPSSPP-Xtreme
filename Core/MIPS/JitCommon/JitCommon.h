@@ -28,7 +28,6 @@
 std::vector<std::string> DisassembleArm2(const u8 *data, int size);
 std::vector<std::string> DisassembleArm64(const u8 *data, int size);
 std::vector<std::string> DisassembleX86(const u8 *data, int size);
-std::vector<std::string> DisassembleRV64(const u8 *data, int size);
 
 struct JitBlock;
 class JitBlockCache;
@@ -54,7 +53,6 @@ namespace MIPSComp {
 		virtual void Comp_RunBlock(MIPSOpcode op) = 0;
 		virtual void Comp_ReplacementFunc(MIPSOpcode op) = 0;
 		virtual void Comp_ITypeMem(MIPSOpcode op) = 0;
-		virtual void Comp_StoreSync(MIPSOpcode op) = 0;
 		virtual void Comp_Cache(MIPSOpcode op) = 0;
 		virtual void Comp_RelBranch(MIPSOpcode op) = 0;
 		virtual void Comp_RelBranchRI(MIPSOpcode op) = 0;
@@ -155,27 +153,10 @@ namespace MIPSComp {
 	typedef void (MIPSFrontendInterface::*MIPSCompileFunc)(MIPSOpcode opcode);
 	typedef int (MIPSFrontendInterface::*MIPSReplaceFunc)();
 
-	struct BranchInfo {
-		BranchInfo(u32 pc, MIPSOpcode op, MIPSOpcode delaySlotOp, bool andLink, bool likely);
-
-		u32 compilerPC;
-		MIPSOpcode op;
-		MIPSOpcode delaySlotOp;
-		u64 delaySlotInfo;
-		bool likely;
-		bool andLink;
-		// Update manually if it's not always nice (rs/rt, rs/zero, etc.)
-		bool delaySlotIsNice = true;
-		bool delaySlotIsBranch;
-	};
-
-	// This seems to be the same for all branch types.
-	u32 ResolveNotTakenTarget(const BranchInfo &branchInfo);
-
 	extern JitInterface *jit;
 	extern std::recursive_mutex jitLock;
 
 	void DoDummyJitState(PointerWrap &p);
 
-	JitInterface *CreateNativeJit(MIPSState *mipsState, bool useIR);
+	JitInterface *CreateNativeJit(MIPSState *mipsState);
 }

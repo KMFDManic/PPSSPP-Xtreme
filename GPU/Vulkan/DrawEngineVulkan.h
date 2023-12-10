@@ -32,6 +32,7 @@
 // won't get any bone data, etc.
 
 #include "Common/Data/Collections/Hashmaps.h"
+#include "Common/GPU/Vulkan/VulkanMemory.h"
 
 #include "GPU/Vulkan/VulkanUtil.h"
 
@@ -42,15 +43,6 @@
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Vulkan/StateMappingVulkan.h"
-#include "GPU/Vulkan/VulkanRenderManager.h"
-
-
-// TODO: Move to some appropriate header.
-#ifdef _MSC_VER
-#define NO_INLINE __declspec(noinline)
-#else
-#define NO_INLINE __attribute__((noinline))
-#endif
 
 struct DecVtxFormat;
 struct UVScale;
@@ -61,12 +53,56 @@ class TextureCacheVulkan;
 class FramebufferManagerVulkan;
 
 class VulkanContext;
-class VulkanPushPool;
+class VulkanPushBuffer;
 struct VulkanPipeline;
 
 struct DrawEngineVulkanStats {
+	int pushUBOSpaceUsed;
 	int pushVertexSpaceUsed;
 	int pushIndexSpaceUsed;
+};
+
+enum {
+	VAIVULKAN_FLAG_VERTEXFULLALPHA = 1,
+};
+
+// Try to keep this POD.
+class VertexArrayInfoVulkan {
+public:
+	VertexArrayInfoVulkan() {
+		lastFrame = gpuStats.numFlips;
+	}
+	// No destructor needed - we always fully wipe.
+
+	enum VAIStatus : uint8_t {
+		VAI_NEW,
+		VAI_HASHING,
+		VAI_RELIABLE,  // cache, don't hash
+		VAI_UNRELIABLE,  // never cache
+	};
+
+	uint64_t hash;
+	u32 minihash;
+
+	// These will probably always be the same, but whatever.
+	VkBuffer vb = VK_NULL_HANDLE;
+	VkBuffer ib = VK_NULL_HANDLE;
+	// Offsets into the cache buffer.
+	uint32_t vbOffset = 0;
+	uint32_t ibOffset = 0;
+
+	// Precalculated parameter for vkDrawIndexed
+	u16 numVerts = 0;
+	u16 maxIndex = 0;
+	s8 prim = GE_PRIM_INVALID;
+	VAIStatus status = VAI_NEW;
+
+	// ID information
+	int numDraws = 0;
+	int numFrames = 0;
+	int lastFrame;  // So that we can forget.
+	u16 drawsUntilNextFullHash = 0;
+	u8 flags = 0;
 };
 
 class VulkanRenderManager;
@@ -75,37 +111,21 @@ class TessellationDataTransferVulkan : public TessellationDataTransfer  {
 public:
 	TessellationDataTransferVulkan(VulkanContext *vulkan) : vulkan_(vulkan) {}
 
-	void SetPushPool(VulkanPushPool *push) { push_ = push; }
+	void SetPushBuffer(VulkanPushBuffer *push) { push_ = push; }
 	// Send spline/bezier's control points and weights to vertex shader through structured shader buffer.
 	void SendDataToShader(const SimpleVertex *const *points, int size_u, int size_v, u32 vertType, const Spline::Weight2D &weights) override;
 	const VkDescriptorBufferInfo *GetBufferInfo() { return bufInfo_; }
 private:
 	VulkanContext *vulkan_;
-	VulkanPushPool *push_;  // Updated each frame.
+	VulkanPushBuffer *push_;  // Updated each frame.
 	VkDescriptorBufferInfo bufInfo_[3]{};
-};
-
-enum {
-	DRAW_BINDING_TEXTURE = 0,
-	DRAW_BINDING_2ND_TEXTURE = 1,
-	DRAW_BINDING_DEPAL_TEXTURE = 2,
-	DRAW_BINDING_DYNUBO_BASE = 3,
-	DRAW_BINDING_DYNUBO_LIGHT = 4,
-	DRAW_BINDING_DYNUBO_BONE = 5,
-	DRAW_BINDING_TESS_STORAGE_BUF = 6,
-	DRAW_BINDING_TESS_STORAGE_BUF_WU = 7,
-	DRAW_BINDING_TESS_STORAGE_BUF_WV = 8,
-	DRAW_BINDING_COUNT = 9,
 };
 
 // Handles transform, lighting and drawing.
 class DrawEngineVulkan : public DrawEngineCommon {
 public:
 	DrawEngineVulkan(Draw::DrawContext *draw);
-	~DrawEngineVulkan();
-
-	// We reference feature flags, so this is called after construction.
-	void InitDeviceObjects();
+	virtual ~DrawEngineVulkan();
 
 	void SetShaderManager(ShaderManagerVulkan *shaderManager) {
 		shaderManager_ = shaderManager;
@@ -120,18 +140,18 @@ public:
 		framebufferManager_ = fbManager;
 	}
 
-	void DeviceLost() override;
-	void DeviceRestore(Draw::DrawContext *draw) override;
+	void DeviceLost();
+	void DeviceRestore(Draw::DrawContext *draw);
 
 	// So that this can be inlined
 	void Flush() {
-		if (!numDrawInds_)
+		if (!numDrawCalls)
 			return;
 		DoFlush();
 	}
 
 	void FinishDeferred() {
-		if (!numDrawInds_)
+		if (!numDrawCalls)
 			return;
 		// Decode any pending vertices. And also flush while we're at it, for simplicity.
 		// It might be possible to only decode like in the other backends, but meh, it can't matter.
@@ -139,13 +159,9 @@ public:
 		DoFlush();
 	}
 
-	void DispatchFlush() override {
-		if (!numDrawInds_)
-			return;
-		DoFlush();
-	}
+	void DispatchFlush() override { Flush(); }
 
-	VKRPipelineLayout *GetPipelineLayout() const {
+	VkPipelineLayout GetPipelineLayout() const {
 		return pipelineLayout_;
 	}
 
@@ -158,51 +174,55 @@ public:
 		lastPipeline_ = nullptr;
 	}
 
-	VulkanPushPool *GetPushBufferForTextureData() {
-		return pushUBO_;
+	VulkanPushBuffer *GetPushBufferForTextureData() {
+		return GetCurFrame().pushUBO;
 	}
 
 	const DrawEngineVulkanStats &GetStats() const {
 		return stats_;
 	}
 
-	void SetDepalTexture(VkImageView depal, bool smooth) {
+	void SetDepalTexture(VkImageView depal) {
 		if (boundDepal_ != depal) {
 			boundDepal_ = depal;
-			boundDepalSmoothed_ = smooth;
 			gstate_c.Dirty(DIRTY_FRAGMENTSHADER_STATE);
 		}
 	}
 
 private:
-	void Invalidate(InvalidationCallbackFlags flags);
-
+	struct FrameData;
 	void ApplyDrawStateLate(VulkanRenderManager *renderManager, bool applyStencilRef, uint8_t stencilRef, bool useBlendConstant);
 	void ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManager, ShaderManagerVulkan *shaderManager, int prim, VulkanPipelineRasterStateKey &key, VulkanDynamicState &dynState);
 	void BindShaderBlendTex();
+	void ResetFramebufferRead();
 
+	void InitDeviceObjects();
 	void DestroyDeviceObjects();
 
-	void DoFlush();
-	void UpdateUBOs();
+	void DecodeVertsToPushBuffer(VulkanPushBuffer *push, uint32_t *bindOffset, VkBuffer *vkbuf);
 
-	NO_INLINE void ResetAfterDraw();
+	void DoFlush();
+	void UpdateUBOs(FrameData *frame);
+	FrameData &GetCurFrame();
+
+	VkDescriptorSet GetOrCreateDescriptorSet(VkImageView imageView, VkSampler sampler, VkBuffer base, VkBuffer light, VkBuffer bone, bool tess);
 
 	Draw::DrawContext *draw_;
 
-	// We use a shared descriptor set layouts for all PSP draws.
-	VKRPipelineLayout *pipelineLayout_;
+	// We use a single descriptor set layout for all PSP draws.
+	VkDescriptorSetLayout descriptorSetLayout_;
+	VkPipelineLayout pipelineLayout_;
 	VulkanPipeline *lastPipeline_;
 	VkDescriptorSet lastDs_ = VK_NULL_HANDLE;
 
 	// Secondary texture for shader blending
 	VkImageView boundSecondary_ = VK_NULL_HANDLE;
-
-	// CLUT texture for shader depal
 	VkImageView boundDepal_ = VK_NULL_HANDLE;
-	bool boundDepalSmoothed_ = false;
-	VkSampler samplerSecondaryLinear_ = VK_NULL_HANDLE;
-	VkSampler samplerSecondaryNearest_ = VK_NULL_HANDLE;
+	VkSampler samplerSecondary_ = VK_NULL_HANDLE;  // This one is actually never used since we use fetch.
+
+	PrehashMap<VertexArrayInfoVulkan *, nullptr> vai_;
+	VulkanPushBuffer *vertexCache_;
+	int descDecimationCounter_ = 0;
 
 	struct DescriptorSetKey {
 		VkImageView imageView_;
@@ -213,13 +233,26 @@ private:
 		// for all draws in a frame, except when the buffer has to grow.
 	};
 
+	// We alternate between these.
+	struct FrameData {
+		FrameData() : descSets(512), descPool("DrawEngine", true) {
+			descPool.Setup([this] { descSets.Clear(); });
+		}
+
+		VulkanDescSetPool descPool;
+
+		VulkanPushBuffer *pushUBO = nullptr;
+		VulkanPushBuffer *pushVertex = nullptr;
+		VulkanPushBuffer *pushIndex = nullptr;
+
+		// We do rolling allocation and reset instead of caching across frames. That we might do later.
+		DenseHashMap<DescriptorSetKey, VkDescriptorSet, (VkDescriptorSet)VK_NULL_HANDLE> descSets;
+
+		void Destroy(VulkanContext *vulkan);
+	};
+
 	GEPrimitiveType lastPrim_ = GE_PRIM_INVALID;
-
-	// This one's not accurately named, it's used for all kinds of stuff that's not vertices or indices.
-	VulkanPushPool *pushUBO_ = nullptr;
-
-	VulkanPushPool *pushVertex_ = nullptr;
-	VulkanPushPool *pushIndex_ = nullptr;
+	FrameData frame_[VulkanContext::MAX_INFLIGHT_FRAMES];
 
 	// Other
 	ShaderManagerVulkan *shaderManager_ = nullptr;
@@ -245,8 +278,9 @@ private:
 	VulkanDynamicState dynState_{};
 
 	int tessOffset_ = 0;
-	FBOTexState fboTexBindState_ = FBO_TEX_NONE;
 
 	// Hardware tessellation
 	TessellationDataTransferVulkan *tessDataTransferVulkan;
+
+	int lastRenderStepId_ = -1;
 };

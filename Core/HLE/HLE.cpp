@@ -28,6 +28,7 @@
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
+#include "Core/Host.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/Reporting.h"
 #include "Core/System.h"
@@ -223,7 +224,7 @@ const char *GetFuncName(const char *moduleName, u32 nib)
 		return func->name;
 
 	static char temp[256];
-	snprintf(temp, sizeof(temp), "[UNK: 0x%08x]", nib);
+	sprintf(temp,"[UNK: 0x%08x]", nib);
 	return temp;
 }
 
@@ -540,9 +541,6 @@ void HLEReturnFromMipsCall() {
 const static u32 deadbeefRegs[12] = {0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF};
 inline static void SetDeadbeefRegs()
 {
-	// Not exactly the same, but any time a syscall happens, it should clear ll.
-	currentMIPS->llBit = 0;
-
 	if (g_Config.bSkipDeadbeefFilling)
 		return;
 
@@ -797,11 +795,10 @@ size_t hleFormatLogArgs(char *message, size_t sz, const char *argmask) {
 		case 's':
 			if (Memory::IsValidAddress(regval)) {
 				const char *s = Memory::GetCharPointer(regval);
-				const int safeLen = Memory::ValidSize(regval, 128);
-				if (strnlen(s, safeLen) >= safeLen) {
-					APPEND_FMT("%.*s...", safeLen, Memory::GetCharPointer(regval));
+				if (strnlen(s, 64) >= 64) {
+					APPEND_FMT("%.64s...", Memory::GetCharPointer(regval));
 				} else {
-					APPEND_FMT("%.*s", safeLen, Memory::GetCharPointer(regval));
+					APPEND_FMT("%s", Memory::GetCharPointer(regval));
 				}
 			} else {
 				APPEND_FMT("(invalid)");
@@ -853,7 +850,7 @@ size_t hleFormatLogArgs(char *message, size_t sz, const char *argmask) {
 	return used;
 }
 
-void hleDoLogInternal(LogType t, LogLevel level, u64 res, const char *file, int line, const char *reportTag, char retmask, const char *reason, const char *formatted_reason) {
+void hleDoLogInternal(LogTypes::LOG_TYPE t, LogTypes::LOG_LEVELS level, u64 res, const char *file, int line, const char *reportTag, char retmask, const char *reason, const char *formatted_reason) {
 	char formatted_args[4096];
 	const char *funcName = "?";
 	u32 funcFlags = 0;
@@ -867,8 +864,6 @@ void hleDoLogInternal(LogType t, LogLevel level, u64 res, const char *file, int 
 
 		funcName = latestSyscall->name;
 		funcFlags = latestSyscall->flags;
-	} else {
-		strcpy(formatted_args, "?");
 	}
 
 	const char *fmt;

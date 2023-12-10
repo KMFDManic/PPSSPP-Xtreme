@@ -50,7 +50,7 @@ public:
 	UIContext();
 	~UIContext();
 
-	void Init(Draw::DrawContext *thin3d, Draw::Pipeline *uipipe, Draw::Pipeline *uipipenotex, DrawBuffer *uidrawbuffer);
+	void Init(Draw::DrawContext *thin3d, Draw::Pipeline *uipipe, Draw::Pipeline *uipipenotex, DrawBuffer *uidrawbuffer, DrawBuffer *uidrawbufferTop);
 
 	void BeginFrame();
 
@@ -70,13 +70,12 @@ public:
 	void ActivateTopScissor();
 
 	DrawBuffer *Draw() const { return uidrawbuffer_; }
+	DrawBuffer *DrawTop() const { return uidrawbufferTop_; }
+	const UI::Theme *theme;
 
 	// Utility methods
+
 	TextDrawer *Text() const { return textDrawer_; }
-
-	void SetTintSaturation(float tint, float sat);
-
-	// High level drawing functions. They generally assume the default texture to be bounds.
 
 	void SetFontStyle(const UI::FontStyle &style);
 	const UI::FontStyle &GetFontStyle() { return *fontStyle_; }
@@ -88,13 +87,7 @@ public:
 	void DrawTextShadow(const char *str, float x, float y, uint32_t color, int align = 0);
 	void DrawTextRect(const char *str, const Bounds &bounds, uint32_t color, int align = 0);
 	void DrawTextShadowRect(const char *str, const Bounds &bounds, uint32_t color, int align = 0);
-	// Will squeeze the text into the bounds if needed.
-	void DrawTextRectSqueeze(const char *str, const Bounds &bounds, uint32_t color, int align = 0);
-
-	float CalculateTextScale(const char *text, float availWidth, float availHeight) const;
-
 	void FillRect(const UI::Drawable &drawable, const Bounds &bounds);
-	void DrawRectDropShadow(const Bounds &bounds, float radius, float alpha, uint32_t color = 0);
 	void DrawImageVGradient(ImageID image, uint32_t color1, uint32_t color2, const Bounds &bounds);
 
 	// in dps, like dp_xres and dp_yres
@@ -102,9 +95,6 @@ public:
 	const Bounds &GetBounds() const { return bounds_; }
 	Bounds GetLayoutBounds() const;
 	Draw::DrawContext *GetDrawContext() { return draw_; }
-	const UI::Theme &GetTheme() const {
-		return *theme;
-	}
 	void SetCurZ(float curZ);
 
 	void PushTransform(const UITransform &transform);
@@ -112,13 +102,6 @@ public:
 	Bounds TransformBounds(const Bounds &bounds);
 
 	void setUIAtlas(const std::string &name);
-
-	void SetScreenTag(const char *tag) {
-		screenTag_ = tag;
-	}
-
-	// TODO: Move to private.
-	const UI::Theme *theme;
 
 private:
 	Draw::DrawContext *draw_ = nullptr;
@@ -136,12 +119,11 @@ private:
 	std::unique_ptr<ManagedTexture> fontTexture_;
 
 	DrawBuffer *uidrawbuffer_ = nullptr;
+	DrawBuffer *uidrawbufferTop_ = nullptr;
 
 	std::vector<Bounds> scissorStack_;
 	std::vector<UITransform> transformStack_;
 
 	std::string lastUIAtlas_;
 	std::string UIAtlas_ = "ui_atlas.zim";
-
-	const char *screenTag_ = nullptr;
 };

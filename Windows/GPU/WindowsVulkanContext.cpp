@@ -131,12 +131,9 @@ bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_m
 		return false;
 	}
 
-	bool useMultiThreading = g_Config.bRenderMultiThreading;
-	if (g_Config.iInflightFrames == 1) {
-		useMultiThreading = false;
-	}
+	bool splitSubmit = g_Config.bGfxDebugSplitSubmit;
 
-	draw_ = Draw::T3DCreateVulkanContext(vulkan_, useMultiThreading);
+	draw_ = Draw::T3DCreateVulkanContext(vulkan_, splitSubmit);
 	SetGPUBackend(GPUBackend::VULKAN, vulkan_->GetPhysicalDeviceProperties(deviceNum).properties.deviceName);
 	bool success = draw_->CreatePresets();
 	_assert_msg_(success, "Failed to compile preset shaders");

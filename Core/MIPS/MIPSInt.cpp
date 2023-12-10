@@ -25,6 +25,7 @@
 #include "Common/CommonTypes.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
+#include "Core/Host.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
@@ -56,7 +57,8 @@
 
 static inline void DelayBranchTo(u32 where)
 {
-	if (!Memory::IsValidAddress(where) || (where & 3) != 0) {
+	if (!Memory::IsValidAddress(where)) {
+		// TODO: What about misaligned?
 		Core_ExecException(where, PC, ExecExceptionType::JUMP);
 	}
 	PC += 4;
@@ -64,15 +66,10 @@ static inline void DelayBranchTo(u32 where)
 	mipsr4k.inDelaySlot = true;
 }
 
-static inline void SkipLikely() {
-	MIPSInfo delaySlot = MIPSGetInfo(Memory::Read_Instruction(PC + 4, true));
-	// Don't actually skip if it is a jump (seen in Brooktown High.)
-	if (delaySlot & IS_JUMP) {
-		PC += 4;
-	} else {
-		PC += 8;
-		--mipsr4k.downcount;
-	}
+static inline void SkipLikely()
+{
+	PC += 8;
+	--mipsr4k.downcount;
 }
 
 int MIPS_SingleStep()
@@ -94,13 +91,10 @@ namespace MIPSInt
 {
 	void Int_Cache(MIPSOpcode op)
 	{
-		int imm = SignExtend16ToS32(op & 0xFFFF);
+		int imm = (s16)(op & 0xFFFF);
 		int rs = _RS;
-		uint32_t addr = R(rs) + imm;
+		int addr = R(rs) + imm;
 		int func = (op >> 16) & 0x1F;
-
-		// Let's only report this once per run to be safe from impacting perf.
-		static bool reportedAlignment = false;
 
 		// It appears that a cache line is 0x40 (64) bytes, loops in games
 		// issue the cache instruction at that interval.
@@ -114,19 +108,7 @@ namespace MIPSInt
 			// Invalidate the instruction cache at this address.
 			// We assume the CPU won't be reset during this, so no locking.
 			if (MIPSComp::jit) {
-				// Let's over invalidate to be super safe.
-				uint32_t alignedAddr = addr & ~0x3F;
-				int size = 0x40 + (addr & 0x3F);
-				MIPSComp::jit->InvalidateCacheAt(alignedAddr, size);
-				// Using a bool to avoid locking/etc. in case it's slow.
-				if (!reportedAlignment && (addr & 0x3F) != 0) {
-					WARN_LOG_REPORT(JIT, "Unaligned icache invalidation of %08x (%08x + %d) at PC=%08x", addr, R(rs), imm, PC);
-					reportedAlignment = true;
-				}
-				if (alignedAddr <= PC + 4 && alignedAddr + size >= PC - 4) {
-					// This is probably rare so we don't use a static bool.
-					WARN_LOG_REPORT_ONCE(icacheInvalidatePC, JIT, "Invalidating address near PC: %08x (%08x + %d) at PC=%08x", addr, R(rs), imm, PC);
-				}
+				MIPSComp::jit->InvalidateCacheAt(addr, 0x40);
 			}
 			break;
 
@@ -176,7 +158,7 @@ namespace MIPSInt
 	void Int_Break(MIPSOpcode op)
 	{
 		Reporting::ReportMessage("BREAK instruction hit");
-		Core_Break(PC);
+		Core_Break();
 		PC += 4;
 	}
 
@@ -265,21 +247,17 @@ namespace MIPSInt
 	void Int_JumpType(MIPSOpcode op)
 	{
 		if (mipsr4k.inDelaySlot)
-			ERROR_LOG(CPU, "Jump in delay slot :(");
+			_dbg_assert_msg_(false,"Jump in delay slot :(");
 
 		u32 off = ((op & 0x03FFFFFF) << 2);
 		u32 addr = (currentMIPS->pc & 0xF0000000) | off;
 
 		switch (op>>26) 
 		{
-		case 2: //j
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
-			break;
+		case 2: DelayBranchTo(addr); break; //j
 		case 3: //jal
-			R(MIPS_REG_RA) = PC + 8;
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
+			R(31) = PC + 8;
+			DelayBranchTo(addr);
 			break;
 		default:
 			_dbg_assert_msg_(false,"Trying to interpret instruction that can't be interpreted");
@@ -291,8 +269,11 @@ namespace MIPSInt
 	{
 		if (mipsr4k.inDelaySlot)
 		{
-			// There's one of these in Star Soldier at 0881808c, which seems benign.
+			// There's one of these in Star Soldier at 0881808c, which seems benign - it should probably be ignored.
+			if (op == 0x03e00008)
+				return;
 			ERROR_LOG(CPU, "Jump in delay slot :(");
+			_dbg_assert_msg_(false,"Jump in delay slot :(");
 		}
 
 		int rs = _RS;
@@ -301,15 +282,12 @@ namespace MIPSInt
 		switch (op & 0x3f) 
 		{
 		case 8: //jr
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
+			DelayBranchTo(addr);
 			break;
 		case 9: //jalr
 			if (rd != 0)
 				R(rd) = PC + 8;
-			// Update rd, but otherwise do not take the branch if we're branching.
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
+			DelayBranchTo(addr);
 			break;
 		}
 	}

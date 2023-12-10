@@ -72,18 +72,18 @@
 class PSPSaveDialog: public PSPDialog {
 public:
 	PSPSaveDialog(UtilityDialogType type);
-	~PSPSaveDialog();
+	virtual ~PSPSaveDialog();
 
-	int Init(int paramAddr);
-	int Update(int animSpeed) override;
-	int Shutdown(bool force = false) override;
-	void DoState(PointerWrap &p) override;
-	pspUtilityDialogCommon *GetCommonParam() override;
+	virtual int Init(int paramAddr);
+	virtual int Update(int animSpeed) override;
+	virtual int Shutdown(bool force = false) override;
+	virtual void DoState(PointerWrap &p) override;
+	virtual pspUtilityDialogCommon *GetCommonParam() override;
 
 	void ExecuteIOAction();
 
 protected:
-	bool UseAutoStatus() override {
+	virtual bool UseAutoStatus() override {
 		return false;
 	}
 
@@ -139,13 +139,13 @@ private:
 	DisplayState display = DS_NONE;
 
 	SavedataParam param;
-	SceUtilitySavedataParam request{};
+	SceUtilitySavedataParam request;
 	// For detecting changes made by the game.
-	SceUtilitySavedataParam originalRequest{};
+	SceUtilitySavedataParam originalRequest;
 	u32 requestAddr = 0;
 	int currentSelectedSave = 0;
 
-	int yesnoChoice = 0;
+	int yesnoChoice;
 
 	enum SaveIOStatus
 	{

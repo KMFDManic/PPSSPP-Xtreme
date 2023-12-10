@@ -91,9 +91,6 @@
     <Filter Include="MIPS\fake">
       <UniqueIdentifier>{678fa299-0ff7-4983-982d-2da47b52e238}</UniqueIdentifier>
     </Filter>
-    <Filter Include="MIPS\RiscV">
-      <UniqueIdentifier>{067e3128-3aaf-4ed1-b19e-bab11606abe7}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ELF\ElfReader.cpp">
@@ -301,6 +298,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="CoreTiming.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Host.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="Loaders.cpp">
@@ -523,9 +523,6 @@
     <ClCompile Include="Dialog\PSPNetconfDialog.cpp">
       <Filter>Dialog</Filter>
     </ClCompile>
-    <ClCompile Include="Dialog\PSPNpSigninDialog.cpp">
-      <Filter>Dialog</Filter>
-    </ClCompile>
     <ClCompile Include="Debugger\DisassemblyManager.cpp">
       <Filter>Debugger</Filter>
     </ClCompile>
@@ -652,6 +649,9 @@
     <ClCompile Include="FileLoaders\RamCachingFileLoader.cpp">
       <Filter>FileLoaders</Filter>
     </ClCompile>
+    <ClCompile Include="TextureReplacer.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="MIPS\IR\IRAsm.cpp">
       <Filter>MIPS\IR</Filter>
     </ClCompile>
@@ -691,6 +691,7 @@
     <ClCompile Include="AVIDump.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="WaveFile.cpp" />
     <ClCompile Include="HLE\KUBridge.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
@@ -719,9 +720,6 @@
       <Filter>Debugger\WebSocket</Filter>
     </ClCompile>
     <ClCompile Include="Debugger\WebSocket\CPUCoreSubscriber.cpp">
-      <Filter>Debugger\WebSocket</Filter>
-    </ClCompile>
-    <ClCompile Include="Debugger\WebSocket\ClientConfigSubscriber.cpp">
       <Filter>Debugger\WebSocket</Filter>
     </ClCompile>
     <ClCompile Include="Debugger\WebSocket\WebSocketUtils.cpp">
@@ -1186,120 +1184,6 @@
     <ClCompile Include="HW\Display.cpp">
       <Filter>HW</Filter>
     </ClCompile>
-    <ClCompile Include="HLE\sceNp2.cpp">
-      <Filter>HLE\Libraries</Filter>
-    </ClCompile>
-    <ClCompile Include="WaveFile.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="..\ext\riscv-disas.cpp">
-      <Filter>Ext</Filter>
-    </ClCompile>
-    <ClCompile Include="TiltEventProcessor.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\MIPSVFPUFallbacks.cpp">
-      <Filter>MIPS</Filter>
-    </ClCompile>
-    <ClCompile Include="ConfigSettings.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="RetroAchievements.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVJit.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVAsm.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVRegCache.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVCompFPU.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVCompLoadStore.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVCompVec.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVCompALU.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVCompBranch.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\RiscV\RiscVCompSystem.cpp">
-      <Filter>MIPS\RiscV</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\IR\IRAnalysis.cpp">
-      <Filter>MIPS\IR</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\IR\IRNativeCommon.cpp">
-      <Filter>MIPS\IR</Filter>
-    </ClCompile>
-    <ClCompile Include="FrameTiming.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRRegCache.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRAsm.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRJit.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRCompBranch.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRCompFPU.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRCompLoadStore.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRCompSystem.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRCompVec.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\x86\X64IRCompALU.cpp">
-      <Filter>MIPS\x86</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRCompLoadStore.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRCompSystem.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRCompVec.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRJit.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRRegCache.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRAsm.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRCompALU.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRCompBranch.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="MIPS\ARM64\Arm64IRCompFPU.cpp">
-      <Filter>MIPS\ARM64</Filter>
-    </ClCompile>
-    <ClCompile Include="Util\GameDB.cpp">
-      <Filter>Util</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ELF\ElfReader.h">
@@ -1506,6 +1390,9 @@
     <ClInclude Include="CoreTiming.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="Host.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="Loaders.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -1710,9 +1597,6 @@
     <ClInclude Include="Dialog\PSPNetconfDialog.h">
       <Filter>Dialog</Filter>
     </ClInclude>
-    <ClInclude Include="Dialog\PSPNpSigninDialog.h">
-      <Filter>Dialog</Filter>
-    </ClInclude>
     <ClInclude Include="MIPS\JitCommon\JitState.h">
       <Filter>MIPS\JitCommon</Filter>
     </ClInclude>
@@ -1836,6 +1720,9 @@
     <ClInclude Include="FileLoaders\RamCachingFileLoader.h">
       <Filter>FileLoaders</Filter>
     </ClInclude>
+    <ClInclude Include="TextureReplacer.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="MIPS\IR\IRJit.h">
       <Filter>MIPS\IR</Filter>
     </ClInclude>
@@ -1857,6 +1744,7 @@
     <ClInclude Include="AVIDump.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="WaveFile.h" />
     <ClInclude Include="HLE\KUBridge.h">
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
@@ -1882,9 +1770,6 @@
       <Filter>Debugger\WebSocket</Filter>
     </ClInclude>
     <ClInclude Include="Debugger\WebSocket\GameBroadcaster.h">
-      <Filter>Debugger\WebSocket</Filter>
-    </ClInclude>
-    <ClInclude Include="Debugger\WebSocket\ClientConfigSubscriber.h">
       <Filter>Debugger\WebSocket</Filter>
     </ClInclude>
     <ClInclude Include="Debugger\WebSocket\CPUCoreSubscriber.h">
@@ -2025,60 +1910,11 @@
     <ClInclude Include="HW\Display.h">
       <Filter>HW</Filter>
     </ClInclude>
-    <ClInclude Include="HLE\sceNp2.h">
-      <Filter>HLE\Libraries</Filter>
-    </ClInclude>
-    <ClInclude Include="WaveFile.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="..\ext\riscv-disas.h">
-      <Filter>Ext</Filter>
-    </ClInclude>
-    <ClInclude Include="TiltEventProcessor.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\MIPSVFPUFallbacks.h">
-      <Filter>MIPS</Filter>
-    </ClInclude>
-    <ClInclude Include="ConfigSettings.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="RetroAchievements.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\RiscV\RiscVJit.h">
-      <Filter>MIPS\RiscV</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\RiscV\RiscVRegCache.h">
-      <Filter>MIPS\RiscV</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\IR\IRAnalysis.h">
-      <Filter>MIPS\IR</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\IR\IRNativeCommon.h">
-      <Filter>MIPS\IR</Filter>
-    </ClInclude>
-    <ClInclude Include="FrameTiming.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\x86\X64IRRegCache.h">
-      <Filter>MIPS\x86</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\x86\X64IRJit.h">
-      <Filter>MIPS\x86</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\ARM64\Arm64IRJit.h">
-      <Filter>MIPS\ARM64</Filter>
-    </ClInclude>
-    <ClInclude Include="MIPS\ARM64\Arm64IRRegCache.h">
-      <Filter>MIPS\ARM64</Filter>
-    </ClInclude>
-    <ClInclude Include="Util\GameDB.h">
-      <Filter>Util</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <None Include="CMakeLists.txt" />
     <None Include="..\LICENSE.TXT" />
+    <None Include="..\android\jni\Android.mk" />
     <None Include="..\ext\gason\LICENSE">
       <Filter>Ext\gason</Filter>
     </None>
@@ -2098,9 +1934,6 @@
     </Text>
     <Text Include="..\ext\libzip\CMakeLists.txt">
       <Filter>Ext\libzip</Filter>
-    </Text>
-    <Text Include="..\ext\CMakeLists.txt">
-      <Filter>Ext</Filter>
     </Text>
   </ItemGroup>
 </Project>

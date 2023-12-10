@@ -21,7 +21,6 @@
 
 #include "Common/Common.h"
 #include "Common/Input/InputState.h"
-#include "Common/System/System.h"
 
 namespace UI {
 	class View;
@@ -42,11 +41,6 @@ namespace Draw {
 	class DrawContext;
 }
 
-enum class ScreenFocusChange {
-	FOCUS_LOST_TOP,  // Another screen was pushed on top
-	FOCUS_BECAME_TOP,  // Became the top screen again
-};
-
 class Screen {
 public:
 	Screen() : screenManager_(nullptr) { }
@@ -61,17 +55,12 @@ public:
 	virtual void postRender() {}
 	virtual void resized() {}
 	virtual void dialogFinished(const Screen *dialog, DialogResult result) {}
-	virtual void sendMessage(UIMessage message, const char *value) {}
+	virtual bool touch(const TouchInput &touch) { return false;  }
+	virtual bool key(const KeyInput &key) { return false; }
+	virtual bool axis(const AxisInput &touch) { return false; }
+	virtual void sendMessage(const char *msg, const char *value) {}
 	virtual void deviceLost() {}
 	virtual void deviceRestored() {}
-
-	virtual void focusChanged(ScreenFocusChange focusChange);
-
-	// Return value of UnsyncTouch is only used to let the overlay screen block touches.
-	virtual bool UnsyncTouch(const TouchInput &touch) = 0;
-	// Return value of UnsyncKey is used to not block certain system keys like volume when unhandled, on Android.
-	virtual bool UnsyncKey(const KeyInput &touch) = 0;
-	virtual void UnsyncAxis(const AxisInput *axes, size_t count) = 0;
 
 	virtual void RecreateViews() {}
 
@@ -82,7 +71,7 @@ public:
 	// what screen it is.
 	virtual void *dialogData() { return 0; }
 
-	virtual const char *tag() const = 0;
+	virtual std::string tag() const { return std::string(""); }
 
 	virtual bool isTransparent() const { return false; }
 	virtual bool isTopLevel() const { return false; }
@@ -100,6 +89,7 @@ public:
 };
 
 enum {
+	LAYER_SIDEMENU = 1,
 	LAYER_TRANSPARENT = 2,
 };
 
@@ -107,6 +97,7 @@ typedef void(*PostRenderCallback)(UIContext *ui, void *userdata);
 
 class ScreenManager {
 public:
+	ScreenManager();
 	virtual ~ScreenManager();
 
 	void switchScreen(Screen *screen);
@@ -141,19 +132,16 @@ public:
 	Screen *dialogParent(const Screen *dialog) const;
 
 	// Instant touch, separate from the update() mechanism.
-	void touch(const TouchInput &touch);
+	bool touch(const TouchInput &touch);
 	bool key(const KeyInput &key);
-	void axis(const AxisInput *axes, size_t count);
+	bool axis(const AxisInput &touch);
 
 	// Generic facility for gross hacks :P
-	void sendMessage(UIMessage message, const char *value);
+	void sendMessage(const char *msg, const char *value);
 
 	Screen *topScreen() const;
 
 	void getFocusPosition(float &x, float &y, float &z);
-
-	// Will delete any existing overlay screen.
-	void SetOverlayScreen(Screen *screen);
 
 	std::recursive_mutex inputLock_;
 
@@ -162,16 +150,14 @@ private:
 	void switchToNext();
 	void processFinishDialog();
 
-	UIContext *uiContext_ = nullptr;
-	Draw::DrawContext *thin3DContext_ = nullptr;
+	UIContext *uiContext_;
+	Draw::DrawContext *thin3DContext_;
 
 	PostRenderCallback postRenderCb_ = nullptr;
 	void *postRenderUserdata_ = nullptr;
 
-	const Screen *dialogFinished_ = nullptr;
-	DialogResult dialogResult_{};
-
-	Screen *overlayScreen_ = nullptr;
+	const Screen *dialogFinished_;
+	DialogResult dialogResult_;
 
 	struct Layer {
 		Screen *screen;

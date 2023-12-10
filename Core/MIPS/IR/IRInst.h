@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <vector>
 #include <utility>
 
@@ -17,7 +16,7 @@
 // even be directly JIT-ed, but the gains will probably be tiny over our older direct
 // MIPS->target JITs.
 
-enum class IROp : uint8_t {
+enum class IROp : u8 {
 	Nop,
 
 	SetConst,
@@ -93,7 +92,6 @@ enum class IROp : uint8_t {
 	Load32,
 	Load32Left,
 	Load32Right,
-	Load32Linked,
 	LoadFloat,
 	LoadVec4,
 
@@ -102,7 +100,6 @@ enum class IROp : uint8_t {
 	Store32,
 	Store32Left,
 	Store32Right,
-	Store32Conditional,
 	StoreFloat,
 	StoreVec4,
 
@@ -130,8 +127,6 @@ enum class IROp : uint8_t {
 
 	FCvtWS,
 	FCvtSW,
-	FCvtScaledWS,
-	FCvtScaledSW,
 
 	FMovFromGPR,
 	FMovToGPR,
@@ -139,12 +134,10 @@ enum class IROp : uint8_t {
 	FSat0_1,
 	FSatMinus1_1,
 
-	FpCondFromReg,
 	FpCondToReg,
-	FpCtrlFromReg,
-	FpCtrlToReg,
 	VfpuCtrlToReg,
 
+	ZeroFpCond,
 	FCmp,
 
 	FCmovVfpuCC,
@@ -165,7 +158,6 @@ enum class IROp : uint8_t {
 	// support SIMD.
 	Vec4Init,
 	Vec4Shuffle,
-	Vec4Blend,
 	Vec4Mov,
 	Vec4Add,
 	Vec4Sub,
@@ -221,15 +213,8 @@ enum class IROp : uint8_t {
 	SetPCConst,  // hack to make replacement know PC
 	CallReplacement,
 	Break,
-
-	// Debugging breakpoints.
 	Breakpoint,
 	MemoryCheck,
-
-	ValidateAddress8,
-	ValidateAddress16,
-	ValidateAddress32,
-	ValidateAddress128,
 };
 
 enum IRComparison {
@@ -251,13 +236,6 @@ enum class Vec4Init {
 	Set_0100,
 	Set_0010,
 	Set_0001,
-};
-
-enum class IRRoundMode : uint8_t {
-	RINT_0 = 0,
-	CAST_1 = 1,
-	CEIL_2 = 2,
-	FLOOR_3 = 3,
 };
 
 // Hm, unused
@@ -298,9 +276,7 @@ enum IRFpCompareMode {
 	LessEqualUnordered, // ule, ngt (less equal, unordered)
 };
 
-typedef u8 IRReg;
-
-enum : IRReg {
+enum {
 	IRTEMP_0 = 192,
 	IRTEMP_1,
 	IRTEMP_2,
@@ -317,6 +293,9 @@ enum : IRReg {
 	IRVTEMP_PFX_D = 232 - 32,
 	IRVTEMP_0 = 236 - 32,
 
+	// 16 float temps for vector S and T prefixes and things like that.
+	// IRVTEMP_0 = 208 - 64,  // -64 to be relative to v[0]
+
 	// Hacky way to get to other state
 	IRREG_VFPU_CTRL_BASE = 208,
 	IRREG_VFPU_CC = 211,
@@ -324,7 +303,6 @@ enum : IRReg {
 	IRREG_HI = 243,
 	IRREG_FCR31 = 244,
 	IRREG_FPCOND = 245,
-	IRREG_LLBIT = 250,
 };
 
 enum IRFlags {
@@ -334,14 +312,12 @@ enum IRFlags {
 	IRFLAG_SRC3DST = 0x0002,
 	// Exit instruction (maybe conditional.)
 	IRFLAG_EXIT = 0x0004,
-	// Instruction like Interpret which may read anything, but not an exit.
-	IRFLAG_BARRIER = 0x0008,
 };
 
 struct IRMeta {
 	IROp op;
 	const char *name;
-	char types[5];  // GGG
+	const char types[4];  // GGG
 	u32 flags;
 };
 
@@ -349,11 +325,11 @@ struct IRMeta {
 struct IRInst {
 	IROp op;
 	union {
-		IRReg dest;
-		IRReg src3;
+		u8 dest;
+		u8 src3;
 	};
-	IRReg src1;
-	IRReg src2;
+	u8 src1;
+	u8 src2;
 	u32 constant;
 };
 
@@ -373,10 +349,6 @@ public:
 	}
 
 	void Write(IROp op, u8 dst = 0, u8 src1 = 0, u8 src2 = 0);
-	void Write(IROp op, IRReg dst, IRReg src1, IRReg src2, uint32_t c) {
-		AddConstant(c);
-		Write(op, dst, src1, src2);
-	}
 	void Write(IRInst inst) {
 		insts_.push_back(inst);
 	}
@@ -385,9 +357,6 @@ public:
 	int AddConstant(u32 value);
 	int AddConstantFloat(float value);
 
-	void Reserve(size_t s) {
-		insts_.reserve(s);
-	}
 	void Clear() {
 		insts_.clear();
 	}
@@ -402,9 +371,6 @@ private:
 struct IROptions {
 	uint32_t disableFlags;
 	bool unalignedLoadStore;
-	bool unalignedLoadStoreVec4;
-	bool preferVec4;
-	bool preferVec4Dot;
 };
 
 const IRMeta *GetIRMeta(IROp op);

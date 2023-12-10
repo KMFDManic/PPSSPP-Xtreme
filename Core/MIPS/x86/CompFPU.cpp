@@ -127,8 +127,6 @@ void Jit::Comp_FPULS(MIPSOpcode op) {
 	int ft = _FT;
 	MIPSGPReg rs = _RS;
 
-	CheckMemoryBreakpoint(0, rs, offset);
-
 	switch (op >> 26) {
 	case 49: //FI(ft) = Memory::Read_U32(addr); break; //lwc1
 		{

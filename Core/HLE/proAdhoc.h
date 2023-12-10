@@ -84,7 +84,7 @@
 #define EALREADY WSAEALREADY
 #define ETIMEDOUT WSAETIMEDOUT
 #define EOPNOTSUPP WSAEOPNOTSUPP
-inline bool connectInProgress(int errcode){ return (errcode == WSAEWOULDBLOCK || errcode == WSAEINPROGRESS || errcode == WSAEALREADY || errcode == WSAEINVAL); } // WSAEINVAL should be treated as WSAEALREADY during connect for backward-compatibility with Winsock 1.1 
+inline bool connectInProgress(int errcode){ return (errcode == WSAEWOULDBLOCK || errcode == WSAEINPROGRESS || errcode == WSAEALREADY); }
 inline bool isDisconnected(int errcode) { return (errcode == WSAECONNRESET || errcode == WSAECONNABORTED || errcode == WSAESHUTDOWN); }
 #else
 #define INVALID_SOCKET -1
@@ -1017,7 +1017,7 @@ bool isPTPPortInUse(uint16_t port, bool forListen, SceNetEtherAddr* dstmac = nul
 std::string ip2str(in_addr in, bool maskPublicIP = true);
 
 // Convert MAC address to string
-std::string mac2str(const SceNetEtherAddr *mac);
+std::string mac2str(SceNetEtherAddr* mac);
 
 /*
  * Matching Members

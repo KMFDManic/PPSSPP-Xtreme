@@ -23,22 +23,20 @@
 
 class ControlLayoutView;
 
-class TouchControlLayoutScreen : public UIDialogScreenWithGameBackground {
+class TouchControlLayoutScreen : public UIDialogScreenWithBackground {
 public:
-	TouchControlLayoutScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {}
+	TouchControlLayoutScreen();
 
-	void CreateViews() override;
-	void dialogFinished(const Screen *dialog, DialogResult result) override;
-	void onFinish(DialogResult reason) override;
-	void update() override;
-	void resized() override;
-
-	const char *tag() const override { return "TouchControlLayout"; }
+	virtual void CreateViews() override;
+	virtual void dialogFinished(const Screen *dialog, DialogResult result) override;
+	virtual void onFinish(DialogResult reason) override;
+	virtual void update() override;
+	virtual void resized() override;
 
 protected:
-	UI::EventReturn OnReset(UI::EventParams &e);
-	UI::EventReturn OnVisibility(UI::EventParams &e);
-	UI::EventReturn OnMode(UI::EventParams &e);
+	virtual UI::EventReturn OnReset(UI::EventParams &e);
+	virtual UI::EventReturn OnVisibility(UI::EventParams &e);
+	virtual UI::EventReturn OnMode(UI::EventParams &e);
 
 private:
 	UI::ChoiceStrip *mode_ = nullptr;

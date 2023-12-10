@@ -42,6 +42,5 @@
     <None Include="miniupnp\miniupnpc\msvc\genminiupnpcstrings.vbs">
       <Filter>scripts</Filter>
     </None>
-    <None Include="miniupnp-build\Android.mk" />
   </ItemGroup>
 </Project>

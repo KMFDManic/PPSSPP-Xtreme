@@ -69,7 +69,6 @@ public:
 
 	void DeviceLost() {
 		Clear(false);
-		render_ = nullptr;
 	}
 	void DeviceRestore(Draw::DrawContext *draw);
 	void Clear(bool deleteThem = true);

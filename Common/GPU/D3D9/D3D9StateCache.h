@@ -4,9 +4,11 @@
 
 #include "Common/GPU/D3D9/D3D9ShaderCompiler.h"
 
+namespace DX9 {
+
 // TODO: Get rid of these somehow.
-extern LPDIRECT3DDEVICE9 pD3Ddevice9;
-extern LPDIRECT3DDEVICE9EX pD3DdeviceEx9;
+extern LPDIRECT3DDEVICE9 pD3Ddevice;
+extern LPDIRECT3DDEVICE9EX pD3DdeviceEx;
 
 class DirectXState {
 private:
@@ -42,7 +44,7 @@ private:
 			return _value;
 		}
 		void restore() {
-			pD3Ddevice9->SetRenderState(cap, _value);
+			pD3Ddevice->SetRenderState(cap, _value);
 		}
 	};
 
@@ -67,7 +69,7 @@ private:
 			p1 = old;
 		}
 		void restore() {
-			pD3Ddevice9->SetRenderState(_state1, p1);
+			pD3Ddevice->SetRenderState(_state1, p1);
 		}
 	};
 
@@ -92,7 +94,7 @@ private:
 			p1 = old;
 		}
 		void restore() {
-			pD3Ddevice9->SetSamplerState(0, _state1, p1);
+			pD3Ddevice->SetSamplerState(0, _state1, p1);
 		}
 	};
 
@@ -121,7 +123,7 @@ private:
 			p1 = old;
 		}
 		void restore() {
-			pD3Ddevice9->SetSamplerState(0, _state1, p1d);
+			pD3Ddevice->SetSamplerState(0, _state1, p1d);
 		}
 	};
 
@@ -139,11 +141,11 @@ private:
 		inline void set(DWORD newp1, DWORD newp2) {
 			if (p1 != newp1) {
 				p1 = newp1;
-				pD3Ddevice9->SetRenderState(_state1, p1);
+				pD3Ddevice->SetRenderState(_state1, p1);
 			}
 			if (p2 != newp2) {
 				p2 = newp2;
-				pD3Ddevice9->SetRenderState(_state2, p2);
+				pD3Ddevice->SetRenderState(_state2, p2);
 			}
 		}
 		void force(DWORD newp1, DWORD newp2) {
@@ -154,8 +156,8 @@ private:
 			p2 = old2;
 		}
 		void restore() {
-			pD3Ddevice9->SetRenderState(_state1, p1);
-			pD3Ddevice9->SetRenderState(_state2, p2);
+			pD3Ddevice->SetRenderState(_state1, p1);
+			pD3Ddevice->SetRenderState(_state2, p2);
 		}
 	};
 
@@ -175,15 +177,15 @@ private:
 		inline void set(DWORD newp1, DWORD newp2, DWORD newp3) {
 			if (p1 != newp1) {
 				p1 = newp1;
-				pD3Ddevice9->SetRenderState(_state1, p1);
+				pD3Ddevice->SetRenderState(_state1, p1);
 			}
 			if (p2 != newp2) {
 				p2 = newp2;
-				pD3Ddevice9->SetRenderState(_state2, p2);
+				pD3Ddevice->SetRenderState(_state2, p2);
 			}
 			if (p3 != newp3) {
 				p3 = newp3;
-				pD3Ddevice9->SetRenderState(_state3, p3);
+				pD3Ddevice->SetRenderState(_state3, p3);
 			}
 		}
 		void force(DWORD newp1, DWORD newp2, DWORD newp3) {
@@ -196,9 +198,9 @@ private:
 			p3 = old3;
 		}
 		void restore() {
-			pD3Ddevice9->SetRenderState(_state1, p1);
-			pD3Ddevice9->SetRenderState(_state2, p2);
-			pD3Ddevice9->SetRenderState(_state3, p3);
+			pD3Ddevice->SetRenderState(_state1, p1);
+			pD3Ddevice->SetRenderState(_state2, p2);
+			pD3Ddevice->SetRenderState(_state3, p3);
 		}
 	};
 
@@ -220,19 +222,19 @@ private:
 		inline void set(DWORD newp1, DWORD newp2, DWORD newp3, DWORD newp4) {
 			if (p1 != newp1) {
 				p1 = newp1;
-				pD3Ddevice9->SetRenderState(_state1, p1);
+				pD3Ddevice->SetRenderState(_state1, p1);
 			}
 			if (p2 != newp2) {
 				p2 = newp2;
-				pD3Ddevice9->SetRenderState(_state2, p2);
+				pD3Ddevice->SetRenderState(_state2, p2);
 			}
 			if (p3 != newp3) {
 				p3 = newp3;
-				pD3Ddevice9->SetRenderState(_state3, p3);
+				pD3Ddevice->SetRenderState(_state3, p3);
 			}
 			if (p4 != newp4) {
 				p4 = newp4;
-				pD3Ddevice9->SetRenderState(_state4, p4);
+				pD3Ddevice->SetRenderState(_state4, p4);
 			}
 		}
 		void force(DWORD newp1, DWORD newp2, DWORD newp3, DWORD newp4) {
@@ -247,10 +249,10 @@ private:
 			p4 = old4;
 		}
 		void restore() {
-			pD3Ddevice9->SetRenderState(_state1, p1);
-			pD3Ddevice9->SetRenderState(_state2, p2);
-			pD3Ddevice9->SetRenderState(_state3, p3);
-			pD3Ddevice9->SetRenderState(_state3, p4);
+			pD3Ddevice->SetRenderState(_state1, p1);
+			pD3Ddevice->SetRenderState(_state2, p2);
+			pD3Ddevice->SetRenderState(_state3, p3);
+			pD3Ddevice->SetRenderState(_state3, p4);
 		}
 	};
 
@@ -282,7 +284,67 @@ private:
 			c = old;
 		}
 		inline void restore() {
-			pD3Ddevice9->SetRenderState(D3DRS_BLENDFACTOR, c);
+			pD3Ddevice->SetRenderState(D3DRS_BLENDFACTOR, c);
+		}
+	};
+
+	class SavedColorMask {
+		DWORD mask;
+	public:
+		SavedColorMask() {
+			mask = D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE | D3DCOLORWRITEENABLE_ALPHA;
+			DirectXState::state_count++;
+		}
+
+		inline void set(bool r, bool g, bool b, bool a) {
+			DWORD newmask = 0;
+			if (r) {
+				newmask |= D3DCOLORWRITEENABLE_RED;
+			}
+			if (g) {
+				newmask |= D3DCOLORWRITEENABLE_GREEN;
+			}
+			if (b) {
+				newmask |= D3DCOLORWRITEENABLE_BLUE;
+			}
+			if (a) {
+				newmask |= D3DCOLORWRITEENABLE_ALPHA;
+			}
+			if (mask != newmask) {
+				mask = newmask;
+				restore();
+			}
+		}
+		void force(bool r, bool g, bool b, bool a) {
+			DWORD old = mask;
+			set(r, g, b, a);
+			mask = old;
+		}
+		inline void restore() {
+			pD3Ddevice->SetRenderState(D3DRS_COLORWRITEENABLE, mask);
+		}
+	};
+
+
+	class BoolUnused {
+	public:
+		BoolUnused() {
+			DirectXState::state_count++;
+		}
+		inline void set(bool) {
+			// Nothing.
+		}
+		void force(bool) {
+			// Nothing.
+		}
+		inline void restore() {
+			// Nothing.
+		}
+		inline void enable() {
+			set(true);
+		}
+		inline void disable() {
+			set(false);
 		}
 	};
 
@@ -316,7 +378,7 @@ private:
 		}
 
 		inline void restore() {
-			pD3Ddevice9->SetViewport(&viewport);
+			pD3Ddevice->SetViewport(&viewport);
 		}
 	};
 
@@ -338,7 +400,37 @@ private:
 		}
 
 		inline void restore() {
-			pD3Ddevice9->SetScissorRect(&rect);
+			pD3Ddevice->SetScissorRect(&rect);
+		}
+	};
+
+	class CullMode {
+		DWORD cull;
+	public:
+		CullMode() : cull (D3DCULL_NONE) {
+		}
+
+		inline void set(int wantcull, int cullmode) {
+			DWORD newcull;
+			if (!wantcull) {
+				// disable
+				newcull = D3DCULL_NONE;
+			} else {
+				// add front face ...
+				newcull = cullmode==0 ? D3DCULL_CW:D3DCULL_CCW;
+			}
+			if (cull != newcull) {
+				cull = newcull;
+				restore();
+			}
+		}
+		void force(int wantcull, int cullmode) {
+			DWORD old = cull;
+			set(wantcull, cullmode);
+			cull = old;
+		}
+		inline void restore() {
+			pD3Ddevice->SetRenderState(D3DRS_CULLMODE, cull);
 		}
 	};
 
@@ -359,9 +451,10 @@ public:
 
 	BoolState<D3DRS_SCISSORTESTENABLE, false> scissorTest;
 
-	DxState1<D3DRS_CULLMODE, D3DCULL_NONE> cullMode;
+	BoolUnused dither;
+
+	CullMode cullMode;
 	DxState1<D3DRS_SHADEMODE, D3DSHADE_GOURAUD> shadeMode;
-	DxState1<D3DRS_CLIPPLANEENABLE, 0> clipPlaneEnable;
 
 	BoolState<D3DRS_ZENABLE, false> depthTest;
 
@@ -372,7 +465,7 @@ public:
 	DxState1<D3DRS_ZFUNC, D3DCMP_LESSEQUAL> depthFunc;
 	DxState1<D3DRS_ZWRITEENABLE, TRUE> depthWrite;
 
-	DxState1<D3DRS_COLORWRITEENABLE, 0xF> colorMask;
+	SavedColorMask colorMask;
 
 	StateVp viewport;
 	StateScissor scissorRect;
@@ -380,10 +473,8 @@ public:
 	BoolState<D3DRS_STENCILENABLE, false> stencilTest;
 
 	DxState3<D3DRS_STENCILFAIL, D3DSTENCILOP_KEEP, D3DRS_STENCILZFAIL, D3DSTENCILOP_KEEP, D3DRS_STENCILPASS, D3DSTENCILOP_KEEP> stencilOp;
-	DxState1<D3DRS_STENCILFUNC, D3DCMP_ALWAYS> stencilFunc;
-	DxState1<D3DRS_STENCILREF, 0> stencilRef;
-	DxState1<D3DRS_STENCILWRITEMASK, 0xFFFFFFFF> stencilWriteMask;
-	DxState1<D3DRS_STENCILMASK, 0xFFFFFFFF> stencilCompareMask;
+	DxState3<D3DRS_STENCILFUNC, D3DCMP_ALWAYS, D3DRS_STENCILREF, 0, D3DRS_STENCILMASK, 0xFFFFFFFF> stencilFunc;
+	DxState1<D3DRS_STENCILWRITEMASK, 0xFFFFFFFF> stencilMask;
 
 	DxSampler0State1<D3DSAMP_MINFILTER, D3DTEXF_POINT> texMinFilter;
 	DxSampler0State1<D3DSAMP_MAGFILTER, D3DTEXF_POINT> texMagFilter;
@@ -392,10 +483,23 @@ public:
 	DxSampler0State1<D3DSAMP_MAXMIPLEVEL, 0> texMaxMipLevel;
 	DxSampler0State1<D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP> texAddressU;
 	DxSampler0State1<D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP> texAddressV;
-	DxSampler0State1<D3DSAMP_ADDRESSW, D3DTADDRESS_CLAMP> texAddressW;
 };
 
 #undef STATE1
 #undef STATE2
 
 extern DirectXState dxstate;
+
+struct GLExtensions {
+	bool OES_depth24;
+	bool OES_packed_depth_stencil;
+	bool OES_depth_texture;
+	bool EXT_discard_framebuffer;
+	bool FBO_ARB;
+};
+
+extern GLExtensions gl_extensions;
+
+void CheckGLExtensions();
+
+};

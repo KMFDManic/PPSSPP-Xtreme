@@ -4,17 +4,26 @@
 #include "Common/GPU/OpenGL/GLRenderManager.h"
 #include "Common/GPU/thin3d_create.h"
 
+// Doesn't do much. Just to fit in.
 class AndroidJavaEGLGraphicsContext : public AndroidGraphicsContext {
 public:
 	AndroidJavaEGLGraphicsContext();
-	~AndroidJavaEGLGraphicsContext() { delete draw_; }
+	~AndroidJavaEGLGraphicsContext() {
+		delete draw_;
+	}
+
+	bool Initialized() override {
+		return draw_ != nullptr;
+	}
 
 	// This performs the actual initialization,
 	bool InitFromRenderThread(ANativeWindow *wnd, int desiredBackbufferSizeX, int desiredBackbufferSizeY, int backbufferFormat, int androidVersion) override;
 
 	void ShutdownFromRenderThread() override;
 
-	void Shutdown() override {}
+	void Shutdown() override;
+	void SwapBuffers() override {}
+	void SwapInterval(int interval) override {}
 	void Resize() override {}
 
 	Draw::DrawContext *GetDrawContext() override {
@@ -38,6 +47,7 @@ public:
 	}
 
 	void StopThread() override {
+		renderManager_->WaitUntilQueueIdle();
 		renderManager_->StopThread();
 	}
 

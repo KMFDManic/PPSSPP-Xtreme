@@ -5,49 +5,11 @@
 #pragma once
 
 #include <istream>
-#include <memory>
 #include <map>
 #include <string>
-#include <string_view>
 #include <vector>
-#include <cstdint>
 
 #include "Common/File/Path.h"
-
-class VFSInterface;
-
-class ParsedIniLine {
-public:
-	ParsedIniLine() {}
-	ParsedIniLine(std::string_view key, std::string_view value) {
-		this->key = key;
-		this->value = value;
-	}
-	ParsedIniLine(std::string_view key, std::string_view value, std::string_view comment) {
-		this->key = key;
-		this->value = value;
-		this->comment = comment;
-	}
-	static ParsedIniLine CommentOnly(std::string_view comment) {
-		return ParsedIniLine(std::string_view(), std::string_view(), comment);
-	}
-
-	// Comments only come from "ParseFrom".
-	void ParseFrom(std::string_view line);
-	void Reconstruct(std::string *output) const;
-
-	// Having these as views allows a more efficient internal representation, like one joint string.
-	std::string_view Key() const { return key; }
-	std::string_view Value() const { return value; }
-	std::string_view Comment() const { return comment; }
-
-	void SetValue(std::string_view newValue) { value = newValue; }
-
-private:
-	std::string key;
-	std::string value;
-	std::string comment;
-};
 
 class Section {
 	friend class IniFile;
@@ -63,16 +25,14 @@ public:
 
 	std::map<std::string, std::string> ToMap() const;
 
-	ParsedIniLine *GetLine(const char *key);
-	const ParsedIniLine *GetLine(const char *key) const;
-
+	std::string* GetLine(const char* key, std::string* valueOut, std::string* commentOut);
 	void Set(const char* key, const char* newValue);
 	void Set(const char* key, const std::string& newValue, const std::string& defaultValue);
 
 	void Set(const std::string &key, const std::string &value) {
 		Set(key.c_str(), value.c_str());
 	}
-	bool Get(const char* key, std::string* value, const char* defaultValue) const;
+	bool Get(const char* key, std::string* value, const char* defaultValue);
 
 	void Set(const char* key, uint32_t newValue);
 	void Set(const char* key, uint64_t newValue);
@@ -97,16 +57,13 @@ public:
 
 	void AddComment(const std::string &comment);
 
-	bool Get(const char* key, int* value, int defaultValue = 0) const;
-	bool Get(const char* key, uint32_t* value, uint32_t defaultValue = 0) const;
-	bool Get(const char* key, uint64_t* value, uint64_t defaultValue = 0) const;
-	bool Get(const char* key, bool* value, bool defaultValue = false) const;
-	bool Get(const char* key, float* value, float defaultValue = false) const;
-	bool Get(const char* key, double* value, double defaultValue = false) const;
-	bool Get(const char* key, std::vector<std::string>& values) const;
-
-	// Return a list of all keys in this section
-	bool GetKeys(std::vector<std::string> &keys) const;
+	bool Get(const char* key, int* value, int defaultValue = 0);
+	bool Get(const char* key, uint32_t* value, uint32_t defaultValue = 0);
+	bool Get(const char* key, uint64_t* value, uint64_t defaultValue = 0);
+	bool Get(const char* key, bool* value, bool defaultValue = false);
+	bool Get(const char* key, float* value, float defaultValue = false);
+	bool Get(const char* key, double* value, double defaultValue = false);
+	bool Get(const char* key, std::vector<std::string>& values);
 
 	bool operator < (const Section& other) const {
 		return name_ < other.name_;
@@ -117,7 +74,7 @@ public:
 	}
 
 protected:
-	std::vector<ParsedIniLine> lines_;
+	std::vector<std::string> lines;
 	std::string name_;
 	std::string comment;
 };
@@ -125,10 +82,12 @@ protected:
 class IniFile {
 public:
 	bool Load(const Path &path);
+	bool Load(const std::string &filename) { return Load(Path(filename)); }
 	bool Load(std::istream &istream);
-	bool LoadFromVFS(VFSInterface &vfs, const std::string &filename);
+	bool LoadFromVFS(const std::string &filename);
 
 	bool Save(const Path &path);
+	bool Save(const std::string &filename) { return Save(Path(filename)); }
 
 	// Returns true if key exists in section
 	bool Exists(const char* sectionName, const char* key) const;
@@ -173,19 +132,21 @@ public:
 
 	bool GetKeys(const char* sectionName, std::vector<std::string>& keys) const;
 
+	void SetLines(const char* sectionName, const std::vector<std::string> &lines);
+	bool GetLines(const char* sectionName, std::vector<std::string>& lines, const bool remove_comments = true) const;
+
 	bool DeleteKey(const char* sectionName, const char* key);
 	bool DeleteSection(const char* sectionName);
 
 	void SortSections();
-
-	std::vector<std::unique_ptr<Section>> &Sections() { return sections; }
+	std::vector<Section> &Sections() { return sections; }
 
 	bool HasSection(const char *section) { return GetSection(section) != 0; }
 
 	Section* GetOrCreateSection(const char* section);
 
 private:
-	std::vector<std::unique_ptr<Section>> sections;
+	std::vector<Section> sections;
 
 	const Section* GetSection(const char* section) const;
 	Section* GetSection(const char* section);

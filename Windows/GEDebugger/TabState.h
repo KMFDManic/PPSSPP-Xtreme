@@ -47,7 +47,6 @@ protected:
 private:
 	bool RowValuesChanged(int row);
 	void SetCmdValue(u32 op);
-	void PromptBreakpointCond(const TabStateRow &info);
 
 	const TabStateRow *rows_;
 	int rowCount_;
@@ -58,12 +57,12 @@ public:
 	TabStateValues(const TabStateRow *rows, int rowCount, LPCSTR dialogID, HINSTANCE _hInstance, HWND _hParent);
 	~TabStateValues();
 
-	void Update() override {
+	virtual void Update() {
 		values->Update();
 	}
 
 protected:
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 
 	CtrlStateValues *values;
 

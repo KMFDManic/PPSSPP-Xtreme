@@ -22,7 +22,6 @@
 #include "Common/Render/DrawBuffer.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Math/math_util.h"
-#include "Common/System/Display.h"
 #include "Common/UI/Context.h"
 
 #include "Common/CommonTypes.h"
@@ -55,7 +54,9 @@ public:
 
 	void Draw(UIContext &dc) override {
 		scale_ = theScale_*layoutAreaScale; // Scale down just for rendering
+		dc.PushScissor(screenBounds_);
 		MultiTouchButton::Draw(dc);
+		dc.PopScissor();
 		scale_ = theScale_/layoutAreaScale; // is this is needed?
 	}
 
@@ -116,6 +117,7 @@ public:
 
 	void Draw(UIContext &dc) override {
 		scale_ = theScale_*layoutAreaScale;
+		dc.PushScissor(screenBounds_);
 		uint32_t colorBg = colorAlpha(GetButtonColor(), GetButtonOpacity());
 		uint32_t color = colorAlpha(0xFFFFFF, GetButtonOpacity());
 
@@ -144,6 +146,7 @@ public:
 			dc.Draw()->DrawImageRotated(roundId_, centerX - spacing, centerY, scale_, 0, colorBg, false);
 			dc.Draw()->DrawImageRotated(squareId_, centerX - spacing, centerY, scale_, 0, color, false);
 		}
+		dc.PopScissor();
 		scale_ = theScale_/layoutAreaScale;
 	};
 
@@ -244,6 +247,7 @@ public:
 
 	void Draw(UIContext &dc) override {
 		scale_ = theScale_*layoutAreaScale;
+		dc.PushScissor(screenBounds_);
 		uint32_t colorBg = colorAlpha(GetButtonColor(), GetButtonOpacity());
 		uint32_t color = colorAlpha(0xFFFFFF, GetButtonOpacity());
 
@@ -263,6 +267,7 @@ public:
 			dc.Draw()->DrawImageRotated(dirImage, x, y, scale_, angle + PI, colorBg, false);
 			dc.Draw()->DrawImageRotated(ImageID("I_ARROW"), x2, y2, scale_, angle + PI, color);
 		}
+		dc.PopScissor();
 		scale_ = theScale_/layoutAreaScale;
 	}
 
@@ -308,8 +313,13 @@ private:
 
 class SnapGrid : public UI::View {
 public:
-	SnapGrid(int leftMargin, int rightMargin, int topMargin, int bottomMargin, u32 color)
-		: UI::View(), x1(leftMargin), x2(rightMargin), y1(topMargin), y2(bottomMargin), col(color) {}
+	SnapGrid(int leftMargin, int rightMargin, int topMargin, int bottomMargin, u32 color) {
+		x1 = leftMargin;
+		x2 = rightMargin;
+		y1 = topMargin;
+		y2 = bottomMargin;
+		col = color;
+	}
 
 	void Draw(UIContext &dc) override {
 		if (g_Config.bTouchSnapToGrid) {
@@ -317,15 +327,10 @@ public:
 			dc.BeginNoTex();
 			float xOffset = bounds_.x;
 			float yOffset = bounds_.y;
-
-			dc.Draw()->Rect((x1+x2)/2 + xOffset - g_display.pixel_in_dps_x, y1 + yOffset, 3.0f * g_display.pixel_in_dps_x, y2-y1, col);
-			dc.Draw()->Rect(x1 + xOffset, (y1+y2)/2 + yOffset - g_display.pixel_in_dps_y, x2-x1, 3.0f * g_display.pixel_in_dps_y, col);
-
-			for (int x = x1 + (x1+x2)/2 % g_Config.iTouchSnapGridSize; x < x2; x += g_Config.iTouchSnapGridSize)
+			for (int x = x1; x < x2; x += g_Config.iTouchSnapGridSize)
 				dc.Draw()->vLine(x + xOffset, y1 + yOffset, y2 + yOffset, col);
-			for (int y = y1 + (y1+y2)/2 % g_Config.iTouchSnapGridSize; y < y2; y += g_Config.iTouchSnapGridSize)
+			for (int y = y1; y < y2; y += g_Config.iTouchSnapGridSize)
 				dc.Draw()->hLine(x1 + xOffset, y + yOffset, x2 + xOffset, col);
-
 			dc.Flush();
 			dc.Begin();
 		}
@@ -346,12 +351,10 @@ class ControlLayoutView : public UI::AnchorLayout {
 public:
 	explicit ControlLayoutView(UI::LayoutParams *layoutParams)
 		: UI::AnchorLayout(layoutParams) {
-		SetClip(true);
 	}
 
-	bool Touch(const TouchInput &input) override;
+	void Touch(const TouchInput &input) override;
 	void CreateViews();
-	void Draw(UIContext& ui) override;
 	bool HasCreatedViews() const {
 		return !controls_.empty();
 	}
@@ -375,7 +378,7 @@ static Point ClampTo(const Point &p, const Bounds &b) {
 	return Point(clamp_value(p.x, b.x, b.x + b.w), clamp_value(p.y, b.y, b.y + b.h));
 }
 
-bool ControlLayoutView::Touch(const TouchInput &touch) {
+void ControlLayoutView::Touch(const TouchInput &touch) {
 	using namespace UI;
 
 	if ((touch.flags & TOUCH_MOVE) && pickedControl_ != nullptr) {
@@ -398,8 +401,8 @@ bool ControlLayoutView::Touch(const TouchInput &touch) {
 			newPos.x = startObjectX_ + (touch.x - startDragX_);
 			newPos.y = startObjectY_ + (touch.y - startDragY_);
 			if (g_Config.bTouchSnapToGrid) {
-				newPos.x -= fmod(newPos.x - validRange.w/2, g_Config.iTouchSnapGridSize);
-				newPos.y -= fmod(newPos.y - validRange.h/2, g_Config.iTouchSnapGridSize);
+				newPos.x -= fmod(newPos.x - controlBounds.w, g_Config.iTouchSnapGridSize);
+				newPos.y -= fmod(newPos.y - controlBounds.h, g_Config.iTouchSnapGridSize);
 			}
 
 			newPos = ClampTo(newPos, validRange);
@@ -443,18 +446,10 @@ bool ControlLayoutView::Touch(const TouchInput &touch) {
 		pickedControl_->SavePosition();
 		pickedControl_ = 0;
 	}
-	return true;
-}
-
-void ControlLayoutView::Draw(UIContext& dc) {
-	using namespace UI;
-	dc.FillRect(Drawable(0x80000000), bounds_);
-	dc.Flush();
-	UI::AnchorLayout::Draw(dc);
 }
 
 void ControlLayoutView::CreateViews() {
-	using namespace CustomKeyData;
+	using namespace CustomKey;
 	const Bounds &bounds = GetBounds();
 	if (bounds.w == 0.0f || bounds.h == 0.0f) {
 		// Layout hasn't happened yet, return.
@@ -510,22 +505,26 @@ void ControlLayoutView::CreateViews() {
 		controls_.push_back(new PSPStickDragDrop(g_Config.touchRightAnalogStick, "Right analog stick", stickBg, stickImage, bounds, g_Config.fRightStickHeadScale));
 	}
 
-	auto addDragCustomKey = [&](ConfigTouchPos &pos, const char *key, const ConfigCustomButton& cfg) {
+	auto addDragComboKey = [&](ConfigTouchPos &pos, const char *key, const ConfigCustomButton& cfg) {
 		DragDropButton *b = nullptr;
 		if (pos.show) {
-			b = new DragDropButton(pos, key, g_Config.iTouchButtonStyle == 0 ? customKeyShapes[cfg.shape].i : customKeyShapes[cfg.shape].l, customKeyImages[cfg.image].i, bounds);
-			b->FlipImageH(customKeyShapes[cfg.shape].f);
-			b->SetAngle(customKeyImages[cfg.image].r, customKeyShapes[cfg.shape].r);
+			b = new DragDropButton(pos, key, g_Config.iTouchButtonStyle == 0 ? comboKeyShapes[cfg.shape].i : comboKeyShapes[cfg.shape].l, comboKeyImages[cfg.image].i, bounds);
+			b->FlipImageH(comboKeyShapes[cfg.shape].f);
+			b->SetAngle(comboKeyImages[cfg.image].r, comboKeyShapes[cfg.shape].r);
 			controls_.push_back(b);
 		}
 		return b;
 	};
-
-	for (int i = 0; i < Config::CUSTOM_BUTTON_COUNT; i++) {
-		char temp[64];
-		snprintf(temp, sizeof(temp), "Custom %d button", i);
-		addDragCustomKey(g_Config.touchCustom[i], temp, g_Config.CustomButton[i]);
-	}
+	addDragComboKey(g_Config.touchCombo0, "Custom 1 button", g_Config.CustomKey0);
+	addDragComboKey(g_Config.touchCombo1, "Custom 2 button", g_Config.CustomKey1);
+	addDragComboKey(g_Config.touchCombo2, "Custom 3 button", g_Config.CustomKey2);
+	addDragComboKey(g_Config.touchCombo3, "Custom 4 button", g_Config.CustomKey3);
+	addDragComboKey(g_Config.touchCombo4, "Custom 5 button", g_Config.CustomKey4);
+	addDragComboKey(g_Config.touchCombo5, "Custom 6 button", g_Config.CustomKey5);
+	addDragComboKey(g_Config.touchCombo6, "Custom 7 button", g_Config.CustomKey6);
+	addDragComboKey(g_Config.touchCombo7, "Custom 8 button", g_Config.CustomKey7);
+	addDragComboKey(g_Config.touchCombo8, "Custom 9 button", g_Config.CustomKey8);
+	addDragComboKey(g_Config.touchCombo9, "Custom 10 button", g_Config.CustomKey9);
 
 	for (size_t i = 0; i < controls_.size(); i++) {
 		Add(controls_[i]);
@@ -558,6 +557,8 @@ DragDropButton *ControlLayoutView::getPickedControl(const int x, const int y) {
 	return bestMatch;
 }
 
+TouchControlLayoutScreen::TouchControlLayoutScreen() {}
+
 void TouchControlLayoutScreen::resized() {
 	RecreateViews();
 }
@@ -567,7 +568,7 @@ void TouchControlLayoutScreen::onFinish(DialogResult reason) {
 }
 
 UI::EventReturn TouchControlLayoutScreen::OnVisibility(UI::EventParams &e) {
-	screenManager()->push(new TouchControlVisibilityScreen(gamePath_));
+	screenManager()->push(new TouchControlVisibilityScreen());
 	return UI::EVENT_DONE;
 }
 
@@ -593,7 +594,7 @@ UI::EventReturn TouchControlLayoutScreen::OnMode(UI::EventParams &e) {
 }
 
 void TouchControlLayoutScreen::update() {
-	UIDialogScreenWithGameBackground::update();
+	UIDialogScreenWithBackground::update();
 
 	// TODO: We really, really need a cleaner solution for creating sub-views
 	// of custom compound controls.
@@ -611,19 +612,16 @@ void TouchControlLayoutScreen::CreateViews() {
 	const Bounds &bounds = screenManager()->getUIContext()->GetBounds();
 	InitPadLayout(bounds.w, bounds.h);
 
-	const float leftColumnWidth = 200.0f;
-	layoutAreaScale = 1.0f - (leftColumnWidth + 10.0f) / std::max(bounds.w, 1.0f);
+	const float leftColumnWidth = 170.0f;
+	layoutAreaScale = 1.0-(leftColumnWidth+10)/bounds.w;
 
-	auto co = GetI18NCategory(I18NCat::CONTROLS);
-	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto co = GetI18NCategory("Controls");
+	auto di = GetI18NCategory("Dialog");
 
-	auto rootLayout = new LinearLayout(ORIENT_HORIZONTAL, new LayoutParams(FILL_PARENT, FILL_PARENT));
-	rootLayout->SetSpacing(0.0f);
-	root_ = rootLayout;
+	root_ = new AnchorLayout(new LayoutParams(FILL_PARENT, FILL_PARENT));
 
-	ScrollView *leftColumnScroll = root_->Add(new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(leftColumnWidth, FILL_PARENT)));
-	leftColumnScroll->SetAlignOpposite(true);
-	LinearLayout *leftColumn = leftColumnScroll->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(Margins(12.0f, 0.0f))));
+	ScrollView *leftColumnScroll = root_->Add(new ScrollView(ORIENT_VERTICAL, new AnchorLayoutParams(leftColumnWidth, WRAP_CONTENT, 10, NONE, NONE, 10)));
+	LinearLayout *leftColumn = leftColumnScroll->Add(new LinearLayout(ORIENT_VERTICAL));
 
 	mode_ = new ChoiceStrip(ORIENT_VERTICAL);
 	mode_->AddChoice(di->T("Move"));
@@ -632,7 +630,7 @@ void TouchControlLayoutScreen::CreateViews() {
 	mode_->OnChoice.Handle(this, &TouchControlLayoutScreen::OnMode);
 
 	CheckBox *snap = new CheckBox(&g_Config.bTouchSnapToGrid, di->T("Snap"));
-	PopupSliderChoice *gridSize = new PopupSliderChoice(&g_Config.iTouchSnapGridSize, 2, 256, 64, di->T("Grid"), screenManager(), "");
+	PopupSliderChoice *gridSize = new PopupSliderChoice(&g_Config.iTouchSnapGridSize, 2, 256, di->T("Grid"), screenManager(), "", new AnchorLayoutParams(leftColumnWidth, WRAP_CONTENT, 10, NONE, NONE, 158));
 	gridSize->SetEnabledPtr(&g_Config.bTouchSnapToGrid);
 
 	leftColumn->Add(mode_);
@@ -640,12 +638,9 @@ void TouchControlLayoutScreen::CreateViews() {
 	leftColumn->Add(snap);
 	leftColumn->Add(gridSize);
 	leftColumn->Add(new Choice(di->T("Reset")))->OnClick.Handle(this, &TouchControlLayoutScreen::OnReset);
-	leftColumn->Add(new Spacer(12.0f));
-	leftColumn->Add(new Choice(di->T("Back"), "", false))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
-	leftColumn->Add(new Spacer(0.0f));
+	leftColumn->Add(new Choice(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 
-	LinearLayout* rightColumn = root_->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(1.0f, Margins(0.0f, 12.0f, 12.0f, 12.0f))));
-	rightColumn->Add(new Spacer(new LinearLayoutParams(1.0)));
-	float previewHeight = bounds.h * layoutAreaScale;
-	layoutView_ = rightColumn->Add(new ControlLayoutView(new LinearLayoutParams(FILL_PARENT, previewHeight)));
+	root_->Add(new BorderView(BORDER_BOTTOM, BorderStyle::ITEM_DOWN_BG, 4.0f, new AnchorLayoutParams(leftColumnWidth + 10, bounds.h * (1.0f - layoutAreaScale), 0.0f, NONE, false)));
+	root_->Add(new BorderView(BORDER_RIGHT, BorderStyle::ITEM_DOWN_BG, 4.0f, new AnchorLayoutParams(leftColumnWidth + 10, 0.0f, NONE, 0.0f, false)));
+	layoutView_ = root_->Add(new ControlLayoutView(new AnchorLayoutParams(leftColumnWidth + 10, bounds.h * (1.0 - layoutAreaScale), 0.0f, 0.0f, false)));
 }

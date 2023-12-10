@@ -1,6 +1,6 @@
-use std::fs::File;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::io::{self, Write};
+use std::fs::File;
 
 use crate::section::Section;
 
@@ -111,18 +111,17 @@ impl IniFile {
             }
         }
         // Reached the end for some reason? Add it.
-        // Also add an empty line to the previous section.
-        if let Some(last) = self.sections.last_mut() {
-            last.lines.push("".into());
-        }
         self.sections.push(section.clone());
         true
     }
 
     pub fn get_section_mut(&mut self, section_name: &str) -> Option<&mut Section> {
-        self.sections
-            .iter_mut()
-            .find(|section| section.name == section_name)
+        for section in &mut self.sections {
+            if section.name == section_name {
+                return Some(section);
+            }
+        }
+        None
     }
 }
 

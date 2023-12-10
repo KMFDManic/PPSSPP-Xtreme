@@ -523,8 +523,6 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.iIOTimingMethod = IOTIMING_HOST;
       else if (!strcmp(var.value, "Simulate UMD delays"))
          g_Config.iIOTimingMethod = IOTIMING_REALISTIC;
-      else if (!strcmp(var.value, "Simulate UMD slow reading speed"))
-         g_Config.iIOTimingMethod = IOTIMING_UMDSLOWREALISTIC;
    }
 
    var.key = "ppsspp_force_lag_sync";
@@ -591,10 +589,26 @@ static void check_variables(CoreParameter &coreParam)
    {
       iInternalResolution_prev = g_Config.iInternalResolution;
 
-      if (!strcmp(var.value, "480x272"))
+      if (!strcmp(var.value, "240x136"))
+         g_Config.iInternalResolution = 0.5;
+      else if (!strcmp(var.value, "360x204"))
+         g_Config.iInternalResolution = 0.75;
+      else if (!strcmp(var.value, "480x272"))
          g_Config.iInternalResolution = 1;
+      else if (!strcmp(var.value, "600x340"))
+         g_Config.iInternalResolution = 1.25;
+      else if (!strcmp(var.value, "720x408"))
+         g_Config.iInternalResolution = 1.5;
+      else if (!strcmp(var.value, "840x476"))
+         g_Config.iInternalResolution = 1.75;
       else if (!strcmp(var.value, "960x544"))
          g_Config.iInternalResolution = 2;
+      else if (!strcmp(var.value, "1080x612"))
+         g_Config.iInternalResolution = 2.25;
+      else if (!strcmp(var.value, "1200x680"))
+         g_Config.iInternalResolution = 2.5;
+      else if (!strcmp(var.value, "1320x748"))
+         g_Config.iInternalResolution = 2.75;
       else if (!strcmp(var.value, "1440x816"))
          g_Config.iInternalResolution = 3;
       else if (!strcmp(var.value, "1920x1088"))
@@ -706,6 +720,15 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.bSoftwareSkinning = false;
       else
          g_Config.bSoftwareSkinning = true;
+   }
+
+   var.key = "ppsspp_vertex_cache";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (!strcmp(var.value, "disabled"))
+         g_Config.bVertexCache = false;
+      else
+         g_Config.bVertexCache = true;
    }
 
    var.key = "ppsspp_lazy_texture_caching";
@@ -1702,7 +1725,7 @@ void System_Notify(SystemNotification notification) {
    }
 }
 bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int param3) { return false; }
-void System_PostUIMessage(UIMessage message, const std::string &param) {}
+void System_PostUIMessage(const std::string &message, const std::string &param) {}
 void NativeFrame(GraphicsContext *graphicsContext) {}
 void NativeResized() {}
 
@@ -1746,7 +1769,7 @@ void System_InputBoxGetString(const std::string &title, const std::string &defau
 #endif
 
 // TODO: To avoid having to define these here, these should probably be turned into system "requests".
-bool NativeSaveSecret(const char *nameOfSecret, const std::string &data) { return false; }
+void NativeSaveSecret(const char *nameOfSecret, const std::string &data) {}
 std::string NativeLoadSecret(const char *nameOfSecret) {
    return "";
 }

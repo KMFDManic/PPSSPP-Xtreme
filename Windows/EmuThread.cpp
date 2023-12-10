@@ -4,7 +4,6 @@
 
 #include "Common/System/NativeApp.h"
 #include "Common/System/System.h"
-#include "Common/System/Request.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Input/InputState.h"
 #include "Common/Data/Encoding/Utf8.h"
@@ -22,16 +21,10 @@
 #include "Core/Reporting.h"
 #include "Core/MemMap.h"
 #include "Core/Core.h"
+#include "Core/Host.h"
 #include "Core/System.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
-
-#if PPSSPP_API(ANY_GL)
-#include "Windows/GPU/WindowsGLContext.h"
-#endif
-#include "Windows/GPU/WindowsVulkanContext.h"
-#include "Windows/GPU/D3D9Context.h"
-#include "Windows/GPU/D3D11Context.h"
 
 enum class EmuThreadState {
 	DISABLED,
@@ -89,9 +82,7 @@ static void EmuThreadFunc(GraphicsContext *graphicsContext) {
 		// This way they can load a new game.
 		if (!Core_IsActive())
 			UpdateUIState(UISTATE_MENU);
-		if (!Core_Run(g_graphicsContext)) {
-			emuThreadState = (int)EmuThreadState::QUIT_REQUESTED;
-		}
+		Core_Run(g_graphicsContext);
 	}
 
 	emuThreadState = (int)EmuThreadState::STOPPED;
@@ -108,55 +99,26 @@ static void EmuThreadStart(GraphicsContext *graphicsContext) {
 }
 
 static void EmuThreadStop() {
-	if (emuThreadState != (int)EmuThreadState::QUIT_REQUESTED &&
-		emuThreadState != (int)EmuThreadState::STOPPED) {
-		emuThreadState = (int)EmuThreadState::QUIT_REQUESTED;
-	}
+	emuThreadState = (int)EmuThreadState::QUIT_REQUESTED;
 }
 
 static void EmuThreadJoin() {
 	emuThread.join();
+	emuThread = std::thread();
 	INFO_LOG(SYSTEM, "EmuThreadJoin - joined");
 }
 
-bool CreateGraphicsBackend(std::string *error_message, GraphicsContext **ctx) {
-	WindowsGraphicsContext *graphicsContext = nullptr;
-	switch (g_Config.iGPUBackend) {
-#if PPSSPP_API(ANY_GL)
-	case (int)GPUBackend::OPENGL:
-		graphicsContext = new WindowsGLContext();
-		break;
-#endif
-	case (int)GPUBackend::DIRECT3D9:
-		graphicsContext = new D3D9Context();
-		break;
-	case (int)GPUBackend::DIRECT3D11:
-		graphicsContext = new D3D11Context();
-		break;
-	case (int)GPUBackend::VULKAN:
-		graphicsContext = new WindowsVulkanContext();
-		break;
-	default:
-		return false;
-	}
-
-	if (graphicsContext->Init(MainWindow::GetHInstance(), MainWindow::GetDisplayHWND(), error_message)) {
-		*ctx = graphicsContext;
-		return true;
-	} else {
-		delete graphicsContext;
-		*ctx = nullptr;
-		return false;
-	}
-}
-
 void MainThreadFunc() {
-	// We'll start up a separate thread we'll call Emu
-	SetCurrentThreadName(useEmuThread ? "Render" : "Emu");
+	if (useEmuThread) {
+		// We'll start up a separate thread we'll call Emu
+		SetCurrentThreadName("Render");
+	} else {
+		// This is both Emu and Render.
+		SetCurrentThreadName("Emu");
+	}
 
-	SetConsolePosition();
-
-	System_SetWindowTitle("");
+	host = new WindowsHost(MainWindow::GetHInstance(), MainWindow::GetHWND(), MainWindow::GetDisplayHWND());
+	host->SetWindowTitle(nullptr);
 
 	// We convert command line arguments to UTF-8 immediately.
 	std::vector<std::wstring> wideArgs = GetWideCmdLine();
@@ -186,7 +148,7 @@ void MainThreadFunc() {
 	if (g_Config.sFailedGPUBackends.find("ALL") != std::string::npos) {
 		Reporting::ReportMessage("Graphics init error: %s", "ALL");
 
-		auto err = GetI18NCategory(I18NCat::ERRORS);
+		auto err = GetI18NCategory("Error");
 		const char *defaultErrorAll = "PPSSPP failed to startup with any graphics backend. Try upgrading your graphics and other drivers.";
 		const char *genericError = err->T("GenericAllStartupError", defaultErrorAll);
 		std::wstring title = ConvertUTF8ToWString(err->T("GenericGraphicsError", "Graphics Error"));
@@ -195,10 +157,10 @@ void MainThreadFunc() {
 		// Let's continue (and probably crash) just so they have a way to keep trying.
 	}
 
-	System_Notify(SystemNotification::UI);
+	host->UpdateUI();
 
 	std::string error_string;
-	bool success = CreateGraphicsBackend(&error_string, &g_graphicsContext);
+	bool success = host->InitGraphics(&error_string, &g_graphicsContext);
 
 	if (success) {
 		// Main thread is the render thread.
@@ -214,7 +176,7 @@ void MainThreadFunc() {
 			W32Util::ExitAndRestart();
 		}
 
-		auto err = GetI18NCategory(I18NCat::ERRORS);
+		auto err = GetI18NCategory("Error");
 		Reporting::ReportMessage("Graphics init error: %s", error_string.c_str());
 
 		const char *defaultErrorVulkan = "Failed initializing graphics. Try upgrading your graphics drivers.\n\nWould you like to try switching to OpenGL?\n\nError message:";
@@ -253,7 +215,7 @@ void MainThreadFunc() {
 		} else {
 			if (g_Config.iGPUBackend == (int)GPUBackend::DIRECT3D9) {
 				// Allow the user to download the DX9 runtime.
-				System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.microsoft.com/en-us/download/details.aspx?id=34429");
+				LaunchBrowser("https://www.microsoft.com/en-us/download/details.aspx?id=34429");
 			}
 		}
 
@@ -333,11 +295,7 @@ shutdown:
 	g_graphicsContext->ThreadEnd();
 	g_graphicsContext->ShutdownFromRenderThread();
 
-	g_graphicsContext->Shutdown();
-
-	delete g_graphicsContext;
-
-	UpdateConsolePosition();
+	// NativeShutdown deletes the graphics context through host->ShutdownGraphics().
 	NativeShutdown();
 
 	PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_UPDATE_UI, 0, 0);

@@ -19,7 +19,7 @@ void NiceSizeFormat(uint64_t size, char *out, size_t bufSize) {
 	if (s == 0)
 		snprintf(out, bufSize, "%d B", (int)size);
 	else
-		snprintf(out, bufSize, "%3.2f %s", f, sizes[s]);
+		snprintf(out, bufSize, "%3.1f %s", f, sizes[s]);
 }
 
 std::string NiceSizeFormat(uint64_t size) {
@@ -43,7 +43,7 @@ bool Version::ParseVersionString(std::string str) {
 
 std::string Version::ToString() const {
 	char temp[128];
-	snprintf(temp, sizeof(temp), "%i.%i.%i", major, minor, sub);
+	sprintf(temp, "%i.%i.%i", major, minor, sub);
 	return std::string(temp);
 }
 

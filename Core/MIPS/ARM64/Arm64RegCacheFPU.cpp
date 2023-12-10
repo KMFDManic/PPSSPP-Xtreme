@@ -319,7 +319,6 @@ void Arm64RegCacheFPU::FlushR(MIPSReg r) {
 		if (mr[r].reg == INVALID_REG) {
 			ERROR_LOG(JIT, "FlushR: MipsReg had bad ArmReg");
 		}
-		FlushArmReg((ARM64Reg)(S0 + mr[r].reg));
 		break;
 
 	case ML_MEM:
@@ -330,6 +329,8 @@ void Arm64RegCacheFPU::FlushR(MIPSReg r) {
 		//BAD
 		break;
 	}
+	mr[r].loc = ML_MEM;
+	mr[r].reg = (int)INVALID_REG;
 }
 
 Arm64Gen::ARM64Reg Arm64RegCacheFPU::ARM64RegForFlush(int r) {
@@ -519,11 +520,11 @@ ARM64Reg Arm64RegCacheFPU::R(int mipsReg) {
 		return (ARM64Reg)(mr[mipsReg].reg + S0);
 	} else {
 		if (mipsReg < 32) {
-			ERROR_LOG(JIT, "FReg %i not in ARM reg. compilerPC = %08x : %s", mipsReg, js_->compilerPC, MIPSDisasmAt(js_->compilerPC).c_str());
+			ERROR_LOG(JIT, "FReg %i not in ARM reg. compilerPC = %08x : %s", mipsReg, js_->compilerPC, MIPSDisasmAt(js_->compilerPC));
 		} else if (mipsReg < 32 + 128) {
-			ERROR_LOG(JIT, "VReg %i not in ARM reg. compilerPC = %08x : %s", mipsReg - 32, js_->compilerPC, MIPSDisasmAt(js_->compilerPC).c_str());
+			ERROR_LOG(JIT, "VReg %i not in ARM reg. compilerPC = %08x : %s", mipsReg - 32, js_->compilerPC, MIPSDisasmAt(js_->compilerPC));
 		} else {
-			ERROR_LOG(JIT, "Tempreg %i not in ARM reg. compilerPC = %08x : %s", mipsReg - 128 - 32, js_->compilerPC, MIPSDisasmAt(js_->compilerPC).c_str());
+			ERROR_LOG(JIT, "Tempreg %i not in ARM reg. compilerPC = %08x : %s", mipsReg - 128 - 32, js_->compilerPC, MIPSDisasmAt(js_->compilerPC));
 		}
 		return INVALID_REG;  // BAAAD
 	}

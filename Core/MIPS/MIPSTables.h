@@ -17,8 +17,6 @@
 
 #pragma once
 
-#include <string>
-#include <stdint.h>
 #include "Common/CommonTypes.h"
 #include "Core/MIPS/MIPS.h"
 
@@ -72,9 +70,8 @@
 #define OUT_EAT_PREFIX  0x08000000ULL
 
 #define VFPU_NO_PREFIX  0x10000000ULL
-#define OUT_VFPU_PREFIX 0x20000000ULL
-#define IS_VFPU         0x40000000ULL
-#define IS_FPU          0x80000000ULL
+#define IS_VFPU         0x20000000ULL
+#define IS_FPU          0x40000000ULL
 
 #define IN_FS           0x000100000000ULL
 #define IN_FT           0x000200000000ULL
@@ -118,7 +115,7 @@ struct MIPSInfo {
 	u64 cycles : 16;
 };
 
-typedef void (CDECL *MIPSDisFunc)(MIPSOpcode opcode, uint32_t pc, char *out, size_t outSize);
+typedef void (CDECL *MIPSDisFunc)(MIPSOpcode opcode, char *out);
 typedef void (CDECL *MIPSInterpretFunc)(MIPSOpcode opcode);
 
 namespace MIPSComp {
@@ -126,13 +123,12 @@ namespace MIPSComp {
 }
 
 void MIPSCompileOp(MIPSOpcode op, MIPSComp::MIPSFrontendInterface *jit);
-void MIPSDisAsm(MIPSOpcode op, u32 pc, char *out, size_t outSize, bool tabsToSpaces = false);
+void MIPSDisAsm(MIPSOpcode op, u32 pc, char *out, bool tabsToSpaces = false);
 MIPSInfo MIPSGetInfo(MIPSOpcode op);
 void MIPSInterpret(MIPSOpcode op); //only for those rare ones
 int MIPSInterpret_RunUntil(u64 globalTicks);
 MIPSInterpretFunc MIPSGetInterpretFunc(MIPSOpcode op);
 
 int MIPSGetInstructionCycleEstimate(MIPSOpcode op);
-int MIPSGetMemoryAccessSize(MIPSOpcode op);
 const char *MIPSGetName(MIPSOpcode op);
-std::string MIPSDisasmAt(u32 compilerPC);
+const char *MIPSDisasmAt(u32 compilerPC);

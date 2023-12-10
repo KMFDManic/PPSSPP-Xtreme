@@ -41,7 +41,7 @@ public:
 #if defined(USING_WIN_UI)
 	COORD GetCoordinates(int BytesRead, int BufferWidth);
 #endif
-	void Log(const LogMessage &message) override;
+	void Log(const LogMessage &message);
 	void ClearScreen(bool Cursor = true);
 
 	void Show(bool bShow);
@@ -54,8 +54,8 @@ private:
 
 	static unsigned int WINAPI RunThread(void *lpParam);
 	void LogWriterThread();
-	void SendToThread(LogLevel Level, const char *Text);
-	void WriteToConsole(LogLevel Level, const char *Text, size_t Len);
+	void SendToThread(LogTypes::LOG_LEVELS Level, const char *Text);
+	void WriteToConsole(LogTypes::LOG_LEVELS Level, const char *Text, size_t Len);
 
 	static int refCount;
 	static HANDLE hThread;
@@ -66,8 +66,8 @@ private:
 	static std::atomic<uint32_t> logPendingReadPos;
 	static std::atomic<uint32_t> logPendingWritePos;
 
-	int openWidth_ = 0;
-	int openHeight_ = 0;
+	int openWidth_;
+	int openHeight_;
 	std::wstring title_;
 #endif
 	bool bHidden;

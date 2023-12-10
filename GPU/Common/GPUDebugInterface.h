@@ -20,10 +20,9 @@
 #include <vector>
 #include <string>
 
-#include "Common/Math/expression_parser.h"
-#include "Core/MemMap.h"
 #include "GPU/GPU.h"
 #include "GPU/GPUInterface.h"
+#include "Core/MemMap.h"
 
 struct GPUDebugOp {
 	u32 pc;
@@ -136,8 +135,6 @@ struct GPUDebugBuffer {
 	void Allocate(u32 stride, u32 height, GPUDebugBufferFormat fmt, bool flipped = false);
 	void Free();
 
-	void ZeroBytes();
-
 	u8 *GetData() {
 		return data_;
 	}
@@ -190,7 +187,6 @@ struct GPUDebugVertex {
 
 class GPUDebugInterface {
 public:
-	virtual ~GPUDebugInterface() {}
 	virtual bool GetCurrentDisplayList(DisplayList &list) = 0;
 	virtual std::vector<DisplayList> ActiveDisplayLists() = 0;
 	virtual void ResetListPC(int listID, u32 pc) = 0;
@@ -216,9 +212,6 @@ public:
 	virtual void SetCmdValue(u32 op) = 0;
 	virtual void DispatchFlush() = 0;
 
-	virtual uint32_t SetAddrTranslation(uint32_t value) = 0;
-	virtual uint32_t GetAddrTranslation() = 0;
-
 	virtual bool GetCurrentSimpleVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices) {
 		return false;
 	}
@@ -241,7 +234,7 @@ public:
 	}
 
 	// Similar to GetCurrentFramebuffer(), with texture level specification.
-	virtual bool GetCurrentTexture(GPUDebugBuffer &buffer, int level, bool *isFramebuffer) {
+	virtual bool GetCurrentTexture(GPUDebugBuffer &buffer, int level) {
 		return false;
 	}
 
@@ -252,8 +245,9 @@ public:
 	virtual bool GetOutputFramebuffer(GPUDebugBuffer &buffer) {
 		return false;
 	}
-};
 
-bool GPUDebugInitExpression(GPUDebugInterface *g, const char *str, PostfixExpression &exp);
-bool GPUDebugExecExpression(GPUDebugInterface *g, PostfixExpression &exp, uint32_t &result);
-bool GPUDebugExecExpression(GPUDebugInterface *g, const char *str, uint32_t &result);
+	// TODO:
+	// cached framebuffers / textures / vertices?
+	// get content of specific framebuffer / texture?
+	// vertex / texture decoding?
+};

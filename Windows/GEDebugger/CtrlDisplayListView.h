@@ -30,8 +30,6 @@ class CtrlDisplayListView
 	} pixelPositions;
 
 	void toggleBreakpoint();
-	void PromptBreakpointCond();
-
 public:
 	CtrlDisplayListView(HWND _wnd);
 	~CtrlDisplayListView();

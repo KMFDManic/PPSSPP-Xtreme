@@ -95,6 +95,7 @@ bool decompress_string(const std::string& str, std::string *dest) {
 	inflateEnd(&zs);
 
 	if (ret != Z_STREAM_END) {          // an error occurred that was not EOF
+		std::ostringstream oss;
 		ERROR_LOG(IO, "Exception during zlib decompression: (%i) %s", ret, zs.msg);
 		return false;
 	}

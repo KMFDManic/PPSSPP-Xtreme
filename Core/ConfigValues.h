@@ -22,7 +22,6 @@
 #ifndef _MSC_VER
 #include <strings.h>
 #endif
-#include "Common/Common.h"
 #include "Common/CommonFuncs.h"
 
 const int PSP_MODEL_FAT = 0;
@@ -31,27 +30,10 @@ const int PSP_DEFAULT_FIRMWARE = 660;
 static const int8_t VOLUME_OFF = 0;
 static const int8_t VOLUME_FULL = 10;
 
-struct ConfigTouchPos {
-	float x;
-	float y;
-	float scale;
-	// Note: Show is not used for all settings.
-	bool show;
-};
-
-struct ConfigCustomButton {
-	uint64_t key;
-	int image;
-	int shape;
-	bool toggle;
-	bool repeat;
-};
-
 enum class CPUCore {
 	INTERPRETER = 0,
 	JIT = 1,
-	IR_INTERPRETER = 2,
-	JIT_IR = 3,
+	IR_JIT = 2,
 };
 
 enum {
@@ -83,15 +65,32 @@ enum class GPUBackend {
 	VULKAN = 3,
 };
 
-enum class RestoreSettingsBits : int {
-	SETTINGS = 1,
-	CONTROLS = 2,
-	RECENT = 4,
-};
-ENUM_CLASS_BITOPS(RestoreSettingsBits);
+inline std::string GPUBackendToString(GPUBackend backend) {
+	switch (backend) {
+	case GPUBackend::OPENGL:
+		return "OPENGL";
+	case GPUBackend::DIRECT3D9:
+		return "DIRECT3D9";
+	case GPUBackend::DIRECT3D11:
+		return "DIRECT3D11";
+	case GPUBackend::VULKAN:
+		return "VULKAN";
+	}
+	// Intentionally not a default so we get a warning.
+	return "INVALID";
+}
 
-std::string GPUBackendToString(GPUBackend backend);
-GPUBackend GPUBackendFromString(std::string_view backend);
+inline GPUBackend GPUBackendFromString(const std::string &backend) {
+	if (!strcasecmp(backend.c_str(), "OPENGL") || backend == "0")
+		return GPUBackend::OPENGL;
+	if (!strcasecmp(backend.c_str(), "DIRECT3D9") || backend == "1")
+		return GPUBackend::DIRECT3D9;
+	if (!strcasecmp(backend.c_str(), "DIRECT3D11") || backend == "2")
+		return GPUBackend::DIRECT3D11;
+	if (!strcasecmp(backend.c_str(), "VULKAN") || backend == "3")
+		return GPUBackend::VULKAN;
+	return GPUBackend::OPENGL;
+}
 
 enum AudioBackendType {
 	AUDIO_BACKEND_AUTO,
@@ -104,7 +103,13 @@ enum IOTimingMethods {
 	IOTIMING_FAST = 0,
 	IOTIMING_HOST = 1,
 	IOTIMING_REALISTIC = 2,
-	IOTIMING_UMDSLOWREALISTIC = 3,
+};
+
+enum class SmallDisplayZoom {
+	STRETCH = 0,
+	PARTIAL_STRETCH = 1,
+	AUTO = 2,
+	MANUAL = 3,
 };
 
 enum class AutoLoadSaveState {
@@ -126,45 +131,8 @@ enum class BackgroundAnimation {
 	MOVING_BACKGROUND = 4,
 };
 
-// for Config.iShowStatusFlags
-enum class ShowStatusFlags {
-	FPS_COUNTER = 1 << 1,
-	SPEED_COUNTER = 1 << 2,
-	BATTERY_PERCENT = 1 << 3,
-};
-
-// for iTiltInputType
-enum TiltTypes {
-	TILT_NULL = 0,
-	TILT_ANALOG,
-	TILT_DPAD,
-	TILT_ACTION_BUTTON,
-	TILT_TRIGGER_BUTTONS,
-};
-
-enum class ScreenEdgePosition {
-	BOTTOM_LEFT = 0,
-	BOTTOM_CENTER = 1,
-	BOTTOM_RIGHT = 2,
-	TOP_LEFT = 3,
-	TOP_CENTER = 4,
-	TOP_RIGHT = 5,
-	CENTER_LEFT = 6,
-	CENTER_RIGHT = 7,
-	VALUE_COUNT,
-};
-
-enum class DebugOverlay : int {
-	OFF,
-	DEBUG_STATS,
-	FRAME_GRAPH,
-	FRAME_TIMING,
-#ifdef USE_PROFILER
-	FRAME_PROFILE,
-#endif
-	CONTROL,
-	AUDIO,
-	GPU_PROFILE,
-	GPU_ALLOCATOR,
-	FRAMEBUFFER_LIST,
+enum class AnalogFpsMode {
+	AUTO = 0,
+	MAPPED_DIRECTION = 1,
+	MAPPED_DIR_TO_OPPOSITE_DIR = 2,
 };

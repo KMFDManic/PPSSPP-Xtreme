@@ -19,7 +19,6 @@
 
 #include <string>
 #include <vector>
-#include <cstdint>
 
 #include "Common/CommonTypes.h"
 #include "Common/File/Path.h"
@@ -38,12 +37,6 @@ namespace Reporting
 
 	// Should be called whenever the game configuration changes.
 	void UpdateConfig();
-
-	// Should be called when debugging APIs are used in a way that could make the game crash.
-	void NotifyDebugger();
-
-	// Should be called for each LoadExec, with parameters of the module executed.
-	void NotifyExecModule(const char *name, int ver, uint32_t crc);
 
 	// Returns whether or not the reporting system is currently enabled.
 	bool IsEnabled();

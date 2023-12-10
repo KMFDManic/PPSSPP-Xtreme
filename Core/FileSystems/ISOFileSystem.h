@@ -33,7 +33,7 @@ public:
 	~ISOFileSystem();
 
 	void DoState(PointerWrap &p) override;
-	std::vector<PSPFileInfo> GetDirListing(const std::string &path, bool *exists = nullptr) override;
+	std::vector<PSPFileInfo> GetDirListing(std::string path) override;
 	int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) override;
 	void     CloseFile(u32 handle) override;
 	size_t   ReadFile(u32 handle, u8 *pointer, s64 size) override;
@@ -59,9 +59,6 @@ public:
 private:
 	struct TreeEntry {
 		~TreeEntry();
-
-		// Recursive function that reconstructs the path by looking at the parent pointers.
-		std::string BuildPath();
 
 		std::string name;
 		u32 flags = 0;
@@ -113,11 +110,7 @@ public:
 		isoFileSystem_->DoState(p);
 	}
 
-	std::vector<PSPFileInfo> GetDirListing(const std::string &path, bool *exists = nullptr) override {
-		if (exists)
-			*exists = true;
-		return std::vector<PSPFileInfo>();
-	}
+	std::vector<PSPFileInfo> GetDirListing(std::string path) override { return std::vector<PSPFileInfo>(); }
 	int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) override {
 		return isoFileSystem_->OpenFile("", access, devicename);
 	}

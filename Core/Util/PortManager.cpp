@@ -30,17 +30,17 @@
 #include <cstring>
 #include <string>
 #include <thread>
-
 #include "Common/TimeUtil.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Net/Resolve.h"
 #include "Common/Thread/ThreadUtil.h"
-#include "Common/System/OSD.h"
 #include "Common/Log.h"
 #include "Core/Config.h"
 #include "Core/System.h"
+#include "Core/Host.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/Util/PortManager.h"
+
 
 PortManager g_PortManager;
 bool upnpServiceRunning = false;
@@ -49,20 +49,21 @@ std::recursive_mutex upnpLock;
 std::deque<UPnPArgs> upnpReqs;
 
 PortManager::PortManager(): 
+	urls(0), 
+	datas(0), 
 	m_InitState(UPNP_INITSTATE_NONE),
 	m_LocalPort(UPNP_LOCAL_PORT_ANY),
 	m_leaseDuration("43200") {
-	// Don't call net::Init or similar here, we don't want stuff like that to happen before main.
+	// Since WSAStartup can be used multiple times it should be safe to do this right?
+	net::Init();
 }
 
 PortManager::~PortManager() {
 	// FIXME: On Windows it seems using any UPnP functions in this destructor that gets triggered when exiting PPSSPP will resulting to UPNPCOMMAND_HTTP_ERROR due to early WSACleanup (miniupnpc was getting WSANOTINITIALISED internally)
-}
-
-void PortManager::Shutdown() {
 	Clear();
 	Restore();
 	Terminate();
+	net::Shutdown();
 }
 
 void PortManager::Terminate() {
@@ -126,13 +127,7 @@ bool PortManager::Initialize(const unsigned int timeout) {
 	m_leaseDuration = "43200"; // 12 hours
 	m_InitState = UPNP_INITSTATE_BUSY;
 	urls = (UPNPUrls*)malloc(sizeof(struct UPNPUrls));
-	if (!urls)
-		return false;
 	datas = (IGDdatas*)malloc(sizeof(struct IGDdatas));
-	if (!datas) {
-		free(urls);
-		return false;
-	}
 	memset(urls, 0, sizeof(struct UPNPUrls));
 	memset(datas, 0, sizeof(struct IGDdatas));
 
@@ -188,8 +183,8 @@ bool PortManager::Initialize(const unsigned int timeout) {
 
 	ERROR_LOG(SCENET, "PortManager - upnpDiscover failed (error: %i) or No UPnP device detected", error);
 	if (g_Config.bEnableUPnP) {
-		auto n = GetI18NCategory(I18NCat::NETWORKING);
-		g_OSD.Show(OSDType::MESSAGE_ERROR, n->T("Unable to find UPnP device"));
+		auto n = GetI18NCategory("Networking");
+		host->NotifyUserMessage(n->T("Unable to find UPnP device"), 2.0f, 0x0000ff);
 	}
 	m_InitState = UPNP_INITSTATE_NONE;
 #endif // WITH_UPNP
@@ -205,7 +200,7 @@ bool PortManager::Add(const char* protocol, unsigned short port, unsigned short 
 	char port_str[16];
 	char intport_str[16];
 	int r;
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
+	auto n = GetI18NCategory("Networking");
 	
 	if (intport == 0)
 		intport = port;
@@ -214,14 +209,13 @@ bool PortManager::Add(const char* protocol, unsigned short port, unsigned short 
 	{
 		if (g_Config.bEnableUPnP) {
 			WARN_LOG(SCENET, "PortManager::Add - the init was not done !");
-			g_OSD.Show(OSDType::MESSAGE_INFO, n->T("UPnP need to be reinitialized"));
+			host->NotifyUserMessage(n->T("UPnP need to be reinitialized"), 2.0f, 0x0000ff);
 		}
 		Terminate();
 		return false;
 	}
-
-	snprintf(port_str, sizeof(port_str), "%d", port);
-	snprintf(intport_str, sizeof(intport_str), "%d", intport);
+	sprintf(port_str, "%d", port);
+	sprintf(intport_str, "%d", intport);
 	// Only add new port map if it's not previously created by PPSSPP for current IP
 	auto el_it = std::find_if(m_portList.begin(), m_portList.end(),
 		[port_str, protocol](const std::pair<std::string, std::string> &el) { return el.first == port_str && el.second == protocol; });
@@ -244,7 +238,7 @@ bool PortManager::Add(const char* protocol, unsigned short port, unsigned short 
 			ERROR_LOG(SCENET, "PortManager - AddPortMapping failed (error: %i)", r);
 			if (r == UPNPCOMMAND_HTTP_ERROR) {
 				if (g_Config.bEnableUPnP) {
-					g_OSD.Show(OSDType::MESSAGE_INFO, n->T("UPnP need to be reinitialized"));
+					host->NotifyUserMessage(n->T("UPnP need to be reinitialized"), 2.0f, 0x0000ff);
 				}
 				Terminate(); // Most of the time errors occurred because the router is no longer reachable (ie. changed networks) so we should invalidate the state to prevent further lags due to timeouts
 				return false;
@@ -263,26 +257,26 @@ bool PortManager::Add(const char* protocol, unsigned short port, unsigned short 
 bool PortManager::Remove(const char* protocol, unsigned short port) {
 #ifdef WITH_UPNP
 	char port_str[16];
-	auto n = GetI18NCategory(I18NCat::NETWORKING);
+	auto n = GetI18NCategory("Networking");
 
 	INFO_LOG(SCENET, "PortManager::Remove(%s, %d)", protocol, port);
 	if (urls == NULL || urls->controlURL == NULL || urls->controlURL[0] == '\0')
 	{
 		if (g_Config.bEnableUPnP) {
 			WARN_LOG(SCENET, "PortManager::Remove - the init was not done !");
-			g_OSD.Show(OSDType::MESSAGE_INFO, n->T("UPnP need to be reinitialized"));
+			host->NotifyUserMessage(n->T("UPnP need to be reinitialized"), 2.0f, 0x0000ff);
 		}
 		Terminate();
 		return false;
 	}
-	snprintf(port_str, sizeof(port_str), "%d", port);
+	sprintf(port_str, "%d", port);
 	int r = UPNP_DeletePortMapping(urls->controlURL, datas->first.servicetype, port_str, protocol, NULL);
 	if (r != 0)
 	{
 		ERROR_LOG(SCENET, "PortManager - DeletePortMapping failed (error: %i)", r);
 		if (r == UPNPCOMMAND_HTTP_ERROR) {
 			if (g_Config.bEnableUPnP) {
-				g_OSD.Show(OSDType::MESSAGE_INFO, n->T("UPnP need to be reinitialized"));
+				host->NotifyUserMessage(n->T("UPnP need to be reinitialized"), 2.0f, 0x0000ff);
 			}
 			Terminate(); // Most of the time errors occurred because the router is no longer reachable (ie. changed networks) so we should invalidate the state to prevent further lags due to timeouts
 			return false;
@@ -501,7 +495,9 @@ int upnpService(const unsigned int timeout)
 
 	// Cleaning up regardless of g_Config.bEnableUPnP to prevent lingering open ports on the router
 	if (g_PortManager.GetInitState() == UPNP_INITSTATE_DONE) {
-		g_PortManager.Shutdown();
+		g_PortManager.Clear();
+		g_PortManager.Restore();
+		g_PortManager.Terminate();
 	}
 
 	// Should we ingore any leftover UPnP requests? instead of processing it on the next game start

@@ -148,6 +148,7 @@ struct SceUtilityOskParams
 	SceUtilityOskState_le state;
 	// Maybe just padding?
 	s32_le unk_60;
+
 };
 
 // Internal enum, not from PSP.
@@ -213,16 +214,16 @@ enum class PSPOskNativeStatus {
 class PSPOskDialog: public PSPDialog {
 public:
 	PSPOskDialog(UtilityDialogType type);
-	~PSPOskDialog();
+	virtual ~PSPOskDialog();
 
-	int Init(u32 oskPtr);
-	int Update(int animSpeed) override;
-	int Shutdown(bool force = false) override;
-	void DoState(PointerWrap &p) override;
-	pspUtilityDialogCommon *GetCommonParam() override;
+	virtual int Init(u32 oskPtr);
+	virtual int Update(int animSpeed) override;
+	virtual int Shutdown(bool force = false) override;
+	virtual void DoState(PointerWrap &p) override;
+	virtual pspUtilityDialogCommon *GetCommonParam() override;
 
 protected:
-	bool UseAutoStatus() override {
+	virtual bool UseAutoStatus() override {
 		return false;
 	}
 
@@ -239,21 +240,21 @@ private:
 	u32 FieldMaxLength();
 	int GetIndex(const wchar_t* src, wchar_t ch);
 
-	PSPPointer<SceUtilityOskParams> oskParams{};
+	PSPPointer<SceUtilityOskParams> oskParams;
 	std::string oskDesc;
 	std::string oskIntext;
 	std::string oskOuttext;
 
-	int selectedChar = 0;
+	int selectedChar;
 	std::u16string inputChars;
-	OskKeyboardDisplay currentKeyboard = OSK_KEYBOARD_LATIN_LOWERCASE;
-	OskKeyboardLanguage currentKeyboardLanguage = OSK_LANGUAGE_ENGLISH;
-	bool isCombinated = false;
+	OskKeyboardDisplay currentKeyboard;
+	OskKeyboardLanguage currentKeyboardLanguage;
+	bool isCombinated;
 
 	std::mutex nativeMutex_;
 	PSPOskNativeStatus nativeStatus_ = PSPOskNativeStatus::IDLE;
 	std::string nativeValue_;
 
-	int i_level = 0; // for Korean Keyboard support
-	int i_value[3]{}; // for Korean Keyboard support
+	int i_level; // for Korean Keyboard support
+	int i_value[3]; // for Korean Keyboard support
 };

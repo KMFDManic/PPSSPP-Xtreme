@@ -53,12 +53,8 @@ static void SetGPU(T *obj) {
 #endif
 
 bool GPU_IsReady() {
-	return gpu != nullptr;
-}
-
-bool GPU_IsStarted() {
 	if (gpu)
-		return gpu->IsStarted();
+		return gpu->IsReady();
 	return false;
 }
 
@@ -87,7 +83,7 @@ bool GPU_Init(GraphicsContext *ctx, Draw::DrawContext *draw) {
 		break;
 	case GPUCORE_DIRECTX9:
 #if PPSSPP_API(D3D9)
-		SetGPU(new GPU_DX9(ctx, draw));
+		SetGPU(new DIRECTX9_GPU(ctx, draw));
 		break;
 #else
 		return false;
@@ -110,10 +106,7 @@ bool GPU_Init(GraphicsContext *ctx, Draw::DrawContext *draw) {
 #endif
 	}
 
-	if (gpu && !gpu->IsStarted())
-		SetGPU<SoftGPU>(nullptr);
-
-	return gpu != nullptr;
+	return gpu != NULL;
 #endif
 }
 #ifdef USE_CRT_DBG
@@ -121,13 +114,14 @@ bool GPU_Init(GraphicsContext *ctx, Draw::DrawContext *draw) {
 #endif
 
 void GPU_Shutdown() {
-	// Reduce the risk for weird races with the Windows GE debugger.
-	gpuDebug = nullptr;
-
+	// Wait for IsReady, since it might be running on a thread.
+	if (gpu) {
+		gpu->CancelReady();
+		while (!gpu->IsReady()) {
+			sleep_ms(10);
+		}
+	}
 	delete gpu;
 	gpu = nullptr;
-}
-
-const char *RasterChannelToString(RasterChannel channel) {
-	return channel == RASTER_COLOR ? "COLOR" : "DEPTH";
+	gpuDebug = nullptr;
 }

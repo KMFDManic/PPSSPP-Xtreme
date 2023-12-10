@@ -38,16 +38,15 @@ namespace MIPSComp {
 // TODO : Use arena allocators. For now let's just malloc.
 class IRBlock {
 public:
-	IRBlock() {}
-	IRBlock(u32 emAddr) : origAddr_(emAddr) {}
+	IRBlock() : instr_(nullptr), numInstructions_(0), origAddr_(0), origSize_(0) {}
+	IRBlock(u32 emAddr) : instr_(nullptr), numInstructions_(0), origAddr_(emAddr), origSize_(0) {}
 	IRBlock(IRBlock &&b) {
 		instr_ = b.instr_;
-		hash_ = b.hash_;
+		numInstructions_ = b.numInstructions_;
 		origAddr_ = b.origAddr_;
 		origSize_ = b.origSize_;
 		origFirstOpcode_ = b.origFirstOpcode_;
-		targetOffset_ = b.targetOffset_;
-		numInstructions_ = b.numInstructions_;
+		hash_ = b.hash_;
 		b.instr_ = nullptr;
 	}
 
@@ -72,12 +71,6 @@ public:
 	void SetOriginalSize(u32 size) {
 		origSize_ = size;
 	}
-	void SetTargetOffset(int offset) {
-		targetOffset_ = offset;
-	}
-	int GetTargetOffset() const {
-		return targetOffset_;
-	}
 	void UpdateHash() {
 		hash_ = CalculateHash();
 	}
@@ -90,9 +83,6 @@ public:
 		start = origAddr_;
 		size = origSize_;
 	}
-	u32 GetOriginalStart() const {
-		return origAddr_;
-	}
 
 	void Finalize(int number);
 	void Destroy(int number);
@@ -100,20 +90,19 @@ public:
 private:
 	u64 CalculateHash() const;
 
-	IRInst *instr_ = nullptr;
+	IRInst *instr_;
+	u16 numInstructions_;
+	u32 origAddr_;
+	u32 origSize_;
 	u64 hash_ = 0;
-	u32 origAddr_ = 0;
-	u32 origSize_ = 0;
 	MIPSOpcode origFirstOpcode_ = MIPSOpcode(0x68FFFFFF);
-	int targetOffset_ = -1;
-	u16 numInstructions_ = 0;
 };
 
 class IRBlockCache : public JitBlockCacheDebugInterface {
 public:
 	IRBlockCache() {}
 	void Clear();
-	std::vector<int> FindInvalidatedBlockNumbers(u32 address, u32 length);
+	void InvalidateICache(u32 address, u32 length);
 	void FinalizeBlock(int i, bool preload = false);
 	int GetNumBlocks() const override { return (int)blocks_.size(); }
 	int AllocateBlock(int emAddr) {
@@ -127,16 +116,8 @@ public:
 			return nullptr;
 		}
 	}
-	const IRBlock *GetBlock(int i) const {
-		if (i >= 0 && i < (int)blocks_.size()) {
-			return &blocks_[i];
-		} else {
-			return nullptr;
-		}
-	}
 
 	int FindPreloadBlock(u32 em_address);
-	int FindByCookie(int cookie);
 
 	std::vector<u32> SaveAndClearEmuHackOps();
 	void RestoreSavedEmuHackOps(std::vector<u32> saved);
@@ -155,7 +136,7 @@ private:
 class IRJit : public JitInterface {
 public:
 	IRJit(MIPSState *mipsState);
-	~IRJit();
+	virtual ~IRJit();
 
 	void DoState(PointerWrap &p) override;
 
@@ -189,10 +170,9 @@ public:
 	void LinkBlock(u8 *exitPoint, const u8 *checkedEntry) override;
 	void UnlinkBlock(u8 *checkedEntry, u32 originalAddress) override;
 
-protected:
+private:
 	bool CompileBlock(u32 em_address, std::vector<IRInst> &instructions, u32 &mipsBytes, bool preload);
-	virtual bool CompileTargetBlock(IRBlock *block, int block_num, bool preload) { return true; }
-	virtual void FinalizeTargetBlock(IRBlock *block, int block_num) {}
+	bool ReplaceJalTo(u32 dest);
 
 	JitOptions jo;
 
@@ -207,3 +187,4 @@ protected:
 };
 
 }	// namespace MIPSComp
+

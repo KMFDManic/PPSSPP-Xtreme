@@ -18,7 +18,6 @@
 #define ID_DEBUG_DISASSEMBLY            119
 #define WHEEL_DELTA                     120
 #define ID_DEBUG_LOG                    121
-#define ID_DEBUG_MEMORYBASE             122
 #define ID_FILE_OPEN_NEW_INSTANCE       123
 #define ID_FILE_LOADSTATEFILE           126
 #define ID_FILE_SAVESTATEFILE           127
@@ -36,7 +35,6 @@
 #define ID_DEBUG_RESETSYMBOLTABLE       212
 #define IDI_STOP                        223
 #define IDD_INPUTBOX                    226
-#define IDD_USERPASSWORDBOX             227
 #define IDD_VFPU                        231
 #define IDD_BREAKPOINT                  233
 #define ID_FILE_LOAD_DIR                234
@@ -60,8 +58,6 @@
 #define IDD_GEDBG_TAB_VERTICES          254
 #define IDD_GEDBG_TAB_MATRICES          255
 #define IDD_GEDBG_STEPCOUNT             256
-#define IDD_CPUWATCH                    257
-#define IDD_EDITSYMBOLS                  258
 
 #define IDC_STOPGO                      1001
 #define IDC_ADDRESS                     1002
@@ -77,12 +73,10 @@
 #define IDC_INPUTBOX                    1098
 #define IDC_MODENORMAL                  1099
 #define IDC_MODESYMBOLS                 1100
-#define IDC_PASSWORDBOX                 1101
 #define IDC_SEARCH_RESULTS              1102
 #define IDC_REGIONS                     1142
 #define IDC_REGLIST                     1146
 #define IDC_VALUENAME                   1148
-#define IDC_PASSWORDNAME                1149
 #define IDC_SHOWVFPU                    1161
 #define IDC_BREAKPOINTLIST              1164
 #define IDC_DEBUGMEMVIEW                1165
@@ -123,12 +117,8 @@
 #define IDC_SHOWOFFSETS                 1200
 #define IDC_GEDBG_PRIMCOUNTER           1201
 #define IDC_BUTTON_SEARCH               1204
-#define IDC_EDITSYMBOLS_SCAN             1205
-#define IDC_EDITSYMBOLS_REMOVE           1206
-#define IDC_EDITSYMBOLS_ADDRESS          1207
-#define IDC_EDITSYMBOLS_SIZE             1208
-#define IDC_EDITSYMBOLS_OK               1209
-#define IDC_EDITSYMBOLS_CANCEL           1210
+
+#define ID_SHADERS_BASE  5000
 
 #define ID_FILE_EXIT                     40000
 #define ID_DEBUG_SAVEMAPFILE             40001
@@ -169,6 +159,8 @@
 #define ID_OPTIONS_CONTROLS              40038
 #define ID_DEBUG_BREAKONLOAD             40039
 #define ID_DEBUG_DUMPNEXTFRAME           40040
+#define ID_OPTIONS_VERTEXCACHE           40041
+#define ID_OPTIONS_SHOWFPS               40042
 #define ID_OPTIONS_FRAMESKIP             40044
 #define IDC_MEMCHECK                     40045
 #define ID_FILE_MEMSTICK                 40046
@@ -197,7 +189,7 @@
 #define ID_DISASM_THREAD_KILL            40073
 #define ID_FILE_SAVESTATE_NEXT_SLOT      40074
 #define ID_FILE_SAVESTATE_NEXT_SLOT_HC   40075
-#define ID_OPTIONS_SKIP_BUFFER_EFFECTS   40078
+#define ID_OPTIONS_NONBUFFEREDRENDERING  40078
 #define ID_OPTIONS_FRAMESKIP_0           40079
 #define ID_OPTIONS_FRAMESKIP_1           40080
 #define ID_OPTIONS_FRAMESKIP_2           40081
@@ -227,6 +219,7 @@
 #define ID_OPTIONS_WINDOW3X              40106
 #define ID_OPTIONS_WINDOW4X              40107
 #define ID_OPTIONS_WINDOW5X              40108
+#define ID_OPTIONS_BUFFEREDRENDERING     40109
 #define ID_DEBUG_SHOWDEBUGSTATISTICS     40110
 #define ID_OPTIONS_SCREEN6X              40111
 #define ID_OPTIONS_SCREEN7X              40112
@@ -260,7 +253,6 @@
 #define ID_OPTIONS_LANGUAGE              40141
 #define ID_MEMVIEW_COPYVALUE_16          40142
 #define ID_MEMVIEW_COPYVALUE_32          40143
-#define ID_MEMVIEW_COPYFLOAT_32          40229
 #define ID_EMULATION_SWITCH_UMD          40144
 #define ID_DEBUG_EXTRACTFILE             40145
 #define ID_OPTIONS_IGNOREWINKEY          40146
@@ -272,6 +264,7 @@
 #define ID_OPTIONS_BUFLINEARFILTER       40152
 #define ID_OPTIONS_BUFNEARESTFILTER      40153
 #define ID_OPTIONS_DIRECT3D9             40154
+#define ID_OPTIONS_DIRECT3D11            40169
 #define ID_OPTIONS_OPENGL                40155
 #define ID_EMULATION_ROTATION_H          40156
 #define ID_EMULATION_ROTATION_V          40157
@@ -333,27 +326,6 @@
 #define IDC_GEDBG_FLUSHAUTO              40213
 #define IDI_BREAKPOINT_SMALL             40214
 #define IDC_GEDBG_SETPRIMFILTER          40215
-#define IDC_GEDBG_RIGHTTAB               40216
-#define ID_OPTIONS_DIRECT3D11            40217
-#define IDC_GEDBG_TOPRIGHTTAB            40218
-#define ID_GEDBG_SHOWONLEFT              40219
-#define ID_GEDBG_SHOWONRIGHT             40220
-#define ID_GEDBG_SHOWONTOPRIGHT          40221
-#define IDC_GEDBG_STEPVSYNC              40222
-#define ID_GEDBG_SETCOND                 40223
-#define ID_GEDBG_COPY_IMAGE              40224
-#define ID_GEDBG_COPY_IMAGE_ALPHA        40225
-#define ID_GEDBG_TRACK_PIXEL             40226
-#define ID_GEDBG_TRACK_PIXEL_STOP        40227
-#define ID_DISASM_NOPINSTRUCTION         40228
-#define IDC_WATCHLIST                    40230
-#define ID_DISASM_DELETEBREAKPOINT       40231
-#define IDC_DISASM_FMT_HEX               40232
-#define IDC_DISASM_FMT_INT               40233
-#define IDC_DISASM_FMT_FLOAT             40234
-#define IDC_DISASM_FMT_STR               40235
-#define ID_DISASM_EDITSYMBOLS             40236
-
 
 // Dummy option to let the buffered rendering hotkey cycle through all the options.
 #define ID_OPTIONS_BUFFEREDRENDERINGDUMMY 40500
@@ -365,8 +337,8 @@
 // Next default values for new objects
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        258
-#define _APS_NEXT_COMMAND_VALUE         40236
+#define _APS_NEXT_RESOURCE_VALUE        256
+#define _APS_NEXT_COMMAND_VALUE         40216
 #define _APS_NEXT_CONTROL_VALUE         1202
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

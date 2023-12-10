@@ -35,9 +35,9 @@ public:
 	}
 
 protected:
-	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT &returnValue) override { return false; }
-	void GetColumnText(wchar_t *dest, int row, int col) override;
-	int GetRowCount() override;
+	virtual bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& returnValue) { return false; };
+	virtual void GetColumnText(wchar_t *dest, int row, int col);
+	virtual int GetRowCount();
 
 private:
 	void FormatVertCol(wchar_t *dest, const GPUDebugVertex &vert, int col);
@@ -57,12 +57,12 @@ public:
 	TabVertices(HINSTANCE _hInstance, HWND _hParent);
 	~TabVertices();
 
-	void Update() override {
+	virtual void Update() {
 		values->Update();
 	}
 
 protected:
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 
 private:
 	void UpdateSize(WORD width, WORD height);
@@ -90,7 +90,6 @@ private:
 	bool GetValue(const GPUgstate &state, int row, int col, float &val);
 	bool ColChanged(const GPUgstate &lastState, const GPUgstate &state, int row, int col);
 	void ToggleBreakpoint(int row);
-	void PromptBreakpointCond(int row);
 };
 
 class TabMatrices : public Dialog {
@@ -98,12 +97,12 @@ public:
 	TabMatrices(HINSTANCE _hInstance, HWND _hParent);
 	~TabMatrices();
 
-	void Update() override {
+	virtual void Update() {
 		values->Update();
 	}
 
 protected:
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 
 private:
 	void UpdateSize(WORD width, WORD height);

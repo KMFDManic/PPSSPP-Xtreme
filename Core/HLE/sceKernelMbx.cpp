@@ -552,17 +552,19 @@ int sceKernelCancelReceiveMbx(SceUID id, u32 numWaitingThreadsAddr)
 	return 0;
 }
 
-int sceKernelReferMbxStatus(SceUID id, u32 infoAddr) {
+int sceKernelReferMbxStatus(SceUID id, u32 infoAddr)
+{
 	u32 error;
 	Mbx *m = kernelObjects.Get<Mbx>(id, error);
-	if (!m) {
-		return hleLogError(SCEKERNEL, error, "invalid mbx id");
+	if (!m)
+	{
+		ERROR_LOG(SCEKERNEL, "sceKernelReferMbxStatus(%i, %08x): invalid mbx id", id, infoAddr);
+		return error;
 	}
 
 	// Should we crash the thread somehow?
-	auto info = PSPPointer<NativeMbx>::Create(infoAddr);
-	if (!info.IsValid())
-		return hleLogError(SCEKERNEL, -1, "invalid pointer");
+	if (!Memory::IsValidAddress(infoAddr))
+		return -1;
 
 	for (int i = 0, n = m->nmb.numMessages; i < n; ++i)
 		m->nmb.packetListHead = Memory::Read_U32(m->nmb.packetListHead);
@@ -570,10 +572,10 @@ int sceKernelReferMbxStatus(SceUID id, u32 infoAddr) {
 	HLEKernel::CleanupWaitingThreads(WAITTYPE_MBX, id, m->waitingThreads);
 
 	// For whatever reason, it won't write if the size (first member) is 0.
-	if (info->size != 0) {
+	if (Memory::Read_U32(infoAddr) != 0)
+	{
 		m->nmb.numWaitThreads = (int) m->waitingThreads.size();
-		*info = m->nmb;
-		info.NotifyWrite("MbxStatus");
+		Memory::WriteStruct<NativeMbx>(infoAddr, &m->nmb);
 	}
 
 	return 0;

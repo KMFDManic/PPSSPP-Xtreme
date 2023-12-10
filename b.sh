@@ -47,9 +47,6 @@ do
 		--debug)
 			CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Debug ${CMAKE_ARGS}"
 			;;
-		--reldebug)
-			CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo ${CMAKE_ARGS}"
-			;;
 		--headless) echo "Headless mode enabled"
 			CMAKE_ARGS="-DHEADLESS=ON ${CMAKE_ARGS}"
 			;;
@@ -71,9 +68,6 @@ do
 			;;
 		--sanitize) echo "Enabling address-sanitizer if available"
 			CMAKE_ARGS="-DUSE_ASAN=ON ${CMAKE_ARGS}"
-			;;
-		--gold) echo "Gold build enabled"
-			CMAKE_ARGS="-DGOLD=ON ${CMAKE_ARGS}"
 			;;
 		*) MAKE_OPT="$1 ${MAKE_OPT}"
 			;;

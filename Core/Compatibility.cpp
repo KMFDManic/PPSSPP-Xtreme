@@ -17,9 +17,7 @@
 
 #include <cstring>
 
-#include "Common/Log.h"
 #include "Common/Data/Format/IniFile.h"
-#include "Common/File/VFS/VFS.h"
 #include "Common/StringUtils.h"
 #include "Core/Compatibility.h"
 #include "Core/Config.h"
@@ -39,7 +37,7 @@ void Compatibility::Load(const std::string &gameID) {
 	{
 		IniFile compat;
 		// This loads from assets.
-		if (compat.LoadFromVFS(g_VFS, "compat.ini")) {
+		if (compat.LoadFromVFS("compat.ini")) {
 			CheckSettings(compat, gameID);
 		}
 	}
@@ -48,32 +46,14 @@ void Compatibility::Load(const std::string &gameID) {
 		IniFile compat2;
 		// This one is user-editable. Need to load it after the system one.
 		Path path = GetSysDirectory(DIRECTORY_SYSTEM) / "compat.ini";
-		if (compat2.Load(path)) {
+		if (compat2.Load(path.ToString())) {
 			CheckSettings(compat2, gameID);
-		}
-	}
-
-	{
-		IniFile compat;
-		// This loads from assets.
-		if (compat.LoadFromVFS(g_VFS, "compatvr.ini")) {
-			CheckVRSettings(compat, gameID);
-		}
-	}
-
-	{
-		IniFile compat2;
-		// This one is user-editable. Need to load it after the system one.
-		Path path = GetSysDirectory(DIRECTORY_SYSTEM) / "compatvr.ini";
-		if (compat2.Load(path)) {
-			CheckVRSettings(compat2, gameID);
 		}
 	}
 }
 
 void Compatibility::Clear() {
 	memset(&flags_, 0, sizeof(flags_));
-	memset(&vrCompat_, 0, sizeof(vrCompat_));
 }
 
 void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
@@ -87,6 +67,7 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
 	CheckSetting(iniFile, gameID, "RequireBufferedRendering", &flags_.RequireBufferedRendering);
 	CheckSetting(iniFile, gameID, "RequireBlockTransfer", &flags_.RequireBlockTransfer);
 	CheckSetting(iniFile, gameID, "RequireDefaultCPUClock", &flags_.RequireDefaultCPUClock);
+	CheckSetting(iniFile, gameID, "DisableReadbacks", &flags_.DisableReadbacks);
 	CheckSetting(iniFile, gameID, "DisableAccurateDepth", &flags_.DisableAccurateDepth);
 	CheckSetting(iniFile, gameID, "MGS2AcidHack", &flags_.MGS2AcidHack);
 	CheckSetting(iniFile, gameID, "SonicRivalsHack", &flags_.SonicRivalsHack);
@@ -105,68 +86,20 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
 	CheckSetting(iniFile, gameID, "ReportSmallMemstick", &flags_.ReportSmallMemstick);
 	CheckSetting(iniFile, gameID, "MemstickFixedFree", &flags_.MemstickFixedFree);
 	CheckSetting(iniFile, gameID, "DateLimited", &flags_.DateLimited);
+	CheckSetting(iniFile, gameID, "ReinterpretFramebuffers", &flags_.ReinterpretFramebuffers);
 	CheckSetting(iniFile, gameID, "ShaderColorBitmask", &flags_.ShaderColorBitmask);
 	CheckSetting(iniFile, gameID, "DisableFirstFrameReadback", &flags_.DisableFirstFrameReadback);
+	CheckSetting(iniFile, gameID, "DisableRangeCulling", &flags_.DisableRangeCulling);
 	CheckSetting(iniFile, gameID, "MpegAvcWarmUp", &flags_.MpegAvcWarmUp);
 	CheckSetting(iniFile, gameID, "BlueToAlpha", &flags_.BlueToAlpha);
 	CheckSetting(iniFile, gameID, "CenteredLines", &flags_.CenteredLines);
 	CheckSetting(iniFile, gameID, "MaliDepthStencilBugWorkaround", &flags_.MaliDepthStencilBugWorkaround);
 	CheckSetting(iniFile, gameID, "ZZT3SelectHack", &flags_.ZZT3SelectHack);
 	CheckSetting(iniFile, gameID, "AllowLargeFBTextureOffsets", &flags_.AllowLargeFBTextureOffsets);
-	CheckSetting(iniFile, gameID, "AtracLoopHack", &flags_.AtracLoopHack);
-	CheckSetting(iniFile, gameID, "DeswizzleDepth", &flags_.DeswizzleDepth);
-	CheckSetting(iniFile, gameID, "SplitFramebufferMargin", &flags_.SplitFramebufferMargin);
-	CheckSetting(iniFile, gameID, "ForceLowerResolutionForEffectsOn", &flags_.ForceLowerResolutionForEffectsOn);
-	CheckSetting(iniFile, gameID, "ForceLowerResolutionForEffectsOff", &flags_.ForceLowerResolutionForEffectsOff);
-	CheckSetting(iniFile, gameID, "AllowDownloadCLUT", &flags_.AllowDownloadCLUT);
-	CheckSetting(iniFile, gameID, "NearestFilteringOnFramebufferCreate", &flags_.NearestFilteringOnFramebufferCreate);
-	CheckSetting(iniFile, gameID, "SecondaryTextureCache", &flags_.SecondaryTextureCache);
-	CheckSetting(iniFile, gameID, "EnglishOrJapaneseOnly", &flags_.EnglishOrJapaneseOnly);
-	CheckSetting(iniFile, gameID, "OldAdrenoPixelDepthRoundingGL", &flags_.OldAdrenoPixelDepthRoundingGL);
-	CheckSetting(iniFile, gameID, "ForceCircleButtonConfirm", &flags_.ForceCircleButtonConfirm);
-	CheckSetting(iniFile, gameID, "DisallowFramebufferAtOffset", &flags_.DisallowFramebufferAtOffset);
-	CheckSetting(iniFile, gameID, "RockmanDash2SoundFix", &flags_.RockmanDash2SoundFix);
-	CheckSetting(iniFile, gameID, "ReadbackDepth", &flags_.ReadbackDepth);
-	CheckSetting(iniFile, gameID, "BlockTransferDepth", &flags_.BlockTransferDepth);
-	CheckSetting(iniFile, gameID, "DaxterRotatedAnalogStick", &flags_.DaxterRotatedAnalogStick);
-	CheckSetting(iniFile, gameID, "ForceMaxDepthResolution", &flags_.ForceMaxDepthResolution);
-	CheckSetting(iniFile, gameID, "SOCOMClut8Replacement", &flags_.SOCOMClut8Replacement);
-	CheckSetting(iniFile, gameID, "Fontltn12Hack", &flags_.Fontltn12Hack);
-	CheckSetting(iniFile, gameID, "LoadCLUTFromCurrentFrameOnly", &flags_.LoadCLUTFromCurrentFrameOnly);
-	CheckSetting(iniFile, gameID, "ForceUMDReadSpeed", &flags_.ForceUMDReadSpeed);
-	CheckSetting(iniFile, gameID, "AllowDelayedReadbacks", &flags_.AllowDelayedReadbacks);
-}
-
-void Compatibility::CheckVRSettings(IniFile &iniFile, const std::string &gameID) {
-	CheckSetting(iniFile, gameID, "ForceFlatScreen", &vrCompat_.ForceFlatScreen);
-	CheckSetting(iniFile, gameID, "ForceMono", &vrCompat_.ForceMono);
-	CheckSetting(iniFile, gameID, "IdentityViewHack", &vrCompat_.IdentityViewHack);
-	CheckSetting(iniFile, gameID, "MirroringVariant", &vrCompat_.MirroringVariant);
-	CheckSetting(iniFile, gameID, "Skyplane", &vrCompat_.Skyplane);
-	CheckSetting(iniFile, gameID, "UnitsPerMeter", &vrCompat_.UnitsPerMeter);
-
-	NOTICE_LOG(G3D, "UnitsPerMeter for %s: %f", gameID.c_str(), vrCompat_.UnitsPerMeter);
 }
 
 void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, bool *flag) {
 	if (ignored_.find(option) == ignored_.end()) {
 		iniFile.Get(option, gameID.c_str(), flag, *flag);
-
-		// Shortcut for debugging, sometimes useful to globally enable compat flags.
-		bool all = false;
-		iniFile.Get(option, "ALL", &all, false);
-		*flag |= all;
 	}
-}
-
-void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, float *flag) {
-	std::string value;
-	iniFile.Get(option, gameID.c_str(), &value, "0");
-	*flag = stof(value);
-}
-
-void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, int *flag) {
-	std::string value;
-	iniFile.Get(option, gameID.c_str(), &value, "0");
-	*flag = stof(value);
 }

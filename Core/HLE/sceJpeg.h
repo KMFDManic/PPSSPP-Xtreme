@@ -19,8 +19,6 @@
 
 class PointerWrap;
 
-void JpegNotifyLoadStatus(int state);
-
 void Register_sceJpeg();
 void __JpegInit();
 void __JpegDoState(PointerWrap &p);

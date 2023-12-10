@@ -19,9 +19,7 @@
 
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Thread/ThreadUtil.h"
-#include "Common/System/Request.h"
 
-#include "Common/File/AndroidContentURI.h"
 #include "Common/File/FileUtil.h"
 #include "Common/StringUtils.h"
 #ifdef _WIN32
@@ -45,6 +43,8 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
+
+#include "Host.h"
 
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
@@ -248,7 +248,7 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 		if (g_paramSFO.ReadSFO(paramsfo)) {
 			std::string title = StringFromFormat("%s : %s", g_paramSFO.GetValueString("DISC_ID").c_str(), g_paramSFO.GetValueString("TITLE").c_str());
 			INFO_LOG(LOADER, "%s", title.c_str());
-			System_SetWindowTitle(title);
+			host->SetWindowTitle(title.c_str());
 		}
 	}
 
@@ -306,8 +306,8 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 
 	//in case we didn't go through EmuScreen::boot
 	g_Config.loadGameConfig(id, g_paramSFO.GetValueString("TITLE"));
-	System_PostUIMessage(UIMessage::CONFIG_LOADED);
-	INFO_LOG(LOADER, "Loading %s...", bootpath.c_str());
+	host->SendUIMessage("config_loaded", "");
+	INFO_LOG(LOADER,"Loading %s...", bootpath.c_str());
 
 	PSPLoaders_Shutdown();
 	// Note: this thread reads the game binary, loads caches, and links HLE while UI spins.
@@ -318,8 +318,6 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 		PSP_LoadingLock guard;
 		if (coreState != CORE_POWERUP)
 			return;
-
-		AndroidJNIThreadContext jniContext;
 
 		PSP_SetLoading("Loading executable...");
 		// TODO: We can't use the initial error_string pointer.
@@ -381,10 +379,6 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 	std::string path = full_path.GetDirectory();
 	std::string file = full_path.GetFilename();
 
-	if (full_path.Type() == PathType::CONTENT_URI) {
-		path = AndroidContentURI(full_path.GetDirectory()).FilePath();
-	}
-
 	size_t pos = path.find("PSP/GAME/");
 	std::string ms_path;
 	if (pos != std::string::npos) {
@@ -398,11 +392,7 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 	if (!PSP_CoreParameter().mountRoot.empty()) {
 		// We don't want to worry about .. and cwd and such.
 		const Path rootNorm = NormalizePath(PSP_CoreParameter().mountRoot);
-		Path pathNorm = NormalizePath(Path(path));
-
-		if (full_path.Type() == PathType::CONTENT_URI) {
-			pathNorm = full_path.NavigateUp();
-		}
+		const Path pathNorm = NormalizePath(Path(path));
 
 		// If root is not a subpath of path, we can't boot the game.
 		if (!pathNorm.StartsWith(rootNorm)) {
@@ -411,17 +401,10 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 			return false;
 		}
 
-		std::string filepath;
-		if (full_path.Type() == PathType::CONTENT_URI) {
-			std::string rootFilePath = AndroidContentURI(rootNorm.c_str()).FilePath();
-			std::string pathFilePath = AndroidContentURI(pathNorm.c_str()).FilePath();
-			filepath = pathFilePath.substr(rootFilePath.size());
-		} else {
-			filepath = ReplaceAll(pathNorm.ToString().substr(rootNorm.ToString().size()), "\\", "/");
-		}
-
+		// TODO(scoped): This won't work!
+		const std::string filepath = ReplaceAll(pathNorm.ToString().substr(rootNorm.ToString().size()), "\\", "/");
 		file = filepath + "/" + file;
-		path = rootNorm.ToString();
+		path = rootNorm.ToString() + "/";
 		pspFileSystem.SetStartingDirectory(filepath);
 	} else {
 		pspFileSystem.SetStartingDirectory(ms_path);
@@ -434,11 +417,6 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 
 	std::string homebrewName = PSP_CoreParameter().fileToStart.ToVisualString();
 	std::size_t lslash = homebrewName.find_last_of("/");
-#if PPSSPP_PLATFORM(UWP)
-	if (lslash == homebrewName.npos) {
-		lslash = homebrewName.find_last_of("\\");
-	}
-#endif
 	if (lslash != homebrewName.npos)
 		homebrewName = homebrewName.substr(lslash + 1);
 	std::string homebrewTitle = g_paramSFO.GetValueString("TITLE");
@@ -450,7 +428,7 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 
 	std::string title = StringFromFormat("%s : %s", discID.c_str(), homebrewTitle.c_str());
 	INFO_LOG(LOADER, "%s", title.c_str());
-	System_SetWindowTitle(title);
+	host->SetWindowTitle(title.c_str());
 
 	// Migrate old save states from old versions of fake game IDs.
 	const Path savestateDir = GetSysDirectory(DIRECTORY_SAVESTATE);
@@ -477,8 +455,6 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 		if (coreState != CORE_POWERUP)
 			return;
 
-		AndroidJNIThreadContext jniContext;
-
 		bool success = __KernelLoadExec(finalName.c_str(), 0, &PSP_CoreParameter().errorString);
 		if (success && coreState == CORE_POWERUP) {
 			coreState = PSP_CoreParameter().startBreak ? CORE_STEPPING : CORE_RUNNING;
@@ -502,8 +478,6 @@ bool Load_PSP_GE_Dump(FileLoader *fileLoader, std::string *error_string) {
 		PSP_LoadingLock guard;
 		if (coreState != CORE_POWERUP)
 			return;
-
-		AndroidJNIThreadContext jniContext;
 
 		bool success = __KernelLoadGEDump("disc0:/data.ppdmp", &PSP_CoreParameter().errorString);
 		if (success && coreState == CORE_POWERUP) {

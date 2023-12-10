@@ -24,6 +24,7 @@
 #include "Core/Debugger/Breakpoints.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/ReplaceTables.h"
+#include "Core/Host.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSTables.h"
@@ -60,51 +61,22 @@ alignas(16) static const uint32_t lowBytesMask[4] = {
 	0x000000FF, 0x000000FF, 0x000000FF, 0x000000FF,
 };
 
-u32 IRRunBreakpoint(u32 pc) {
+u32 RunBreakpoint(u32 pc) {
 	// Should we skip this breakpoint?
-	uint32_t skipFirst = CBreakPoints::CheckSkipFirst();
-	if (skipFirst == pc || skipFirst == currentMIPS->pc)
+	if (CBreakPoints::CheckSkipFirst() == pc)
 		return 0;
 
-	// Did we already hit one?
-	if (coreState != CORE_RUNNING && coreState != CORE_NEXTFRAME)
-		return 1;
-
-	CBreakPoints::ExecBreakPoint(pc);
+	CBreakPoints::ExecBreakPoint(currentMIPS->pc);
 	return coreState != CORE_RUNNING ? 1 : 0;
 }
 
-u32 IRRunMemCheck(u32 pc, u32 addr) {
+u32 RunMemCheck(u32 pc, u32 addr) {
 	// Should we skip this breakpoint?
-	uint32_t skipFirst = CBreakPoints::CheckSkipFirst();
-	if (skipFirst == pc || skipFirst == currentMIPS->pc)
+	if (CBreakPoints::CheckSkipFirst() == pc)
 		return 0;
-
-	// Did we already hit one?
-	if (coreState != CORE_RUNNING && coreState != CORE_NEXTFRAME)
-		return 1;
 
 	CBreakPoints::ExecOpMemCheck(addr, pc);
 	return coreState != CORE_RUNNING ? 1 : 0;
-}
-
-template <uint32_t alignment>
-u32 RunValidateAddress(u32 pc, u32 addr, u32 isWrite) {
-	const auto toss = [&](MemoryExceptionType t) {
-		Core_MemoryException(addr, alignment, pc, t);
-		return coreState != CORE_RUNNING ? 1 : 0;
-	};
-
-	if (!Memory::IsValidRange(addr, alignment)) {
-		MemoryExceptionType t = isWrite == 1 ? MemoryExceptionType::WRITE_WORD : MemoryExceptionType::READ_WORD;
-		if constexpr (alignment > 4)
-			t = isWrite ? MemoryExceptionType::WRITE_BLOCK : MemoryExceptionType::READ_BLOCK;
-		return toss(t);
-	}
-	if constexpr (alignment > 1)
-		if ((addr & (alignment - 1)) != 0)
-			return toss(MemoryExceptionType::ALIGNMENT);
-	return 0;
 }
 
 // We cannot use NEON on ARM32 here until we make it a hard dependency. We can, however, on ARM64.
@@ -170,31 +142,6 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			mips->r[inst->dest] = ReverseBits32(mips->r[inst->src1]);
 			break;
 
-		case IROp::ValidateAddress8:
-			if (RunValidateAddress<1>(mips->pc, mips->r[inst->src1] + inst->constant, inst->src2)) {
-				CoreTiming::ForceCheck();
-				return mips->pc;
-			}
-		break;
-		case IROp::ValidateAddress16:
-			if (RunValidateAddress<2>(mips->pc, mips->r[inst->src1] + inst->constant, inst->src2)) {
-				CoreTiming::ForceCheck();
-				return mips->pc;
-			}
-			break;
-		case IROp::ValidateAddress32:
-			if (RunValidateAddress<4>(mips->pc, mips->r[inst->src1] + inst->constant, inst->src2)) {
-				CoreTiming::ForceCheck();
-				return mips->pc;
-			}
-			break;
-		case IROp::ValidateAddress128:
-			if (RunValidateAddress<16>(mips->pc, mips->r[inst->src1] + inst->constant, inst->src2)) {
-				CoreTiming::ForceCheck();
-				return mips->pc;
-			}
-			break;
-
 		case IROp::Load8:
 			mips->r[inst->dest] = Memory::ReadUnchecked_U8(mips->r[inst->src1] + inst->constant);
 			break;
@@ -228,11 +175,6 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			mips->r[inst->dest] = (mips->r[inst->dest] & destMask) | (mem >> shift);
 			break;
 		}
-		case IROp::Load32Linked:
-			if (inst->dest != MIPS_REG_ZERO)
-				mips->r[inst->dest] = Memory::ReadUnchecked_U32(mips->r[inst->src1] + inst->constant);
-			mips->llBit = 1;
-			break;
 		case IROp::LoadFloat:
 			mips->f[inst->dest] = Memory::ReadUnchecked_Float(mips->r[inst->src1] + inst->constant);
 			break;
@@ -266,16 +208,6 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			Memory::WriteUnchecked_U32(result, addr & 0xfffffffc);
 			break;
 		}
-		case IROp::Store32Conditional:
-			if (mips->llBit) {
-				Memory::WriteUnchecked_U32(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
-				if (inst->dest != MIPS_REG_ZERO) {
-					mips->r[inst->dest] = 1;
-				}
-			} else if (inst->dest != MIPS_REG_ZERO) {
-				mips->r[inst->dest] = 0;
-			}
-			break;
 		case IROp::StoreFloat:
 			Memory::WriteUnchecked_Float(mips->f[inst->src3], mips->r[inst->src1] + inst->constant);
 			break;
@@ -317,25 +249,16 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		{
 			// Can't use the SSE shuffle here because it takes an immediate. pshufb with a table would work though,
 			// or a big switch - there are only 256 shuffles possible (4^4)
-			float temp[4];
 			for (int i = 0; i < 4; i++)
-				temp[i] = mips->f[inst->src1 + ((inst->src2 >> (i * 2)) & 3)];
-			for (int i = 0; i < 4; i++)
-				mips->f[inst->dest + i] = temp[i];
+				mips->f[inst->dest + i] = mips->f[inst->src1 + ((inst->src2 >> (i * 2)) & 3)];
 			break;
 		}
-
-		case IROp::Vec4Blend:
-			// Could use _mm_blendv_ps (SSE4+BMI), vbslq_f32 (ARM), __riscv_vmerge_vvm (RISC-V)
-			for (int i = 0; i < 4; i++)
-				mips->f[inst->dest + i] = ((inst->constant >> i) & 1) ? mips->f[inst->src2 + i] : mips->f[inst->src1 + i];
-			break;
 
 		case IROp::Vec4Mov:
 		{
 #if defined(_M_SSE)
 			_mm_store_ps(&mips->f[inst->dest], _mm_load_ps(&mips->f[inst->src1]));
-#elif PPSSPP_ARCH(ARM_NEON)
+#elif PPSSPP_ARCH(ARM64_NEON)
 			vst1q_f32(&mips->f[inst->dest], vld1q_f32(&mips->f[inst->src1]));
 #else
 			memcpy(&mips->f[inst->dest], &mips->f[inst->src1], 4 * sizeof(float));
@@ -347,7 +270,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		{
 #if defined(_M_SSE)
 			_mm_store_ps(&mips->f[inst->dest], _mm_add_ps(_mm_load_ps(&mips->f[inst->src1]), _mm_load_ps(&mips->f[inst->src2])));
-#elif PPSSPP_ARCH(ARM_NEON)
+#elif PPSSPP_ARCH(ARM64_NEON)
 			vst1q_f32(&mips->f[inst->dest], vaddq_f32(vld1q_f32(&mips->f[inst->src1]), vld1q_f32(&mips->f[inst->src2])));
 #else
 			for (int i = 0; i < 4; i++)
@@ -360,7 +283,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		{
 #if defined(_M_SSE)
 			_mm_store_ps(&mips->f[inst->dest], _mm_sub_ps(_mm_load_ps(&mips->f[inst->src1]), _mm_load_ps(&mips->f[inst->src2])));
-#elif PPSSPP_ARCH(ARM_NEON)
+#elif PPSSPP_ARCH(ARM64_NEON)
 			vst1q_f32(&mips->f[inst->dest], vsubq_f32(vld1q_f32(&mips->f[inst->src1]), vld1q_f32(&mips->f[inst->src2])));
 #else
 			for (int i = 0; i < 4; i++)
@@ -373,7 +296,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		{
 #if defined(_M_SSE)
 			_mm_store_ps(&mips->f[inst->dest], _mm_mul_ps(_mm_load_ps(&mips->f[inst->src1]), _mm_load_ps(&mips->f[inst->src2])));
-#elif PPSSPP_ARCH(ARM_NEON)
+#elif PPSSPP_ARCH(ARM64_NEON)
 			vst1q_f32(&mips->f[inst->dest], vmulq_f32(vld1q_f32(&mips->f[inst->src1]), vld1q_f32(&mips->f[inst->src2])));
 #else
 			for (int i = 0; i < 4; i++)
@@ -408,7 +331,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		{
 #if defined(_M_SSE)
 			_mm_store_ps(&mips->f[inst->dest], _mm_xor_ps(_mm_load_ps(&mips->f[inst->src1]), _mm_load_ps((const float *)signBits)));
-#elif PPSSPP_ARCH(ARM_NEON)
+#elif PPSSPP_ARCH(ARM64_NEON)
 			vst1q_f32(&mips->f[inst->dest], vnegq_f32(vld1q_f32(&mips->f[inst->src1])));
 #else
 			for (int i = 0; i < 4; i++)
@@ -421,7 +344,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		{
 #if defined(_M_SSE)
 			_mm_store_ps(&mips->f[inst->dest], _mm_and_ps(_mm_load_ps(&mips->f[inst->src1]), _mm_load_ps((const float *)noSignMask)));
-#elif PPSSPP_ARCH(ARM_NEON)
+#elif PPSSPP_ARCH(ARM64_NEON)
 			vst1q_f32(&mips->f[inst->dest], vabsq_f32(vld1q_f32(&mips->f[inst->src1])));
 #else
 			for (int i = 0; i < 4; i++)
@@ -802,28 +725,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			mips->f[inst->dest] = mips->f[inst->src1] / mips->f[inst->src2];
 			break;
 		case IROp::FMin:
-			if (my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2])) {
-				// See interpreter for this logic: this is for vmin, we're comparing mantissa+exp.
-				if (mips->fs[inst->src1] < 0 && mips->fs[inst->src2] < 0) {
-					mips->fs[inst->dest] = std::max(mips->fs[inst->src1], mips->fs[inst->src2]);
-				} else {
-					mips->fs[inst->dest] = std::min(mips->fs[inst->src1], mips->fs[inst->src2]);
-				}
-			} else {
-				mips->f[inst->dest] = std::min(mips->f[inst->src1], mips->f[inst->src2]);
-			}
+			mips->f[inst->dest] = std::min(mips->f[inst->src1], mips->f[inst->src2]);
 			break;
 		case IROp::FMax:
-			if (my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2])) {
-				// See interpreter for this logic: this is for vmax, we're comparing mantissa+exp.
-				if (mips->fs[inst->src1] < 0 && mips->fs[inst->src2] < 0) {
-					mips->fs[inst->dest] = std::min(mips->fs[inst->src1], mips->fs[inst->src2]);
-				} else {
-					mips->fs[inst->dest] = std::max(mips->fs[inst->src1], mips->fs[inst->src2]);
-				}
-			} else {
-				mips->f[inst->dest] = std::max(mips->f[inst->src1], mips->f[inst->src2]);
-			}
+			mips->f[inst->dest] = std::max(mips->f[inst->src1], mips->f[inst->src2]);
 			break;
 
 		case IROp::FMov:
@@ -860,22 +765,8 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			break;
 		}
 
-		case IROp::FpCondFromReg:
-			mips->fpcond = mips->r[inst->dest];
-			break;
 		case IROp::FpCondToReg:
 			mips->r[inst->dest] = mips->fpcond;
-			break;
-		case IROp::FpCtrlFromReg:
-			mips->fcr31 = mips->r[inst->src1] & 0x0181FFFF;
-			// Extract the new fpcond value.
-			// TODO: Is it really helping us to keep it separate?
-			mips->fpcond = (mips->fcr31 >> 23) & 1;
-			break;
-		case IROp::FpCtrlToReg:
-			// Update the fpcond bit first.
-			mips->fcr31 = (mips->fcr31 & ~(1 << 23)) | ((mips->fpcond & 1) << 23);
-			mips->r[inst->dest] = mips->fcr31;
 			break;
 		case IROp::VfpuCtrlToReg:
 			mips->r[inst->dest] = mips->vfpuCtrl[inst->src1];
@@ -887,7 +778,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 				mips->fi[inst->dest] = my_isinf(value) && value < 0.0f ? -2147483648LL : 2147483647LL;
 				break;
 			} else {
-				mips->fs[inst->dest] = (int)round_ieee_754(value);
+				mips->fs[inst->dest] = (int)floorf(value + 0.5f);
 			}
 			break;
 		}
@@ -946,22 +837,16 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 				break;
 			}
 			case IRFpCompareMode::EqualOrdered:
+			case IRFpCompareMode::EqualUnordered:
 				mips->fpcond = mips->f[inst->src1] == mips->f[inst->src2];
 				break;
-			case IRFpCompareMode::EqualUnordered:
-				mips->fpcond = mips->f[inst->src1] == mips->f[inst->src2] || my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2]);
-				break;
 			case IRFpCompareMode::LessEqualOrdered:
+			case IRFpCompareMode::LessEqualUnordered:
 				mips->fpcond = mips->f[inst->src1] <= mips->f[inst->src2];
 				break;
-			case IRFpCompareMode::LessEqualUnordered:
-				mips->fpcond = !(mips->f[inst->src1] > mips->f[inst->src2]);
-				break;
 			case IRFpCompareMode::LessOrdered:
-				mips->fpcond = mips->f[inst->src1] < mips->f[inst->src2];
-				break;
 			case IRFpCompareMode::LessUnordered:
-				mips->fpcond = !(mips->f[inst->src1] >= mips->f[inst->src2]);
+				mips->fpcond = mips->f[inst->src1] < mips->f[inst->src2];
 				break;
 			}
 			break;
@@ -976,43 +861,18 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 				mips->fs[inst->dest] = my_isinf(src) && src < 0.0f ? -2147483648LL : 2147483647LL;
 				break;
 			}
-			switch (IRRoundMode(mips->fcr31 & 3)) {
-			case IRRoundMode::RINT_0: mips->fs[inst->dest] = (int)round_ieee_754(src); break;
-			case IRRoundMode::CAST_1: mips->fs[inst->dest] = (int)src; break;
-			case IRRoundMode::CEIL_2: mips->fs[inst->dest] = (int)ceilf(src); break;
-			case IRRoundMode::FLOOR_3: mips->fs[inst->dest] = (int)floorf(src); break;
+			switch (mips->fcr31 & 3) {
+			case 0: mips->fs[inst->dest] = (int)round_ieee_754(src); break;  // RINT_0
+			case 1: mips->fs[inst->dest] = (int)src; break;  // CAST_1
+			case 2: mips->fs[inst->dest] = (int)ceilf(src); break;  // CEIL_2
+			case 3: mips->fs[inst->dest] = (int)floorf(src); break;  // FLOOR_3
 			}
 			break; //cvt.w.s
 		}
-		case IROp::FCvtScaledSW:
-			mips->f[inst->dest] = (float)mips->fs[inst->src1] * (1.0f / (1UL << (inst->src2 & 0x1F)));
-			break;
-		case IROp::FCvtScaledWS:
-		{
-			float src = mips->f[inst->src1];
-			if (my_isnan(src)) {
-				// TODO: True for negatives too?
-				mips->fs[inst->dest] = 2147483647L;
-				break;
-			}
 
-			float mult = (float)(1UL << (inst->src2 & 0x1F));
-			double sv = src * mult; // (float)0x7fffffff == (float)0x80000000
-			// Cap/floor it to 0x7fffffff / 0x80000000
-			if (sv > (double)0x7fffffff) {
-				mips->fs[inst->dest] = 0x7fffffff;
-			} else if (sv <= (double)(int)0x80000000) {
-				mips->fs[inst->dest] = 0x80000000;
-			} else {
-				switch (IRRoundMode(inst->src2 >> 6)) {
-				case IRRoundMode::RINT_0: mips->fs[inst->dest] = (int)round_ieee_754(sv); break;
-				case IRRoundMode::CAST_1: mips->fs[inst->dest] = src >= 0 ? (int)floor(sv) : (int)ceil(sv); break;
-				case IRRoundMode::CEIL_2: mips->fs[inst->dest] = (int)ceil(sv); break;
-				case IRRoundMode::FLOOR_3: mips->fs[inst->dest] = (int)floor(sv); break;
-				}
-			}
+		case IROp::ZeroFpCond:
+			mips->fpcond = 0;
 			break;
-		}
 
 		case IROp::FMovFromGPR:
 			memcpy(&mips->f[inst->dest], &mips->r[inst->src1], 4);
@@ -1053,7 +913,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			break;
 
 		case IROp::Downcount:
-			mips->downcount -= (int)inst->constant;
+			mips->downcount -= inst->constant;
 			break;
 
 		case IROp::SetPC:
@@ -1094,7 +954,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		}
 
 		case IROp::Break:
-			Core_Break(mips->pc);
+			Core_Break();
 			return mips->pc + 4;
 
 		case IROp::SetCtrlVFPU:
@@ -1110,14 +970,14 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			break;
 
 		case IROp::Breakpoint:
-			if (IRRunBreakpoint(inst->constant)) {
+			if (RunBreakpoint(mips->pc)) {
 				CoreTiming::ForceCheck();
 				return mips->pc;
 			}
 			break;
 
 		case IROp::MemoryCheck:
-			if (IRRunMemCheck(mips->pc + inst->dest, mips->r[inst->src1] + inst->constant)) {
+			if (RunMemCheck(mips->pc, mips->r[inst->src1] + inst->constant)) {
 				CoreTiming::ForceCheck();
 				return mips->pc;
 			}
@@ -1144,6 +1004,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		inst++;
 	}
 
-	// We hit count.  If this is a full block, it was badly constructed.
+	// If we got here, the block was badly constructed.
+	Crash();
 	return 0;
 }

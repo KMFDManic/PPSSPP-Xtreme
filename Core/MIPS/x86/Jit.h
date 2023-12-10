@@ -44,7 +44,7 @@ struct RegCacheState {
 class Jit : public Gen::XCodeBlock, public JitInterface, public MIPSFrontendInterface {
 public:
 	Jit(MIPSState *mipsState);
-	~Jit();
+	virtual ~Jit();
 
 	const JitOptions &GetJitOptions() { return jo; }
 
@@ -69,7 +69,6 @@ public:
 
 	// Ops
 	void Comp_ITypeMem(MIPSOpcode op) override;
-	void Comp_StoreSync(MIPSOpcode op) override;
 	void Comp_Cache(MIPSOpcode op) override;
 
 	void Comp_RelBranch(MIPSOpcode op) override;
@@ -205,7 +204,6 @@ private:
 //	void WriteRfiExitDestInEAX();
 	void WriteSyscallExit();
 	bool CheckJitBreakpoint(u32 addr, int downcountOffset);
-	void CheckMemoryBreakpoint(int instructionOffset, MIPSGPReg rs, int offset);
 
 	// Utility compilation functions
 	void BranchFPFlag(MIPSOpcode op, Gen::CCFlags cc, bool likely);
@@ -225,15 +223,15 @@ private:
 	void CompITypeMemRead(MIPSOpcode op, u32 bits, void (XEmitter::*mov)(int, int, Gen::X64Reg, Gen::OpArg), T (*safeFunc)(u32 addr)) {
 		CompITypeMemRead(op, bits, mov, (const void *)safeFunc);
 	}
-	void CompITypeMemWrite(MIPSOpcode op, u32 bits, const void *safeFunc, bool makeRTWritable = false);
+	void CompITypeMemWrite(MIPSOpcode op, u32 bits, const void *safeFunc);
 	template <typename T>
 	void CompITypeMemWrite(MIPSOpcode op, u32 bits, void (*safeFunc)(T val, u32 addr)) {
 		CompITypeMemWrite(op, bits, (const void *)safeFunc);
 	}
 	void CompITypeMemUnpairedLR(MIPSOpcode op, bool isStore);
 	void CompITypeMemUnpairedLRInner(MIPSOpcode op, Gen::X64Reg shiftReg);
-	void CompBranchExits(Gen::CCFlags cc, u32 targetAddr, u32 notTakenAddr, const BranchInfo &branchInfo);
-	void CompBranchExit(bool taken, u32 targetAddr, u32 notTakenAddr, const BranchInfo &branchInfo);
+	void CompBranchExits(Gen::CCFlags cc, u32 targetAddr, u32 notTakenAddr, bool delaySlotIsNice, bool likely, bool andLink);
+	void CompBranchExit(bool taken, u32 targetAddr, u32 notTakenAddr, bool delaySlotIsNice, bool likely, bool andLink);
 	static Gen::CCFlags FlipCCFlag(Gen::CCFlags flag);
 	static Gen::CCFlags SwapCCFlag(Gen::CCFlags flag);
 
@@ -244,8 +242,8 @@ private:
 
 	void CallProtectedFunction(const void *func, const Gen::OpArg &arg1);
 	void CallProtectedFunction(const void *func, const Gen::OpArg &arg1, const Gen::OpArg &arg2);
-	void CallProtectedFunction(const void *func, const Gen::OpArg &arg1, const u32 arg2);
-	void CallProtectedFunction(const void *func, const u32 arg1, const u32 arg2);
+	void CallProtectedFunction(const void *func, const u32 arg1, const u32 arg2, const u32 arg3);
+	void CallProtectedFunction(const void *func, const Gen::OpArg &arg1, const u32 arg2, const u32 arg3);
 
 	template <typename Tr, typename T1>
 	void CallProtectedFunction(Tr (*func)(T1), const Gen::OpArg &arg1) {
@@ -257,14 +255,14 @@ private:
 		CallProtectedFunction((const void *)func, arg1, arg2);
 	}
 
-	template <typename Tr, typename T1, typename T2>
-	void CallProtectedFunction(Tr(*func)(T1, T2), const Gen::OpArg &arg1, const u32 arg2) {
-		CallProtectedFunction((const void *)func, arg1, arg2);
+	template <typename Tr, typename T1, typename T2, typename T3>
+	void CallProtectedFunction(Tr (*func)(T1, T2, T3), const u32 arg1, const u32 arg2, const u32 arg3) {
+		CallProtectedFunction((const void *)func, arg1, arg2, arg3);
 	}
 
-	template <typename Tr, typename T1, typename T2>
-	void CallProtectedFunction(Tr(*func)(T1, T2), const u32 arg1, const u32 arg2) {
-		CallProtectedFunction((const void *)func, arg1, arg2);
+	template <typename Tr, typename T1, typename T2, typename T3>
+	void CallProtectedFunction(Tr (*func)(T1, T2, T3), const Gen::OpArg &arg1, const u32 arg2, const u32 arg3) {
+		CallProtectedFunction((const void *)func, arg1, arg2, arg3);
 	}
 
 	bool PredictTakeBranch(u32 targetAddr, bool likely);

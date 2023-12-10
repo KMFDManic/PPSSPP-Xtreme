@@ -19,7 +19,6 @@
 #include "Common/Math/lin/matrix4x4.h"
 #include "Common/Math/math_util.h"
 #include "Common/Math/geom2d.h"
-#include "Common/Input/KeyCodes.h"
 
 #include "Common/Common.h"
 
@@ -109,6 +108,7 @@ struct Theme {
 	Style headerStyle;
 	Style infoStyle;
 
+	Style popupTitle;
 	Style popupStyle;
 
 	uint32_t backgroundColor;
@@ -128,10 +128,10 @@ enum FocusDirection {
 	FOCUS_NEXT_PAGE,
 };
 
-typedef float Size;  // can also be WRAP_CONTENT or FILL_PARENT.
-
-static constexpr Size WRAP_CONTENT = -1.0f;
-static constexpr Size FILL_PARENT = -2.0f;
+enum {
+	WRAP_CONTENT = -1,
+	FILL_PARENT = -2,
+};
 
 // Gravity
 enum Gravity {
@@ -173,6 +173,8 @@ enum class BorderStyle {
 	HEADER_FG,
 	ITEM_DOWN_BG,
 };
+
+typedef float Size;  // can also be WRAP_CONTENT or FILL_PARENT.
 
 enum Orientation {
 	ORIENT_HORIZONTAL,
@@ -287,13 +289,6 @@ struct Margins {
 	int vert() const {
 		return top + bottom;
 	}
-	void SetAll(float f) {
-		int8_t i = (int)f;
-		top = i;
-		bottom = i;
-		left = i;
-		right = i;
-	}
 
 	int8_t top;
 	int8_t bottom;
@@ -372,7 +367,7 @@ class CallbackColorTween;
 
 class View {
 public:
-	View(LayoutParams *layoutParams = 0) : layoutParams_(layoutParams) {
+	View(LayoutParams *layoutParams = 0) : layoutParams_(layoutParams), visibility_(V_VISIBLE), measuredWidth_(0), measuredHeight_(0), enabledPtr_(0), enabled_(true), enabledMeansDisabled_(false) {
 		if (!layoutParams)
 			layoutParams_.reset(new LayoutParams());
 	}
@@ -382,7 +377,7 @@ public:
 	// Can even be called on a different thread! This is to really minimize latency, and decouple
 	// touch response from the frame rate. Same with Key and Axis.
 	virtual bool Key(const KeyInput &input) { return false; }
-	virtual bool Touch(const TouchInput &input) { return true; }
+	virtual void Touch(const TouchInput &input) {}
 	virtual void Axis(const AxisInput &input) {}
 	virtual void Update();
 
@@ -468,7 +463,7 @@ public:
 	virtual bool IsViewGroup() const { return false; }
 	virtual bool ContainsSubview(const View *view) const { return false; }
 
-	Point GetFocusPosition(FocusDirection dir) const;
+	Point GetFocusPosition(FocusDirection dir);
 
 	template <class T>
 	T *AddTween(T *t) {
@@ -481,22 +476,22 @@ protected:
 	std::unique_ptr<LayoutParams> layoutParams_;
 
 	std::string tag_;
-	Visibility visibility_ = V_VISIBLE;
+	Visibility visibility_;
 
 	// Results of measure pass. Set these in Measure.
-	float measuredWidth_ = 0.0f;
-	float measuredHeight_ = 0.0f;
+	float measuredWidth_;
+	float measuredHeight_;
 
 	// Outputs of layout. X/Y are absolute screen coordinates, hierarchy is "gone" here.
-	Bounds bounds_{};
+	Bounds bounds_;
 
 	std::vector<Tween *> tweens_;
 
 private:
 	std::function<bool()> enabledFunc_;
-	bool *enabledPtr_ = nullptr;
-	bool enabled_ = true;
-	bool enabledMeansDisabled_ = false;
+	bool *enabledPtr_;
+	bool enabled_;
+	bool enabledMeansDisabled_;
 
 	DISALLOW_COPY_AND_ASSIGN(View);
 };
@@ -508,7 +503,7 @@ public:
 		: View(layoutParams) {}
 
 	bool Key(const KeyInput &input) override { return false; }
-	bool Touch(const TouchInput &input) override { return false; }
+	void Touch(const TouchInput &input) override {}
 	bool CanBeFocused() const override { return false; }
 };
 
@@ -519,7 +514,7 @@ public:
 	Clickable(LayoutParams *layoutParams);
 
 	bool Key(const KeyInput &input) override;
-	bool Touch(const TouchInput &input) override;
+	void Touch(const TouchInput &input) override;
 
 	void FocusChanged(int focusFlags) override;
 
@@ -609,7 +604,7 @@ public:
 	void Draw(UIContext &dc) override;
 	std::string DescribeText() const override;
 	bool Key(const KeyInput &input) override;
-	bool Touch(const TouchInput &input) override;
+	void Touch(const TouchInput &input) override;
 	void Update() override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void SetShowPercent(bool s) { showPercent_ = s; }
@@ -620,7 +615,7 @@ public:
 	Event OnChange;
 
 private:
-	bool ApplyKey(InputKeyCode keyCode);
+	bool ApplyKey(int keyCode);
 
 	int *value_;
 	bool showPercent_;
@@ -630,7 +625,7 @@ private:
 	float paddingRight_;
 	int step_;
 	int repeat_ = 0;
-	InputKeyCode repeatCode_ = NKCODE_UNKNOWN;
+	int repeatCode_ = 0;
 };
 
 class SliderFloat : public Clickable {
@@ -640,7 +635,7 @@ public:
 	void Draw(UIContext &dc) override;
 	std::string DescribeText() const override;
 	bool Key(const KeyInput &input) override;
-	bool Touch(const TouchInput &input) override;
+	void Touch(const TouchInput &input) override;
 	void Update() override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 
@@ -650,7 +645,7 @@ public:
 	Event OnChange;
 
 private:
-	bool ApplyKey(InputKeyCode keyCode);
+	bool ApplyKey(int keyCode);
 
 	float *value_;
 	float minValue_;
@@ -658,7 +653,7 @@ private:
 	float paddingLeft_;
 	float paddingRight_;
 	int repeat_;
-	InputKeyCode repeatCode_ = NKCODE_UNKNOWN;
+	int repeatCode_ = 0;
 };
 
 // Basic button that modifies a bitfield based on the pressed status. Supports multitouch.
@@ -668,7 +663,7 @@ public:
 	TriggerButton(uint32_t *bitField, uint32_t bit, ImageID imageBackground, ImageID imageForeground, LayoutParams *layoutParams)
 		: View(layoutParams), down_(0.0), bitField_(bitField), bit_(bit), imageBackground_(imageBackground), imageForeground_(imageForeground) {}
 
-	bool Touch(const TouchInput &input) override;
+	void Touch(const TouchInput &input) override;
 	void Draw(UIContext &dc) override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 
@@ -719,13 +714,10 @@ public:
 	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
 	std::string DescribeText() const override;
-	void SetCentered(bool c) {
+	virtual void SetCentered(bool c) {
 		centered_ = c;
 	}
-	void SetDrawTextFlags(u32 flags) {
-		drawTextFlags_ = flags;
-	}
-	void SetIcon(ImageID iconImage, float scale = 1.0f, float rot = 0.0f, bool flipH = false, bool keepColor = true) {
+	virtual void SetIcon(ImageID iconImage, float scale = 1.0f, float rot = 0.0f, bool flipH = false, bool keepColor = true) {
 		rightIconKeepColor_ = keepColor;
 		rightIconScale_ = scale;
 		rightIconRot_ = rot;
@@ -736,21 +728,21 @@ public:
 protected:
 	// hackery
 	virtual bool IsSticky() const { return false; }
+	virtual float CalculateTextScale(const UIContext &dc, float availWidth) const;
 
 	std::string text_;
 	std::string smallText_;
 	ImageID image_;  // Centered if no text, on the left if text.
 	ImageID rightIconImage_ = ImageID::invalid();  // Shows in the right.
-	float rightIconScale_ = 0.0f;
-	float rightIconRot_ = 0.0f;
-	bool rightIconFlipH_ = false;
-	bool rightIconKeepColor_ = false;
+	float rightIconScale_;
+	float rightIconRot_;
+	bool rightIconFlipH_;
+	bool rightIconKeepColor_;
 	Padding textPadding_;
 	bool centered_ = false;
 	float imgScale_ = 1.0f;
 	float imgRot_ = 0.0f;
 	bool imgFlipH_ = false;
-	u32 drawTextFlags_ = 0;
 
 private:
 	bool selected_ = false;
@@ -765,7 +757,7 @@ public:
 		: Choice(buttonImage, layoutParams) {}
 
 	bool Key(const KeyInput &key) override;
-	bool Touch(const TouchInput &touch) override;
+	void Touch(const TouchInput &touch) override;
 	void FocusChanged(int focusFlags) override;
 
 	void Press() { down_ = true; dragging_ = false;  }
@@ -837,14 +829,8 @@ private:
 
 class CheckBox : public ClickableItem {
 public:
-	CheckBox(bool *toggle, const std::string &text, const std::string &smallText = "", LayoutParams *layoutParams = nullptr)
+	CheckBox(bool *toggle, const std::string &text, const std::string &smallText = "", LayoutParams *layoutParams = 0)
 		: ClickableItem(layoutParams), toggle_(toggle), text_(text), smallText_(smallText) {
-		OnClick.Handle(this, &CheckBox::OnClicked);
-	}
-
-	// Image-only "checkbox", lights up instead of showing a checkmark.
-	CheckBox(bool *toggle, ImageID imageID, LayoutParams *layoutParams = nullptr)
-		: ClickableItem(layoutParams), toggle_(toggle), imageID_(imageID) {
 		OnClick.Handle(this, &CheckBox::OnClicked);
 	}
 
@@ -856,24 +842,12 @@ public:
 	//allow external agents to toggle the checkbox
 	virtual void Toggle();
 	virtual bool Toggled() const;
+private:
+	float CalculateTextScale(const UIContext &dc, float availWidth) const;
 
-protected:
 	bool *toggle_;
 	std::string text_;
 	std::string smallText_;
-	ImageID imageID_;
-};
-
-class CollapsibleHeader : public CheckBox {
-public:
-	CollapsibleHeader(bool *toggle, const std::string &text, LayoutParams *layoutParams = nullptr);
-	void Draw(UIContext &dc) override;
-	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
-	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
-
-	void SetHasSubitems(bool hasSubItems) { hasSubItems_ = hasSubItems; }
-private:
-	bool hasSubItems_ = true;
 };
 
 class BitCheckBox : public CheckBox {
@@ -881,8 +855,6 @@ public:
 	BitCheckBox(uint32_t *bitfield, uint32_t bit, const std::string &text, const std::string &smallText = "", LayoutParams *layoutParams = nullptr)
 		: CheckBox(nullptr, text, smallText, layoutParams), bitfield_(bitfield), bit_(bit) {
 	}
-    
-	BitCheckBox(int *bitfield, int bit, const std::string &text, const std::string &smallText = "", LayoutParams *layoutParams = nullptr) : BitCheckBox((uint32_t *)bitfield, (uint32_t)bit, text, smallText, layoutParams) {}
 
 	void Toggle() override;
 	bool Toggled() const override;
@@ -927,10 +899,10 @@ private:
 
 class TextView : public InertView {
 public:
-	TextView(std::string_view text, LayoutParams *layoutParams = 0)
+	TextView(const std::string &text, LayoutParams *layoutParams = 0)
 		: InertView(layoutParams), text_(text), textAlign_(0), textColor_(0xFFFFFFFF), small_(false), shadow_(false), focusable_(false), clip_(true) {}
 
-	TextView(std::string_view text, int textAlign, bool small, LayoutParams *layoutParams = 0)
+	TextView(const std::string &text, int textAlign, bool small, LayoutParams *layoutParams = 0)
 		: InertView(layoutParams), text_(text), textAlign_(textAlign), textColor_(0xFFFFFFFF), small_(small), shadow_(false), focusable_(false), clip_(true) {}
 
 	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
@@ -945,7 +917,6 @@ public:
 	void SetFocusable(bool focusable) { focusable_ = focusable; }
 	void SetClip(bool clip) { clip_ = clip; }
 	void SetBullet(bool bullet) { bullet_ = bullet; }
-	void SetPadding(float pad) { pad_ = pad; }
 
 	bool CanBeFocused() const override { return focusable_; }
 
@@ -959,7 +930,6 @@ private:
 	bool focusable_;
 	bool clip_;
 	bool bullet_ = false;
-	float pad_ = 0.0f;
 };
 
 class TextEdit : public View {
@@ -971,12 +941,11 @@ public:
 	void SetMaxLen(size_t maxLen) { maxLen_ = maxLen; }
 	void SetTextAlign(int align) { align_ = align; }  // Only really useful for setting FLAG_DYNAMIC_ASCII
 
-	void FocusChanged(int focusFlags) override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
 	std::string DescribeText() const override;
 	bool Key(const KeyInput &key) override;
-	bool Touch(const TouchInput &touch) override;
+	void Touch(const TouchInput &touch) override;
 
 	Event OnTextChange;
 	Event OnEnter;
@@ -1061,12 +1030,10 @@ private:
 };
 
 void MeasureBySpec(Size sz, float contentWidth, MeasureSpec spec, float *measured);
-void ApplyBoundsBySpec(Bounds &bounds, MeasureSpec horiz, MeasureSpec vert);
 
 bool IsDPadKey(const KeyInput &key);
 bool IsAcceptKey(const KeyInput &key);
 bool IsEscapeKey(const KeyInput &key);
-bool IsInfoKey(const KeyInput &key);
 bool IsTabLeftKey(const KeyInput &key);
 bool IsTabRightKey(const KeyInput &key);
 

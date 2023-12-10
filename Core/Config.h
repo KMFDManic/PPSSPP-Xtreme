@@ -37,29 +37,6 @@ namespace http {
 struct UrlEncoder;
 struct ConfigPrivate;
 
-class Section;
-
-class PlayTimeTracker {
-public:
-	struct PlayTime {
-		int totalTimePlayed;
-		double startTime;  // time_now_d() time
-		uint64_t lastTimePlayed;  // UTC Unix time for portability.
-	};
-
-	// It's OK to call these redundantly.
-	void Start(std::string gameId);
-	void Stop(std::string gameId);
-
-	void Load(const Section *section);
-	void Save(Section *section);
-
-	bool GetPlayedTimeString(const std::string &gameId, std::string *str) const;
-
-private:
-	std::map<std::string, PlayTime> tracker_;
-};
-
 struct Config {
 public:
 	Config();
@@ -199,12 +176,13 @@ public:
 	float fUITint;
 	float fUISaturation;
 
+	bool bVertexCache;
 	bool bTextureBackoffCache;
 	bool bVertexDecoderJit;
 	bool bFullScreen;
 	bool bFullScreenMulti;
 	int iForceFullScreen = -1; // -1 = nope, 0 = force off, 1 = force on (not saved.)
-	int iInternalResolution;  // 0 = Auto (native), 1 = 1x (480x272), 2 = 2x, 3 = 3x, 4 = 4x and so on.
+	float iInternalResolution;  // 0 = Auto (native), 1 = 1x (480x272), 2 = 2x, 3 = 3x, 4 = 4x and so on.
 	int iAnisotropyLevel;  // 0 - 5, powers of 2: 0 = 1x = no aniso
 	int iMultiSampleLevel;
 	int bHighQualityDepth;
@@ -465,6 +443,7 @@ public:
 	float fCameraSide;
 	float fCanvasDistance;
 	float fCanvas3DDistance;
+	float fFieldOfViewPercentage;
 	float fHeadUpDisplayScale;
 	float fMotionLength;
 	float fHeadRotationScale;
@@ -513,7 +492,6 @@ public:
 	bool bAchievementsUnofficial;
 	bool bAchievementsSoundEffects;
 	bool bAchievementsLogBadMemReads;
-	bool bAchievementsSaveStateInHardcoreMode;
 
 	// Positioning of the various notifications
 	int iAchievementsLeaderboardTrackerPos;
@@ -601,8 +579,6 @@ public:
 	// Applies the Auto setting if set. Returns an enum value from PSP_SYSTEMPARAM_LANGUAGE_*.
 	int GetPSPLanguage();
 
-	PlayTimeTracker &TimeTracker() { return playTimeTracker_; }
-
 protected:
 	void LoadStandardControllerIni();
 	void LoadLangValuesMapping();
@@ -617,7 +593,6 @@ private:
 	std::string gameIdTitle_;
 	std::vector<std::string> recentIsos;
 	std::map<std::string, std::pair<std::string, int>> langValuesMapping_;
-	PlayTimeTracker playTimeTracker_;
 	Path iniFilename_;
 	Path controllerIniFilename_;
 	Path searchPath_;

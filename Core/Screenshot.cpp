@@ -41,7 +41,7 @@ public:
 	JPEGFileStream(const Path &filename) {
 		fp_ = File::OpenCFile(filename, "wb");
 	}
-	~JPEGFileStream() {
+	~JPEGFileStream() override {
 		if (fp_ ) {
 			fclose(fp_);
 		}
@@ -344,11 +344,11 @@ bool TakeGameScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotTy
 		// Only crop to the top left when using a render screenshot.
 		w = maxRes > 0 ? 480 * maxRes : PSP_CoreParameter().renderWidth;
 		h = maxRes > 0 ? 272 * maxRes : PSP_CoreParameter().renderHeight;
-	} else if (g_display.rotation != DisplayRotation::ROTATE_0) {
+	} else if (g_display_rotation != DisplayRotation::ROTATE_0) {
 		GPUDebugBuffer temp;
 		success = gpuDebug->GetOutputFramebuffer(temp);
 		if (success) {
-			buf = ApplyRotation(temp, g_display.rotation);
+			buf = ApplyRotation(temp, g_display_rotation);
 		}
 	} else {
 		success = gpuDebug->GetOutputFramebuffer(buf);
@@ -359,8 +359,8 @@ bool TakeGameScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotTy
 		return false;
 	}
 
+	u8 *flipbuffer = nullptr;
 	if (success) {
-		u8 *flipbuffer = nullptr;
 		const u8 *buffer = ConvertBufferToScreenshot(buf, false, flipbuffer, w, h);
 		success = buffer != nullptr;
 		if (success) {
@@ -371,13 +371,12 @@ bool TakeGameScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotTy
 
 			success = Save888RGBScreenshot(filename, fmt, buffer, w, h);
 		}
-		delete[] flipbuffer;
 	}
+	delete [] flipbuffer;
 
 	if (!success) {
 		ERROR_LOG(IO, "Failed to write screenshot.");
 	}
-
 	return success;
 }
 
@@ -407,7 +406,8 @@ bool Save888RGBScreenshot(const Path &filename, ScreenshotFormat fmt, const u8 *
 }
 
 bool Save8888RGBAScreenshot(const Path &filename, const u8 *buffer, int w, int h) {
-	png_image png{};
+	png_image png;
+	memset(&png, 0, sizeof(png));
 	png.version = PNG_IMAGE_VERSION;
 	png.format = PNG_FORMAT_RGBA;
 	png.width = w;
@@ -418,33 +418,6 @@ bool Save8888RGBAScreenshot(const Path &filename, const u8 *buffer, int w, int h
 	if (png.warning_or_error >= 2) {
 		ERROR_LOG(IO, "Saving screenshot to PNG produced errors.");
 		success = false;
-	}
-	return success;
-}
-
-bool Save8888RGBAScreenshot(std::vector<uint8_t> &bufferPNG, const u8 *bufferRGBA8888, int w, int h) {
-	png_image png{};
-	png.version = PNG_IMAGE_VERSION;
-	png.format = PNG_FORMAT_RGBA;
-	png.width = w;
-	png.height = h;
-
-	png_alloc_size_t allocSize = bufferPNG.size();
-	int result = png_image_write_to_memory(&png, allocSize == 0 ? nullptr : bufferPNG.data(), &allocSize, 0, bufferRGBA8888, w * 4, nullptr);
-	bool success = result != 0 && png.warning_or_error <= 1;
-	if (!success && allocSize != bufferPNG.size()) {
-		bufferPNG.resize(allocSize);
-		png.warning_or_error = 0;
-		result = png_image_write_to_memory(&png, bufferPNG.data(), &allocSize, 0, bufferRGBA8888, w * 4, nullptr);
-		success = result != 0 && png.warning_or_error <= 1;
-	}
-	if (success)
-		bufferPNG.resize(allocSize);
-	png_image_free(&png);
-
-	if (!success) {
-		ERROR_LOG(IO, "Buffering screenshot to PNG produced errors.");
-		bufferPNG.clear();
 	}
 	return success;
 }

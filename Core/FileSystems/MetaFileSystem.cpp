@@ -79,6 +79,7 @@ static bool RealPath(const std::string &currentDirectory, const std::string &inP
 	size_t inLen = inPath.length();
 	if (inLen == 0)
 	{
+		WARN_LOG(FILESYS, "RealPath: inPath is empty");
 		outPath = currentDirectory;
 		return true;
 	}
@@ -368,17 +369,19 @@ PSPFileInfo MetaFileSystem::GetFileInfo(std::string filename)
 	}
 }
 
-std::vector<PSPFileInfo> MetaFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> MetaFileSystem::GetDirListing(std::string path)
+{
 	std::lock_guard<std::recursive_mutex> guard(lock);
 	std::string of;
 	IFileSystem *system;
 	int error = MapFilePath(path, of, &system);
-	if (error == 0) {
-		return system->GetDirListing(of, exists);
-	} else {
+	if (error == 0)
+	{
+		return system->GetDirListing(of);
+	}
+	else
+	{
 		std::vector<PSPFileInfo> empty;
-		if (exists)
-			*exists = false;
 		return empty;
 	}
 }
@@ -575,17 +578,13 @@ size_t MetaFileSystem::SeekFile(u32 handle, s32 position, FileMove type)
 	std::lock_guard<std::recursive_mutex> guard(lock);
 	IFileSystem *sys = GetHandleOwner(handle);
 	if (sys)
-		return sys->SeekFile(handle, position, type);
+		return sys->SeekFile(handle,position,type);
 	else
 		return 0;
 }
 
-int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> &data, bool quiet) {
-	FileAccess access = FILEACCESS_READ;
-	if (quiet) {
-		access = (FileAccess)(access | FILEACCESS_PPSSPP_QUIET);
-	}
-	int handle = OpenFile(filename, access);
+int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> &data) {
+	int handle = OpenFile(filename, FILEACCESS_READ);
 	if (handle < 0)
 		return handle;
 
@@ -594,7 +593,7 @@ int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> 
 	SeekFile(handle, 0, FILEMOVE_BEGIN);
 	data.resize(dataSize);
 
-	size_t result = ReadFile(handle, data.data(), dataSize);
+	size_t result = ReadFile(handle, (u8 *)&data[0], dataSize);
 	CloseFile(handle);
 
 	if (result != dataSize)

@@ -15,18 +15,20 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include <string>
+#include <set>
 
 #include "Common/Serialize/Serializer.h"
 #include "Common/GraphicsContext.h"
-#include "Common/System/OSD.h"
+#include "Common/System/System.h"
 #include "Common/Profiler/Profiler.h"
 #include "Common/Data/Text/I18n.h"
 #include "Core/Debugger/Breakpoints.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/Host.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
+#include "Core/Reporting.h"
 #include "Core/System.h"
 
 #include "Common/GPU/D3D9/D3D9StateCache.h"
@@ -36,22 +38,30 @@
 #include "GPU/GeDisasm.h"
 
 #include "GPU/Common/FramebufferManagerCommon.h"
+#include "GPU/Debugger/Debugger.h"
 #include "GPU/Directx9/ShaderManagerDX9.h"
 #include "GPU/Directx9/GPU_DX9.h"
 #include "GPU/Directx9/FramebufferManagerDX9.h"
 #include "GPU/Directx9/DrawEngineDX9.h"
 #include "GPU/Directx9/TextureCacheDX9.h"
 
+#include "Core/HLE/sceKernelThread.h"
+#include "Core/HLE/sceKernelInterrupt.h"
+#include "Core/HLE/sceGe.h"
+
+namespace DX9 {
+
 GPU_DX9::GPU_DX9(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
-	: GPUCommonHW(gfxCtx, draw),
-	  drawEngine_(draw) {
+	: GPUCommon(gfxCtx, draw),
+		depalShaderCache_(draw),
+		drawEngine_(draw) {
 	device_ = (LPDIRECT3DDEVICE9)draw->GetNativeObject(Draw::NativeObject::DEVICE);
 	deviceEx_ = (LPDIRECT3DDEVICE9EX)draw->GetNativeObject(Draw::NativeObject::DEVICE_EX);
 
 	shaderManagerDX9_ = new ShaderManagerDX9(draw, device_);
 	framebufferManagerDX9_ = new FramebufferManagerDX9(draw);
 	framebufferManager_ = framebufferManagerDX9_;
-	textureCacheDX9_ = new TextureCacheDX9(draw, framebufferManager_->GetDraw2D());
+	textureCacheDX9_ = new TextureCacheDX9(draw);
 	textureCache_ = textureCacheDX9_;
 	drawEngineCommon_ = &drawEngine_;
 	shaderManager_ = shaderManagerDX9_;
@@ -63,8 +73,9 @@ GPU_DX9::GPU_DX9(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	framebufferManagerDX9_->SetTextureCache(textureCacheDX9_);
 	framebufferManagerDX9_->SetShaderManager(shaderManagerDX9_);
 	framebufferManagerDX9_->SetDrawEngine(&drawEngine_);
-	framebufferManagerDX9_->Init(msaaLevel_);
+	framebufferManagerDX9_->Init();
 	textureCacheDX9_->SetFramebufferManager(framebufferManagerDX9_);
+	textureCacheDX9_->SetDepalShaderCache(&depalShaderCache_);
 	textureCacheDX9_->SetShaderManager(shaderManagerDX9_);
 
 	// Sanity check gstate
@@ -75,7 +86,7 @@ GPU_DX9::GPU_DX9(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	// No need to flush before the tex scale/offset commands if we are baking
 	// the tex scale/offset into the vertices anyway.
 	UpdateCmdInfo();
-	gstate_c.SetUseFlags(CheckGPUFeatures());
+	CheckGPUFeatures();
 
 	BuildReportingInfo();
 
@@ -87,59 +98,249 @@ GPU_DX9::GPU_DX9(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	if (g_Config.bHardwareTessellation) {
 		// Disable hardware tessellation bacause DX9 is still unsupported.
 		ERROR_LOG(G3D, "Hardware Tessellation is unsupported, falling back to software tessellation");
-		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
-		// TODO: Badly formulated
-		g_OSD.Show(OSDType::MESSAGE_WARNING, gr->T("Turn off Hardware Tessellation - unsupported"));
+		auto gr = GetI18NCategory("Graphics");
+		host->NotifyUserMessage(gr->T("Turn off Hardware Tessellation - unsupported"), 2.5f, 0xFF3030FF);
 	}
 }
 
-u32 GPU_DX9::CheckGPUFeatures() const {
-	u32 features = GPUCommonHW::CheckGPUFeatures();
-	features |= GPU_USE_16BIT_FORMATS;
-	features |= GPU_USE_TEXTURE_LOD_CONTROL;
+// TODO: Move this detection elsewhere when it's needed elsewhere, not before. It's ugly.
+// Source: https://envytools.readthedocs.io/en/latest/hw/pciid.html#gf100
+enum NVIDIAGeneration {
+	NV_PRE_KEPLER,
+	NV_KEPLER,
+	NV_MAXWELL,
+	NV_PASCAL,
+	NV_VOLTA,
+	NV_TURING,  // or later
+};
+
+static NVIDIAGeneration NVIDIAGetDeviceGeneration(int deviceID) {
+	if (deviceID >= 0x1180 && deviceID <= 0x11bf)
+		return NV_KEPLER;  // GK104
+	if (deviceID >= 0x11c0 && deviceID <= 0x11fa)
+		return NV_KEPLER;  // GK106
+	if (deviceID >= 0x0fc0 && deviceID <= 0x0fff)
+		return NV_KEPLER;  // GK107
+	if (deviceID >= 0x1003 && deviceID <= 0x1028)
+		return NV_KEPLER;  // GK110(B)
+	if (deviceID >= 0x1280 && deviceID <= 0x12ba)
+		return NV_KEPLER;  // GK208
+	if (deviceID >= 0x1381 && deviceID <= 0x13b0)
+		return NV_MAXWELL;  // GM107
+	if (deviceID >= 0x1340 && deviceID <= 0x134d)
+		return NV_MAXWELL;  // GM108
+	if (deviceID >= 0x13c0 && deviceID <= 0x13d9)
+		return NV_MAXWELL;  // GM204
+	if (deviceID >= 0x1401 && deviceID <= 0x1427)
+		return NV_MAXWELL;  // GM206
+	if (deviceID >= 0x15f7 && deviceID <= 0x15f9)
+		return NV_PASCAL;  // GP100
+	if (deviceID >= 0x15f7 && deviceID <= 0x15f9)
+		return NV_PASCAL;  // GP100
+	if (deviceID >= 0x1b00 && deviceID <= 0x1b38)
+		return NV_PASCAL;  // GP102
+	if (deviceID >= 0x1b80 && deviceID <= 0x1be1)
+		return NV_PASCAL;  // GP104
+	if (deviceID >= 0x1c02 && deviceID <= 0x1c62)
+		return NV_PASCAL;  // GP106
+	if (deviceID >= 0x1c81 && deviceID <= 0x1c92)
+		return NV_PASCAL;  // GP107
+	if (deviceID >= 0x1d01 && deviceID <= 0x1d12)
+		return NV_PASCAL;  // GP108
+	if (deviceID >= 0x1d81 && deviceID <= 0x1dba)
+		return NV_VOLTA;   // GV100
+	if (deviceID >= 0x1e02 && deviceID <= 0x1e3c)
+		return NV_TURING;  // TU102
+	if (deviceID >= 0x1e82 && deviceID <= 0x1ed0)
+		return NV_TURING;  // TU104
+	if (deviceID >= 0x1f02 && deviceID <= 0x1f51)
+		return NV_TURING;  // TU104
+	if (deviceID >= 0x1e02)
+		return NV_TURING;  // More TU models or later, probably.
+	return NV_PRE_KEPLER;
+}
+
+void GPU_DX9::CheckGPUFeatures() {
+	u32 features = 0;
+	features |= GPU_SUPPORTS_16BIT_FORMATS;
+	features |= GPU_SUPPORTS_BLEND_MINMAX;
+	features |= GPU_SUPPORTS_TEXTURE_LOD_CONTROL;
 
 	// Accurate depth is required because the Direct3D API does not support inverse Z.
 	// So we cannot incorrectly use the viewport transform as the depth range on Direct3D.
-	features |= GPU_USE_ACCURATE_DEPTH;
+	// TODO: Breaks text in PaRappa for some reason?
+	features |= GPU_SUPPORTS_ACCURATE_DEPTH;
 
-	return CheckGPUFeaturesLate(features);
+	auto vendor = draw_->GetDeviceCaps().vendor;
+	if (!PSP_CoreParameter().compat.flags().DisableRangeCulling) {
+		// VS range culling (killing triangles in the vertex shader using NaN) causes problems on Intel.
+		// Also causes problems on old NVIDIA.
+		switch (vendor) {
+		case Draw::GPUVendor::VENDOR_INTEL:
+			break;
+		case Draw::GPUVendor::VENDOR_NVIDIA:
+			// Older NVIDIAs don't seem to like NaNs in their DX9 vertex shaders.
+			// No idea if KEPLER is the right cutoff, but let's go with it.
+			if (NVIDIAGetDeviceGeneration(draw_->GetDeviceCaps().deviceID) >= NV_KEPLER) {
+				features |= GPU_SUPPORTS_VS_RANGE_CULLING;
+			}
+			break;
+		default:
+			features |= GPU_SUPPORTS_VS_RANGE_CULLING;
+			break;
+		}
+	}
+
+	D3DCAPS9 caps;
+	ZeroMemory(&caps, sizeof(caps));
+	HRESULT result = 0;
+	if (deviceEx_) {
+		result = deviceEx_->GetDeviceCaps(&caps);
+	} else {
+		result = device_->GetDeviceCaps(&caps);
+	}
+	if (FAILED(result)) {
+		WARN_LOG_REPORT(G3D, "Direct3D9: Failed to get the device caps!");
+	} else {
+		if ((caps.RasterCaps & D3DPRASTERCAPS_ANISOTROPY) != 0 && caps.MaxAnisotropy > 1)
+			features |= GPU_SUPPORTS_ANISOTROPY;
+		if ((caps.TextureCaps & (D3DPTEXTURECAPS_NONPOW2CONDITIONAL | D3DPTEXTURECAPS_POW2)) == 0)
+			features |= GPU_SUPPORTS_TEXTURE_NPOT;
+	}
+
+	if (!g_Config.bHighQualityDepth) {
+		features |= GPU_SCALE_DEPTH_FROM_24BIT_TO_16BIT;
+	} else if (PSP_CoreParameter().compat.flags().PixelDepthRounding) {
+		// Assume we always have a 24-bit depth buffer.
+		features |= GPU_SCALE_DEPTH_FROM_24BIT_TO_16BIT;
+	} else if (PSP_CoreParameter().compat.flags().VertexDepthRounding) {
+		features |= GPU_ROUND_DEPTH_TO_16BIT;
+	}
+
+	if (PSP_CoreParameter().compat.flags().ClearToRAM) {
+		features |= GPU_USE_CLEAR_RAM_HACK;
+	}
+
+	gstate_c.featureFlags = features;
+}
+
+GPU_DX9::~GPU_DX9() {
+	framebufferManagerDX9_->DestroyAllFBOs();
+	delete framebufferManagerDX9_;
+	delete textureCache_;
+	shaderManagerDX9_->ClearCache(true);
+	delete shaderManagerDX9_;
+}
+
+// Needs to be called on GPU thread, not reporting thread.
+void GPU_DX9::BuildReportingInfo() {
+	using namespace Draw;
+	DrawContext *thin3d = gfxCtx_->GetDrawContext();
+
+	reportingPrimaryInfo_ = thin3d->GetInfoString(InfoField::VENDORSTRING);
+	reportingFullInfo_ = reportingPrimaryInfo_ + " - " + System_GetProperty(SYSPROP_GPUDRIVER_VERSION) + " - " + thin3d->GetInfoString(InfoField::SHADELANGVERSION);
 }
 
 void GPU_DX9::DeviceLost() {
-	GPUCommonHW::DeviceLost();
+	// Simply drop all caches and textures.
+	shaderManagerDX9_->ClearCache(false);
+	textureCacheDX9_->Clear(false);
+	GPUCommon::DeviceLost();
 }
 
-void GPU_DX9::DeviceRestore(Draw::DrawContext *draw) {
-	GPUCommonHW::DeviceRestore(draw);
+void GPU_DX9::DeviceRestore() {
+	GPUCommon::DeviceRestore();
+	// Nothing needed.
+}
+
+void GPU_DX9::InitClear() {
+	if (!framebufferManager_->UseBufferedRendering()) {
+		dxstate.depthWrite.set(true);
+		dxstate.colorMask.set(true, true, true, true);
+		device_->Clear(0, NULL, D3DCLEAR_STENCIL|D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.f, 0);
+	}
+}
+
+void GPU_DX9::BeginHostFrame() {
+	GPUCommon::BeginHostFrame();
+	UpdateCmdInfo();
+	if (resized_) {
+		CheckGPUFeatures();
+		framebufferManager_->Resized();
+		drawEngine_.Resized();
+		shaderManagerDX9_->DirtyShader();
+		textureCacheDX9_->NotifyConfigChanged();
+		resized_ = false;
+	}
 }
 
 void GPU_DX9::ReapplyGfxState() {
 	dxstate.Restore();
-	GPUCommonHW::ReapplyGfxState();
+	GPUCommon::ReapplyGfxState();
 }
 
 void GPU_DX9::BeginFrame() {
-	textureCache_->StartFrame();
+	textureCacheDX9_->StartFrame();
 	drawEngine_.BeginFrame();
+	depalShaderCache_.Decimate();
+	// fragmentTestCache_.Decimate();
 
-	GPUCommonHW::BeginFrame();
-	shaderManagerDX9_->DirtyLastShader();
+	GPUCommon::BeginFrame();
+	shaderManagerDX9_->DirtyShader();
 
 	framebufferManager_->BeginFrame();
+}
 
-	if (gstate_c.useFlagsChanged) {
-		// TODO: It'd be better to recompile them in the background, probably?
-		// This most likely means that saw equal depth changed.
-		WARN_LOG(G3D, "Shader use flags changed, clearing all shaders and depth buffers");
-		shaderManager_->ClearShaders();
-		framebufferManager_->ClearAllDepthBuffers();
-		gstate_c.useFlagsChanged = false;
-	}
+void GPU_DX9::SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format) {
+	GPUDebug::NotifyDisplay(framebuf, stride, format);
+	framebufferManagerDX9_->SetDisplayFramebuffer(framebuf, stride, format);
+}
+
+void GPU_DX9::CopyDisplayToOutput(bool reallyDirty) {
+	dxstate.depthWrite.set(true);
+	dxstate.colorMask.set(true, true, true, true);
+
+	drawEngine_.Flush();
+
+	framebufferManagerDX9_->CopyDisplayToOutput(reallyDirty);
+	framebufferManagerDX9_->EndFrame();
+
+	// shaderManager_->EndFrame();
+	shaderManagerDX9_->DirtyLastShader();
+
+	gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
 }
 
 void GPU_DX9::FinishDeferred() {
 	// This finishes reading any vertex data that is pending.
 	drawEngine_.FinishDeferred();
+}
+
+inline void GPU_DX9::CheckFlushOp(int cmd, u32 diff) {
+	const u8 cmdFlags = cmdInfo_[cmd].flags;
+	if (diff && (cmdFlags & FLAG_FLUSHBEFOREONCHANGE)) {
+		if (dumpThisFrame_) {
+			NOTICE_LOG(G3D, "================ FLUSH ================");
+		}
+		drawEngine_.Flush();
+	}
+}
+
+void GPU_DX9::PreExecuteOp(u32 op, u32 diff) {
+	CheckFlushOp(op >> 24, diff);
+}
+
+void GPU_DX9::ExecuteOp(u32 op, u32 diff) {
+	const u8 cmd = op >> 24;
+	const CommandInfo info = cmdInfo_[cmd];
+	const u8 cmdFlags = info.flags;
+	if ((cmdFlags & FLAG_EXECUTE) || (diff && (cmdFlags & FLAG_EXECUTEONCHANGE))) {
+		(this->*info.func)(op, diff);
+	} else if (diff) {
+		uint64_t dirty = info.flags >> 8;
+		if (dirty)
+			gstate_c.Dirty(dirty);
+	}
 }
 
 void GPU_DX9::GetStats(char *buffer, size_t bufsize) {
@@ -154,3 +355,50 @@ void GPU_DX9::GetStats(char *buffer, size_t bufsize) {
 		shaderManagerDX9_->GetNumFragmentShaders()
 	);
 }
+
+void GPU_DX9::ClearCacheNextFrame() {
+	textureCacheDX9_->ClearNextFrame();
+}
+
+void GPU_DX9::ClearShaderCache() {
+	shaderManagerDX9_->ClearCache(true);
+}
+
+void GPU_DX9::DoState(PointerWrap &p) {
+	GPUCommon::DoState(p);
+
+	// TODO: Some of these things may not be necessary.
+	// None of these are necessary when saving.
+	if (p.mode == p.MODE_READ && !PSP_CoreParameter().frozen) {
+		textureCache_->Clear(true);
+		depalShaderCache_.Clear();
+		drawEngine_.ClearTrackedVertexArrays();
+
+		gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
+		framebufferManager_->DestroyAllFBOs();
+	}
+}
+
+std::vector<std::string> GPU_DX9::DebugGetShaderIDs(DebugShaderType type) {
+	switch (type) {
+	case SHADER_TYPE_VERTEXLOADER:
+		return drawEngine_.DebugGetVertexLoaderIDs();
+	case SHADER_TYPE_DEPAL:
+		return depalShaderCache_.DebugGetShaderIDs(type);
+	default:
+		return shaderManagerDX9_->DebugGetShaderIDs(type);
+	}
+}
+
+std::string GPU_DX9::DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType) {
+	switch (type) {
+	case SHADER_TYPE_VERTEXLOADER:
+		return drawEngine_.DebugGetVertexLoaderString(id, stringType);
+	case SHADER_TYPE_DEPAL:
+		return depalShaderCache_.DebugGetShaderString(id, type, stringType);
+	default:
+		return shaderManagerDX9_->DebugGetShaderString(id, type, stringType);
+	}
+}
+
+}  // namespace DX9

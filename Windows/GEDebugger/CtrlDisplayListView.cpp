@@ -1,11 +1,8 @@
 #include <algorithm>
 #include <tchar.h>
-#include "Common/Data/Encoding/Utf8.h"
-#include "Common/StringUtils.h"
 #include "Common/System/Display.h"
 #include "Windows/GEDebugger/CtrlDisplayListView.h"
 #include "Windows/GEDebugger/GEDebugger.h"
-#include "Windows/MainWindow.h"
 #include "Windows/InputBox.h"
 #include "Windows/W32Util/ContextMenu.h"
 #include "Windows/main.h"
@@ -45,7 +42,7 @@ CtrlDisplayListView::CtrlDisplayListView(HWND _wnd)
 	instructionSize = 4;
 
 	// In small window mode, g_dpi_scale may have been adjusted.
-	const float fontScale = 1.0f / g_display.dpi_scale_real_y;
+	const float fontScale = 1.0f / g_dpi_scale_real_y;
 	int fontHeight = g_Config.iFontHeight * fontScale;
 	int charWidth = g_Config.iFontWidth * fontScale;
 
@@ -152,7 +149,8 @@ void CtrlDisplayListView::redraw()
 	GetClientRect(wnd, &rect);
 	visibleRows = rect.bottom/rowHeight;
 
-	RedrawWindow(wnd, NULL, NULL, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_INTERNALPAINT | RDW_ALLCHILDREN);
+	InvalidateRect(wnd, NULL, FALSE);
+	UpdateWindow(wnd); 
 }
 
 
@@ -228,7 +226,7 @@ void CtrlDisplayListView::onPaint(WPARAM wParam, LPARAM lParam)
 		GPUDebugOp op = i < (int)disasm.size() ? disasm[i] : GPUDebugOp();
 
 		char addressText[64];
-		snprintf(addressText,sizeof(addressText),"%08X %08X",op.pc,op.op);
+		sprintf(addressText,"%08X %08X",op.pc,op.op);
 		TextOutA(hdc,pixelPositions.addressStart,rowY1+2,addressText,(int)strlen(addressText));
 
 		if (address == list.pc)
@@ -267,17 +265,6 @@ void CtrlDisplayListView::toggleBreakpoint()
 	SendMessage(GetParent(wnd),WM_GEDBG_TOGGLEPCBREAKPOINT,curAddress,0);
 }
 
-void CtrlDisplayListView::PromptBreakpointCond() {
-	std::string expression;
-	GPUBreakpoints::GetAddressBreakpointCond(curAddress, &expression);
-	if (!InputBox_GetString(GetModuleHandle(NULL), wnd, L"Expression", expression, expression))
-		return;
-
-	std::string error;
-	if (!GPUBreakpoints::SetAddressBreakpointCond(curAddress, expression, &error))
-		MessageBox(wnd, ConvertUTF8ToWString(error).c_str(), L"Invalid expression", MB_OK | MB_ICONEXCLAMATION);
-}
-
 void CtrlDisplayListView::onMouseDown(WPARAM wParam, LPARAM lParam, int button)
 {
 	int y = HIWORD(lParam);
@@ -309,9 +296,6 @@ void CtrlDisplayListView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 {
 	if (button == 2)
 	{
-		HMENU menu = GetContextMenu(ContextMenuID::DISPLAYLISTVIEW);
-		EnableMenuItem(menu, ID_GEDBG_SETCOND, GPUBreakpoints::IsAddressBreakpoint(curAddress) ? MF_ENABLED : MF_GRAYED);
-
 		switch (TriggerContextMenu(ContextMenuID::DISPLAYLISTVIEW, wnd, ContextPoint::FromEvent(lParam)))
 		{
 		case ID_DISASM_GOTOINMEMORYVIEW:
@@ -321,9 +305,6 @@ void CtrlDisplayListView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 		case ID_DISASM_TOGGLEBREAKPOINT:
 			toggleBreakpoint();
 			redraw();
-			break;
-		case ID_GEDBG_SETCOND:
-			PromptBreakpointCond();
 			break;
 		case ID_DISASM_COPYINSTRUCTIONDISASM:
 			{
@@ -344,7 +325,7 @@ void CtrlDisplayListView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 		case ID_DISASM_COPYADDRESS:
 			{
 				char temp[16];
-				snprintf(temp,sizeof(temp),"%08X",curAddress);
+				sprintf(temp,"%08X",curAddress);
 				W32Util::CopyTextToClipboard(wnd, temp);
 			}
 			break;
@@ -388,23 +369,15 @@ void CtrlDisplayListView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 			break;
 		case ID_GEDBG_GOTOADDR:
 			{
-				std::string expression = StringFromFormat("%08x", curAddress);
-				if (!InputBox_GetString(GetModuleHandle(NULL), wnd, L"Address", expression, expression, true)) {
+				u32 newAddress = curAddress;
+				if (!InputBox_GetHex(GetModuleHandle(NULL), wnd, L"Address", curAddress, newAddress)) {
 					break;
 				}
-				uint32_t newAddress = curAddress;
-				if (!GPUDebugExecExpression(gpuDebug, expression.c_str(), newAddress)) {
-					MessageBox(wnd, ConvertUTF8ToWString(getExpressionError()).c_str(), L"Invalid expression", MB_OK | MB_ICONEXCLAMATION);
-					break;
+				if (Memory::IsValidAddress(newAddress)) {
+					setCurAddress(newAddress);
+					scrollAddressIntoView();
+					redraw();
 				}
-				if (!Memory::IsValidAddress(newAddress)) {
-					MessageBox(wnd, L"Address not in valid memory", L"Invalid address", MB_OK | MB_ICONEXCLAMATION);
-					break;
-				}
-
-				setCurAddress(newAddress);
-				scrollAddressIntoView();
-				redraw();
 			}
 			break;
 		}

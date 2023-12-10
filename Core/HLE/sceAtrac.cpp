@@ -34,7 +34,6 @@
 #include "Core/HLE/sceUtility.h"
 #include "Core/HLE/sceKernelMemory.h"
 #include "Core/HLE/sceAtrac.h"
-#include "Core/System.h"
 
 // Notes about sceAtrac buffer management
 //
@@ -115,8 +114,6 @@ const int PSP_ATRAC_LOOP_STREAM_DATA_IS_ON_MEMORY = -3;
 
 const u32 ATRAC3_MAX_SAMPLES = 0x400;
 const u32 ATRAC3PLUS_MAX_SAMPLES = 0x800;
-
-const size_t overAllocBytes = 16384;
 
 static const int atracDecodeDelay = 2300;
 
@@ -266,8 +263,7 @@ struct Atrac {
 			if (p.mode == p.MODE_READ) {
 				if (dataBuf_)
 					delete [] dataBuf_;
-				dataBuf_ = new u8[first_.filesize + overAllocBytes];
-				memset(dataBuf_, 0, first_.filesize + overAllocBytes);
+				dataBuf_ = new u8[first_.filesize];
 			}
 			DoArray(p, dataBuf_, first_.filesize);
 		}
@@ -405,7 +401,7 @@ struct Atrac {
 	// Used by low-level decoding and to track streaming.
 	u32 bufferPos_;
 	u32 bufferValidBytes_;
-	u32 bufferHeaderSize_ = 0;
+	u32 bufferHeaderSize_;
 
 	u16 channels_;
 	u16 outputChannels_;
@@ -456,7 +452,7 @@ struct Atrac {
 #else
 		// Future versions may add other things to free, but avcodec_free_context didn't exist yet here.
 		// Some old versions crash when we try to free extradata and subtitle_header, so let's not. A minor
-		// leak is better than a segfault.
+		// leak is better than a segfualt.
 		// av_freep(&codecCtx_->extradata);
 		// av_freep(&codecCtx_->subtitle_header);
 		avcodec_close(codecCtx_);
@@ -623,12 +619,10 @@ struct Atrac {
 
 	void ConsumeFrame() {
 		bufferPos_ += bytesPerFrame_;
-		if ((bufferState_ & ATRAC_STATUS_STREAMED_MASK) == ATRAC_STATUS_STREAMED_MASK) {
-			if (bufferValidBytes_ > bytesPerFrame_) {
-				bufferValidBytes_ -= bytesPerFrame_;
-			} else {
-				bufferValidBytes_ = 0;
-			}
+		if (bufferValidBytes_ > bytesPerFrame_) {
+			bufferValidBytes_ -= bytesPerFrame_;
+		} else {
+			bufferValidBytes_ = 0;
 		}
 		if (bufferPos_ >= StreamBufferEnd()) {
 			// Wrap around... theoretically, this should only happen at exactly StreamBufferEnd.
@@ -657,8 +651,6 @@ const int PSP_NUM_ATRAC_IDS = 6;
 static bool atracInited = true;
 static Atrac *atracIDs[PSP_NUM_ATRAC_IDS];
 static u32 atracIDTypes[PSP_NUM_ATRAC_IDS];
-static int atracLibVersion = 0;
-static u32 atracLibCrc = 0;
 
 void __AtracInit() {
 	atracInited = true;
@@ -682,14 +674,8 @@ void __AtracInit() {
 #endif // USE_FFMPEG
 }
 
-void __AtracLoadModule(int version, u32 crc) {
-	atracLibVersion = version;
-	atracLibCrc = crc;
-	INFO_LOG(ME, "AtracInit, atracLibVersion 0x%0x, atracLibcrc %x", atracLibVersion, atracLibCrc);
-}
-
 void __AtracDoState(PointerWrap &p) {
-	auto s = p.Section("sceAtrac", 1, 2);
+	auto s = p.Section("sceAtrac", 1);
 	if (!s)
 		return;
 
@@ -705,14 +691,6 @@ void __AtracDoState(PointerWrap &p) {
 		}
 	}
 	DoArray(p, atracIDTypes, PSP_NUM_ATRAC_IDS);
-	if (s < 2) {
-		atracLibVersion = 0;
-		atracLibCrc = 0;
-	}
-	else {
-		Do(p, atracLibVersion);
-		Do(p, atracLibCrc);
-	}
 }
 
 void __AtracShutdown() {
@@ -1061,8 +1039,8 @@ u32 _AtracAddStreamData(int atracID, u32 bufPtr, u32 bytesToAdd) {
 	Atrac *atrac = getAtrac(atracID);
 	if (!atrac)
 		return 0;
-	int addbytes = std::min(bytesToAdd, atrac->first_.filesize - atrac->first_.fileoffset - atrac->FirstOffsetExtra());
-	Memory::Memcpy(atrac->dataBuf_ + atrac->first_.fileoffset + atrac->FirstOffsetExtra(), bufPtr, addbytes, "AtracAddStreamData");
+	int addbytes = std::min(bytesToAdd, atrac->first_.filesize - atrac->first_.fileoffset);
+	Memory::Memcpy(atrac->dataBuf_ + atrac->first_.fileoffset, bufPtr, addbytes, "AtracAddStreamData");
 	atrac->first_.size += bytesToAdd;
 	if (atrac->first_.size >= atrac->first_.filesize) {
 		atrac->first_.size = atrac->first_.filesize;
@@ -1190,11 +1168,6 @@ static u32 sceAtracAddStreamData(int atracID, u32 bytesToAdd) {
 	atrac->first_.offset += bytesToAdd;
 	atrac->bufferValidBytes_ += bytesToAdd;
 
-	if (PSP_CoreParameter().compat.flags().AtracLoopHack && atrac->bufferState_ == ATRAC_STATUS_STREAMED_LOOP_FROM_END && atrac->RemainingFrames() > 2) {
-		atrac->loopNum_++;
-		atrac->SeekToSample(atrac->loopStartSample_ - atrac->FirstOffsetExtra() - atrac->firstSampleOffset_);
-	}
-
 	return hleLogSuccessI(ME, 0);
 }
 
@@ -1287,10 +1260,9 @@ u32 _AtracDecodeData(int atracID, u8 *outbuf, u32 outbufPtr, u32 *SamplesNum, u3
 							if (outbufPtr != 0) {
 								u32 outBytes = numSamples * atrac->outputChannels_ * sizeof(s16);
 								if (packetAddr != 0 && MemBlockInfoDetailed()) {
-									char tagData[128];
-									size_t tagSize = FormatMemWriteTagAt(tagData, sizeof(tagData), "AtracDecode/", packetAddr, packetSize);
-									NotifyMemInfo(MemBlockFlags::READ, packetAddr, packetSize, tagData, tagSize);
-									NotifyMemInfo(MemBlockFlags::WRITE, outbufPtr, outBytes, tagData, tagSize);
+									const std::string tag = "AtracDecode/" + GetMemWriteTagAt(packetAddr, packetSize);
+									NotifyMemInfo(MemBlockFlags::READ, packetAddr, packetSize, tag.c_str(), tag.size());
+									NotifyMemInfo(MemBlockFlags::WRITE, outbufPtr, outBytes, tag.c_str(), tag.size());
 								} else {
 									NotifyMemInfo(MemBlockFlags::WRITE, outbufPtr, outBytes, "AtracDecode");
 								}
@@ -1629,9 +1601,6 @@ static u32 sceAtracGetNextSample(int atracID, u32 outNAddr) {
 			}
 			if (numSamples > atrac->SamplesPerFrame())
 				numSamples = atrac->SamplesPerFrame();
-			if (atrac->bufferState_ == ATRAC_STATUS_STREAMED_LOOP_FROM_END && numSamples + atrac->currentSample_ > atrac->endSample_) {
-				atrac->bufferState_ = ATRAC_STATUS_ALL_DATA_LOADED;
-			}
 			if (Memory::IsValidAddress(outNAddr))
 				Memory::Write_U32(numSamples, outNAddr);
 			DEBUG_LOG(ME, "sceAtracGetNextSample(%i, %08x): %d samples left", atracID, outNAddr, numSamples);
@@ -1872,11 +1841,6 @@ int __AtracSetContext(Atrac *atrac) {
 		return hleReportError(ME, ATRAC_ERROR_UNKNOWN_FORMAT, "unknown codec type in set context");
 	}
 
-	if (atrac->codecCtx_) {
-		// Shouldn't happen, but just in case.
-		atrac->ReleaseFFMPEGContext();
-	}
-
 	const AVCodec *codec = avcodec_find_decoder(ff_codec);
 	atrac->codecCtx_ = avcodec_alloc_context3(codec);
 
@@ -1976,11 +1940,7 @@ static int _AtracSetData(Atrac *atrac, u32 buffer, u32 readSize, u32 bufferSize,
 	const char *codecName = atrac->codecType_ == PSP_MODE_AT_3 ? "atrac3" : "atrac3+";
 	const char *channelName = atrac->channels_ == 1 ? "mono" : "stereo";
 
-	// Over-allocate databuf to prevent going off the end if the bitstream is bad or if there are
-	// bugs in the decoder. This happens, see issue #15788. Arbitrary, but let's make it a whole page on the popular
-	// architecture that has the largest pages (M1).
-	atrac->dataBuf_ = new u8[atrac->first_.filesize + overAllocBytes];
-	memset(atrac->dataBuf_, 0, atrac->first_.filesize + overAllocBytes);
+	atrac->dataBuf_ = new u8[atrac->first_.filesize];
 	if (!atrac->ignoreDataBuf_) {
 		u32 copybytes = std::min(bufferSize, atrac->first_.filesize);
 		Memory::Memcpy(atrac->dataBuf_, buffer, copybytes, "AtracSetData");
@@ -1990,6 +1950,7 @@ static int _AtracSetData(Atrac *atrac, u32 buffer, u32 readSize, u32 bufferSize,
 		// Already logged.
 		return ret;
 	}
+
 	return hleLogSuccessInfoI(ME, successCode, "%s %s audio", codecName, channelName);
 }
 
@@ -2393,7 +2354,7 @@ static u32 _sceAtracGetContextAddress(int atracID) {
 	if (!atrac->context_.IsValid()) {
 		// allocate a new context_
 		u32 contextsize = 256;
-		atrac->context_ = kernelMemory.Alloc(contextsize, false, StringFromFormat("AtracCtx/%d", atracID).c_str());
+		atrac->context_ = kernelMemory.Alloc(contextsize, false, "Atrac Context");
 		if (atrac->context_.IsValid())
 			Memory::Memset(atrac->context_.ptr, 0, 256, "AtracContextClear");
 
@@ -2486,9 +2447,7 @@ static int sceAtracLowLevelInitDecoder(int atracID, u32 paramsAddr) {
 	atrac->first_.size = 0;
 	atrac->first_.filesize = atrac->bytesPerFrame_;
 	atrac->bufferState_ = ATRAC_STATUS_LOW_LEVEL;
-
-	atrac->dataBuf_ = new u8[atrac->first_.filesize + overAllocBytes];
-	memset(atrac->dataBuf_, 0, atrac->first_.filesize + overAllocBytes);
+	atrac->dataBuf_ = new u8[atrac->first_.filesize];
 	atrac->currentSample_ = 0;
 	int ret = __AtracSetContext(atrac);
 

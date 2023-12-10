@@ -21,7 +21,7 @@ public:
 	void Shutdown() override {
 		DestroyDrawContext();
 	}
-	virtual void SwapBuffers() = 0;
+	void SwapInterval(int interval) override {}
 	void Resize() override {}
 
 	virtual void GotBackbuffer();

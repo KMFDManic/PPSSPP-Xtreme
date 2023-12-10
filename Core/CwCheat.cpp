@@ -2,24 +2,22 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
-
 #include "Common/Data/Text/I18n.h"
 #include "Common/StringUtils.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/System/OSD.h"
 #include "Common/File/FileUtil.h"
 #include "Core/CoreTiming.h"
 #include "Core/CoreParameter.h"
 #include "Core/CwCheat.h"
 #include "Core/Config.h"
+#include "Core/Host.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/System.h"
 #include "Core/HLE/sceCtrl.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
-#include "Core/RetroAchievements.h"
 #include "GPU/Common/PostShader.h"
 
 #ifdef _WIN32
@@ -320,11 +318,9 @@ void __CheatDoState(PointerWrap &p) {
 }
 
 void hleCheat(u64 userdata, int cyclesLate) {
-	bool shouldBeEnabled = !Achievements::HardcoreModeActive() && g_Config.bEnableCheats;
-
-	if (cheatsEnabled != shouldBeEnabled) {
+	if (cheatsEnabled != g_Config.bEnableCheats) {
 		// Okay, let's move to the desired state, then.
-		if (shouldBeEnabled) {
+		if (g_Config.bEnableCheats) {
 			__CheatStart();
 		} else {
 			__CheatStop();
@@ -380,8 +376,8 @@ void CWCheatEngine::CreateCheatFile() {
 			fclose(f);
 		}
 		if (!File::Exists(filename_)) {
-			auto err = GetI18NCategory(I18NCat::ERRORS);
-			g_OSD.Show(OSDType::MESSAGE_ERROR, err->T("Unable to create cheat file, disk may be full"));
+			auto err = GetI18NCategory("Error");
+			host->NotifyUserMessage(err->T("Unable to create cheat file, disk may be full"));
 		}
 	}
 }
@@ -413,10 +409,7 @@ std::vector<CheatFileInfo> CWCheatEngine::FileInfo() {
 }
 
 void CWCheatEngine::InvalidateICache(u32 addr, int size) {
-	// Round start down and size up to the nearest word.
-	u32 aligned = addr & ~3;
-	int alignedSize = (addr + size - aligned + 3) & ~3;
-	currentMIPS->InvalidateICache(aligned, alignedSize);
+	currentMIPS->InvalidateICache(addr & ~3, size);
 }
 
 enum class CheatOp {
@@ -807,8 +800,8 @@ CheatOperation CWCheatEngine::InterpretNextOp(const CheatCode &cheat, size_t &i)
 }
 
 void CWCheatEngine::ApplyMemoryOperator(const CheatOperation &op, uint32_t(*oper)(uint32_t, uint32_t)) {
-	if (Memory::IsValidRange(op.addr, op.sz)) {
-		InvalidateICache(op.addr, op.sz);
+	if (Memory::IsValidAddress(op.addr)) {
+		InvalidateICache(op.addr, 4);
 		if (op.sz == 1)
 			Memory::Write_U8((u8)oper(Memory::Read_U8(op.addr), op.val), op.addr);
 		else if (op.sz == 2)
@@ -819,8 +812,8 @@ void CWCheatEngine::ApplyMemoryOperator(const CheatOperation &op, uint32_t(*oper
 }
 
 bool CWCheatEngine::TestIf(const CheatOperation &op, bool(*oper)(int, int)) {
-	if (Memory::IsValidRange(op.addr, op.sz)) {
-		InvalidateICache(op.addr, op.sz);
+	if (Memory::IsValidAddress(op.addr)) {
+		InvalidateICache(op.addr, 4);
 
 		int memoryValue = 0;
 		if (op.sz == 1)
@@ -836,9 +829,8 @@ bool CWCheatEngine::TestIf(const CheatOperation &op, bool(*oper)(int, int)) {
 }
 
 bool CWCheatEngine::TestIfAddr(const CheatOperation &op, bool(*oper)(int, int)) {
-	if (Memory::IsValidRange(op.addr, op.sz) && Memory::IsValidRange(op.ifAddrTypes.compareAddr, op.sz)) {
-		InvalidateICache(op.addr, op.sz);
-		InvalidateICache(op.addr, op.ifAddrTypes.compareAddr);
+	if (Memory::IsValidAddress(op.addr)) {
+		InvalidateICache(op.addr, 4);
 
 		int memoryValue1 = 0;
 		int memoryValue2 = 0;
@@ -868,8 +860,8 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 		break;
 
 	case CheatOp::Write:
-		if (Memory::IsValidRange(op.addr, op.sz)) {
-			InvalidateICache(op.addr, op.sz);
+		if (Memory::IsValidAddress(op.addr)) {
+			InvalidateICache(op.addr, 4);
 			if (op.sz == 1)
 				Memory::Write_U8((u8)op.val, op.addr);
 			else if (op.sz == 2)
@@ -951,7 +943,7 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 		break;
 
 	case CheatOp::VibrationFromMemory:
-		if (Memory::IsValidRange(op.addr, 8)) {
+		if (Memory::IsValidAddress(op.addr) && Memory::IsValidAddress(op.addr + 0x4)) {
 			uint16_t checkLeftVibration = Memory::Read_U16(op.addr);
 			uint16_t checkRightVibration = Memory::Read_U16(op.addr + 0x2);
 			if (checkLeftVibration > 0) {
@@ -970,7 +962,7 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 			auto shaderChain = GetFullPostShadersChain(g_Config.vPostShaderNames);
 			if (op.PostShaderUniform.shader < shaderChain.size()) {
 				std::string shaderName = shaderChain[op.PostShaderUniform.shader]->section;
-				g_Config.mPostShaderSetting[StringFromFormat("%sSettingCurrentValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = op.PostShaderUniform.value.f;
+				g_Config.mPostShaderSetting[StringFromFormat("%sSettingValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = op.PostShaderUniform.value.f;
 			}
 		}
 		break;
@@ -978,7 +970,7 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 	case CheatOp::PostShaderFromMemory:
 		{
 			auto shaderChain = GetFullPostShadersChain(g_Config.vPostShaderNames);
-			if (Memory::IsValidRange(op.addr, 4) && op.PostShaderUniform.shader < shaderChain.size()) {
+			if (Memory::IsValidAddress(op.addr) && op.PostShaderUniform.shader < shaderChain.size()) {
 				union {
 					float f;
 					uint32_t u;
@@ -987,16 +979,16 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 				std::string shaderName = shaderChain[op.PostShaderUniform.shader]->section;
 				switch (op.PostShaderUniform.format) {
 				case 0:
-					g_Config.mPostShaderSetting[StringFromFormat("%sSettingCurrentValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.u & 0x000000FF;
+					g_Config.mPostShaderSetting[StringFromFormat("%sSettingValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.u & 0x000000FF;
 					break;
 				case 1:
-					g_Config.mPostShaderSetting[StringFromFormat("%sSettingCurrentValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.u & 0x0000FFFF;
+					g_Config.mPostShaderSetting[StringFromFormat("%sSettingValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.u & 0x0000FFFF;
 					break;
 				case 2:
-					g_Config.mPostShaderSetting[StringFromFormat("%sSettingCurrentValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.u;
+					g_Config.mPostShaderSetting[StringFromFormat("%sSettingValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.u;
 					break;
 				case 3:
-					g_Config.mPostShaderSetting[StringFromFormat("%sSettingCurrentValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.f;
+					g_Config.mPostShaderSetting[StringFromFormat("%sSettingValue%d", shaderName.c_str(), op.PostShaderUniform.uniform + 1)] = value.f;
 					break;
 				}
 			}
@@ -1008,7 +1000,7 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 		break;
 
 	case CheatOp::Assert:
-		if (Memory::IsValidRange(op.addr, 4)) {
+		if (Memory::IsValidAddress(op.addr)) {
 			InvalidateICache(op.addr, 4);
 			if (Memory::Read_U32(op.addr) != op.val) {
 				i = cheat.lines.size();
@@ -1161,11 +1153,11 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 
 			switch (type) {
 			case 0: // 8 bit write
-				InvalidateICache(base + op.pointerCommands.offset, 1);
+				InvalidateICache(base + op.pointerCommands.offset, 4);
 				Memory::Write_U8((u8)val, base + op.pointerCommands.offset);
 				break;
 			case 1: // 16-bit write
-				InvalidateICache(base + op.pointerCommands.offset, 2);
+				InvalidateICache(base + op.pointerCommands.offset, 4);
 				Memory::Write_U16((u16)val, base + op.pointerCommands.offset);
 				break;
 			case 2: // 32-bit write
@@ -1173,11 +1165,11 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 				Memory::Write_U32((u32)val, base + op.pointerCommands.offset);
 				break;
 			case 3: // 8 bit inverse write
-				InvalidateICache(base - op.pointerCommands.offset, 1);
+				InvalidateICache(base - op.pointerCommands.offset, 4);
 				Memory::Write_U8((u8)val, base - op.pointerCommands.offset);
 				break;
 			case 4: // 16-bit inverse write
-				InvalidateICache(base - op.pointerCommands.offset, 2);
+				InvalidateICache(base - op.pointerCommands.offset, 4);
 				Memory::Write_U16((u16)val, base - op.pointerCommands.offset);
 				break;
 			case 5: // 32-bit inverse write
@@ -1196,10 +1188,6 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 }
 
 void CWCheatEngine::Run() {
-	if (Achievements::HardcoreModeActive()) {
-		return;
-	}
-
 	for (CheatCode cheat : cheats_) {
 		// InterpretNextOp and ExecuteOp move i.
 		for (size_t i = 0; i < cheat.lines.size(); ) {
@@ -1214,7 +1202,8 @@ bool CWCheatEngine::HasCheats() {
 }
 
 bool CheatsInEffect() {
-	if (!cheatEngine || !cheatsEnabled || Achievements::HardcoreModeActive())
+	if (!cheatEngine || !cheatsEnabled)
 		return false;
 	return cheatEngine->HasCheats();
 }
+

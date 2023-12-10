@@ -59,18 +59,18 @@ struct pspMessageDialog
 class PSPMsgDialog: public PSPDialog {
 public:
 	PSPMsgDialog(UtilityDialogType type);
-	~PSPMsgDialog();
+	virtual ~PSPMsgDialog();
 
-	int Init(unsigned int paramAddr);
-	int Update(int animSpeed) override;
-	int Shutdown(bool force = false) override;
-	void DoState(PointerWrap &p) override;
-	pspUtilityDialogCommon *GetCommonParam() override;
+	virtual int Init(unsigned int paramAddr);
+	virtual int Update(int animSpeed) override;
+	virtual int Shutdown(bool force = false) override;
+	virtual void DoState(PointerWrap &p) override;
+	virtual pspUtilityDialogCommon *GetCommonParam() override;
 
 	int Abort();
 
 protected:
-	bool UseAutoStatus() override {
+	virtual bool UseAutoStatus() override {
 		return false;
 	}
 
@@ -94,11 +94,11 @@ private:
 
 	u32 flag = 0;
 
-	pspMessageDialog messageDialog{};
-	int messageDialogAddr = 0;
+	pspMessageDialog messageDialog;
+	int messageDialogAddr;
 
 	char msgText[512];
-	int yesnoChoice = 0;
+	int yesnoChoice;
 	float scrollPos_ = 0.0f;
 	int framesUpHeld_ = 0;
 	int framesDownHeld_ = 0;

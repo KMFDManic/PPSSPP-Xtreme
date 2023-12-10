@@ -16,5 +16,39 @@ namespace W32Util
 
 	std::string UserDocumentsPath();
 
-	bool CreateDesktopShortcut(const std::string &argumentPath, std::string gameTitle);
+	struct AsyncBrowseDialog {
+	public:
+		enum Type {
+			OPEN,
+			SAVE,
+			DIR,
+		};
+
+		// For a directory.
+		AsyncBrowseDialog(HWND parent, UINT completeMsg, std::wstring title);
+		// For a file (OPEN or SAVE.)
+		AsyncBrowseDialog(Type type, HWND parent, UINT completeMsg, std::wstring title, std::wstring initialFolder, std::wstring filter, std::wstring extension);
+
+		~AsyncBrowseDialog();
+
+		bool GetResult(std::string &filename);
+		Type GetType() {
+			return type_;
+		}
+
+	private:
+		void Execute();
+
+		std::thread *thread_;
+		Type type_;
+		HWND parent_;
+		UINT completeMsg_;
+		std::wstring title_;
+		std::wstring initialFolder_;
+		std::wstring filter_;
+		std::wstring extension_;
+		bool complete_;
+		bool result_;
+		std::string filename_;
+	};
 }

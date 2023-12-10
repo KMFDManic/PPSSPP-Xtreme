@@ -22,18 +22,6 @@
 
 namespace net {
 
-void RequestProgress::Update(int64_t downloaded, int64_t totalBytes, bool done) {
-	if (totalBytes) {
-		progress = (double)downloaded / (double)totalBytes;
-	} else {
-		progress = 0.01f;
-	}
-
-	if (callback) {
-		callback(downloaded, totalBytes, done);
-	}
-}
-
 bool Buffer::FlushSocket(uintptr_t sock, double timeout, bool *cancelled) {
 	static constexpr float CANCEL_INTERVAL = 0.25f;
 	for (size_t pos = 0, end = data_.size(); pos < end; ) {
@@ -49,9 +37,8 @@ bool Buffer::FlushSocket(uintptr_t sock, double timeout, bool *cancelled) {
 			}
 		}
 		int sent = send(sock, &data_[pos], (int)(end - pos), MSG_NOSIGNAL);
-		// TODO: Do we need some retry logic here, instead of just giving up?
 		if (sent < 0) {
-			ERROR_LOG(IO, "FlushSocket failed to send: %d", errno);
+			ERROR_LOG(IO, "FlushSocket failed");
 			return false;
 		}
 		pos += sent;
@@ -60,7 +47,7 @@ bool Buffer::FlushSocket(uintptr_t sock, double timeout, bool *cancelled) {
 	return true;
 }
 
-bool Buffer::ReadAllWithProgress(int fd, int knownSize, RequestProgress *progress) {
+bool Buffer::ReadAllWithProgress(int fd, int knownSize, float *progress, float *kBps, bool *cancelled) {
 	static constexpr float CANCEL_INTERVAL = 0.25f;
 	std::vector<char> buf;
 	// We're non-blocking and reading from an OS buffer, so try to read as much as we can at a time.
@@ -76,15 +63,11 @@ bool Buffer::ReadAllWithProgress(int fd, int knownSize, RequestProgress *progres
 	int total = 0;
 	while (true) {
 		bool ready = false;
-
-		// If we might need to cancel, check on a timer for it to be ready.
-		// After this, we'll block on reading so we do this while first if we have a cancel pointer.
-		while (!ready && progress && progress->cancelled) {
-			if (*progress->cancelled)
+		while (!ready && cancelled) {
+			if (*cancelled)
 				return false;
 			ready = fd_util::WaitUntilReady(fd, CANCEL_INTERVAL, false);
 		}
-
 		int retval = recv(fd, &buf[0], (int)buf.size(), MSG_NOSIGNAL);
 		if (retval == 0) {
 			return true;
@@ -104,10 +87,10 @@ bool Buffer::ReadAllWithProgress(int fd, int knownSize, RequestProgress *progres
 		char *p = Append((size_t)retval);
 		memcpy(p, &buf[0], retval);
 		total += retval;
-		if (progress) {
-			progress->Update(total, knownSize, false);
-			progress->kBps = (float)(total / (time_now_d() - st)) / 1024.0f;
-		}
+		if (progress)
+			*progress = (float)total / (float)knownSize;
+		if (kBps)
+			*kBps = (float)(total / (time_now_d() - st)) / 1024.0f;
 	}
 	return true;
 }
@@ -130,4 +113,4 @@ int Buffer::Read(int fd, size_t sz) {
 	return (int)received;
 }
 
-}  // namespace
+}

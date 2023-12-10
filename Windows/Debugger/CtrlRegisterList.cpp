@@ -1,19 +1,20 @@
-#include <cmath>
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
+#include <math.h>
 #include <tchar.h>
 
 #include "Common/System/Display.h"
 #include "Common/Data/Encoding/Utf8.h"
-#include "Core/Config.h"
+#include "Windows/resource.h"
 #include "Core/MemMap.h"
-#include "Core/Reporting.h"
 #include "Windows/W32Util/ContextMenu.h"
 #include "Windows/W32Util/Misc.h"
 #include "Windows/InputBox.h"
-#include "Windows/resource.h"
 
 #include "CtrlRegisterList.h"
 #include "Debugger_MemoryDlg.h"
 
+#include "Core/Config.h"
 #include "Debugger_Disasm.h"
 #include "DebuggerShared.h"
 
@@ -131,7 +132,7 @@ CtrlRegisterList::CtrlRegisterList(HWND _wnd)
 	: wnd(_wnd) {
 	SetWindowLongPtr(wnd, GWLP_USERDATA, (LONG_PTR)this);
 
-	const float fontScale = 1.0f / g_display.dpi_scale_real_y;
+	const float fontScale = 1.0f / g_dpi_scale_real_y;
 	rowHeight = g_Config.iFontHeight * fontScale;
 	int charWidth = g_Config.iFontWidth * fontScale;
 	font = CreateFont(rowHeight, charWidth, 0, 0,
@@ -251,12 +252,12 @@ void CtrlRegisterList::onPaint(WPARAM wParam, LPARAM lParam)
 		if (i<cpu->GetNumRegsInCategory(category))
 		{
 			char temp[256];
-			int temp_len = snprintf(temp, sizeof(temp), "%s", cpu->GetRegName(category, i).c_str());
+			int temp_len = sprintf(temp,"%s",cpu->GetRegName(category,i));
 			SetTextColor(hdc,0x600000);
 			TextOutA(hdc,17,rowY1,temp,temp_len);
 			SetTextColor(hdc,0x000000);
 
-			cpu->PrintRegValue(category, i, temp, sizeof(temp));
+			cpu->PrintRegValue(category,i,temp);
 			if (category == 0 && changedCat0Regs[i])
 				SetTextColor(hdc, 0x0000FF);
 			else
@@ -272,15 +273,15 @@ void CtrlRegisterList::onPaint(WPARAM wParam, LPARAM lParam)
 			{
 			case REGISTER_PC:
 				value = cpu->GetPC();
-				len = snprintf(temp, sizeof(temp), "pc");
+				len = sprintf(temp,"pc");
 				break;
 			case REGISTER_HI:
 				value = cpu->GetHi();
-				len = snprintf(temp, sizeof(temp), "hi");
+				len = sprintf(temp,"hi");
 				break;
 			case REGISTER_LO:
 				value = cpu->GetLo();
-				len = snprintf(temp, sizeof(temp), "lo");
+				len = sprintf(temp,"lo");
 				break;
 			default:
 				temp[0] = '\0';
@@ -290,7 +291,7 @@ void CtrlRegisterList::onPaint(WPARAM wParam, LPARAM lParam)
 
 			SetTextColor(hdc,0x600000);
 			TextOutA(hdc,17,rowY1,temp,len);
-			len = snprintf(temp, sizeof(temp), "%08X",value);
+			len = sprintf(temp,"%08X",value);
 			if (changedCat0Regs[i])
 				SetTextColor(hdc, 0x0000FF);
 			else
@@ -442,7 +443,6 @@ void CtrlRegisterList::editRegisterValue()
 				cpu->SetRegValue(category, reg, val);
 				break;
 			}
-			Reporting::NotifyDebugger();
 			redraw();
 			SendMessage(GetParent(wnd),WM_DEB_UPDATE,0,0);	// registers changed -> disassembly needs to be updated
 		}

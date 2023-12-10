@@ -18,7 +18,6 @@
 #include <vector>
 #include "Common/Log.h"
 #include "Common/StringUtils.h"
-#include "Common/TimeUtil.h"
 #include "GPU/GPU.h"
 #include "GPU/Debugger/Breakpoints.h"
 #include "GPU/Debugger/Debugger.h"
@@ -35,8 +34,6 @@ static bool hasBreakpoints = false;
 static int primsLastFrame = 0;
 static int primsThisFrame = 0;
 static int thisFlipNum = 0;
-
-static double lastStepTime = -1.0;
 
 static std::vector<std::pair<int, int>> restrictPrimRanges;
 static std::string restrictPrimRule;
@@ -59,7 +56,6 @@ void SetActive(bool flag) {
 		breakNext = BreakNext::NONE;
 		breakAtCount = -1;
 		GPUStepping::ResumeFromStepping();
-		lastStepTime = -1.0;
 	}
 }
 
@@ -77,13 +73,11 @@ void SetBreakNext(BreakNext next) {
 		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_PRIM, true);
 		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_BEZIER, true);
 		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_SPLINE, true);
-		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_VAP, true);
 	} else if (next == BreakNext::CURVE) {
 		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_BEZIER, true);
 		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_SPLINE, true);
 	}
 	GPUStepping::ResumeFromStepping();
-	lastStepTime = next == BreakNext::NONE ? -1.0 : time_now_d();
 }
 
 void SetBreakCount(int c, bool relative) {
@@ -117,7 +111,7 @@ bool NotifyCommand(u32 pc) {
 	}
 
 	bool process = true;
-	if (cmd == GE_CMD_PRIM || cmd == GE_CMD_BEZIER || cmd == GE_CMD_SPLINE || cmd == GE_CMD_VAP) {
+	if (cmd == GE_CMD_PRIM || cmd == GE_CMD_BEZIER || cmd == GE_CMD_SPLINE) {
 		primsThisFrame++;
 
 		if (!restrictPrimRanges.empty()) {
@@ -134,18 +128,8 @@ bool NotifyCommand(u32 pc) {
 	if (IsBreakpoint(pc, op)) {
 		GPUBreakpoints::ClearTempBreakpoints();
 
-		if (coreState == CORE_POWERDOWN || !gpuDebug) {
-			breakNext = BreakNext::NONE;
-			return process;
-		}
-
 		auto info = gpuDebug->DissassembleOp(pc);
-		if (lastStepTime >= 0.0) {
-			NOTICE_LOG(G3D, "Waiting at %08x, %s (%fms)", pc, info.desc.c_str(), (time_now_d() - lastStepTime) * 1000.0);
-			lastStepTime = -1.0;
-		} else {
-			NOTICE_LOG(G3D, "Waiting at %08x, %s", pc, info.desc.c_str());
-		}
+		NOTICE_LOG(G3D, "Waiting at %08x, %s", pc, info.desc.c_str());
 		GPUStepping::EnterStepping();
 	}
 
@@ -156,12 +140,7 @@ void NotifyDraw() {
 	if (!active)
 		return;
 	if (breakNext == BreakNext::DRAW && !GPUStepping::IsStepping()) {
-		if (lastStepTime >= 0.0) {
-			NOTICE_LOG(G3D, "Waiting at a draw (%fms)", (time_now_d() - lastStepTime) * 1000.0);
-			lastStepTime = -1.0;
-		} else {
-			NOTICE_LOG(G3D, "Waiting at a draw");
-		}
+		NOTICE_LOG(G3D, "Waiting at a draw");
 		GPUStepping::EnterStepping();
 	}
 }
@@ -171,15 +150,6 @@ void NotifyDisplay(u32 framebuf, u32 stride, int format) {
 		return;
 	if (breakNext == BreakNext::FRAME) {
 		// This should work fine, start stepping at the first op of the new frame.
-		breakNext = BreakNext::OP;
-	}
-}
-
-void NotifyBeginFrame() {
-	if (!active)
-		return;
-	if (breakNext == BreakNext::VSYNC) {
-		// Just start stepping as soon as we can once the vblank finishes.
 		breakNext = BreakNext::OP;
 	}
 }
@@ -224,9 +194,9 @@ bool SetRestrictPrims(const char *rule) {
 			// If there's nothing yet, add everything else.
 			if (updated.empty()) {
 				if (range.first > 0)
-					updated.emplace_back(0, range.first - 1);
+					updated.push_back(std::make_pair(0, range.first - 1));
 				if (range.second < MAX_PRIMS)
-					updated.emplace_back(range.second + 1, MAX_PRIMS);
+					updated.push_back(std::make_pair(range.second + 1, MAX_PRIMS));
 				continue;
 			}
 
@@ -245,7 +215,7 @@ bool SetRestrictPrims(const char *rule) {
 					// We're slicing a hole in this subrange.
 					int next = sub.second;
 					sub.second = range.first - 1;
-					updated.emplace_back(range.second + 1, next);
+					updated.push_back(std::make_pair(range.second + 1, next));
 					continue;
 				}
 

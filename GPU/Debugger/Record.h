@@ -27,15 +27,16 @@ namespace GPURecord {
 
 bool IsActive();
 bool IsActivePending();
-bool RecordNextFrame(const std::function<void(const Path &)> callback);
-void ClearCallback();
+bool Activate();
+// Call only if Activate() returns true.
+void SetCallback(const std::function<void(const Path &)> callback);
 
 void NotifyCommand(u32 pc);
 void NotifyMemcpy(u32 dest, u32 src, u32 sz);
 void NotifyMemset(u32 dest, int v, u32 sz);
 void NotifyUpload(u32 dest, u32 sz);
 void NotifyDisplay(u32 addr, int stride, int fmt);
-void NotifyBeginFrame();
+void NotifyFrame();
 void NotifyCPU();
 
 };

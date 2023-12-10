@@ -16,7 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-#include <algorithm>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -28,7 +27,6 @@
 
 #include "Common/File/FileUtil.h"
 #include "Common/Log.h"
-#include "Common/StringUtils.h"
 #include "Common/TimeUtil.h"
 #include "Core/Config.h"
 #include "Core/MemMap.h"
@@ -291,7 +289,6 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x70a6152b265228e8, 296, "unendingbloodycall_download_frame", }, // unENDing Bloody Call
 	{ 0x7245b74db370ae72, 64, "vmmul_q_transp3", },
 	{ 0x7259d52b21814a5a, 40, "vtfm_t_transp", },
-	{ 0x730f59cc6c0f5732, 452, "godseaterburst_depthmask_5551", }, // Gods Eater Burst (US)
 	{ 0x7354fd206796d817, 864, "flowers_download_frame", }, // Flowers
 	{ 0x736b34ebc702d873, 104, "vmmul_q_transp", },
 	{ 0x73a614c08f777d52, 792, "danganronpa2_2_download_frame", }, // Danganronpa 2
@@ -357,7 +354,6 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x9f269daa6f0da803, 128, "dl_write_scissor_region", },
 	{ 0x9f7919eeb43982b0, 208, "__fixdfsi", },
 	{ 0xa1c9b0a2c71235bf, 1752, "marvelalliance1_copy" }, // Marvel Ultimate Alliance 1 (EU)
-	{ 0x9b76c7f2a41aa805, 1752, "marvelalliance1_copy" }, // Marvel Ultimate alliance 1 (US)
 	{ 0xa1ca0640f11182e7, 72, "strcspn", },
 	{ 0xa243486be51ce224, 272, "cosf", },
 	{ 0xa2bcef60a550a3ef, 92, "matrix_rot_z", },
@@ -613,7 +609,25 @@ namespace MIPSAnalyst {
 
 	int OpMemoryAccessSize(u32 pc) {
 		const auto op = Memory::Read_Instruction(pc, true);
-		return MIPSGetMemoryAccessSize(op);
+		MIPSInfo info = MIPSGetInfo(op);
+		if ((info & (IN_MEM | OUT_MEM)) == 0) {
+			return 0;
+		}
+
+		// TODO: Verify lwl/lwr/etc.?
+		switch (info & MEMTYPE_MASK) {
+		case MEMTYPE_BYTE:
+			return 1;
+		case MEMTYPE_HWORD:
+			return 2;
+		case MEMTYPE_WORD:
+		case MEMTYPE_FLOAT:
+			return 4;
+		case MEMTYPE_VQUAD:
+			return 16;
+		}
+
+		return 0;
 	}
 
 	bool IsOpMemoryWrite(u32 pc) {
@@ -675,9 +689,10 @@ namespace MIPSAnalyst {
 			int vt = (((op >> 16) & 0x1f)) | ((op & 1) << 5);
 			float rd[4];
 			ReadVector(rd, V_Quad, vt);
-			return memcmp(rd, Memory::GetPointerRange(addr, 16), sizeof(float) * 4) != 0;
+			return memcmp(rd, Memory::GetPointer(addr), sizeof(float) * 4) != 0;
 		}
 
+		// TODO: Technically, the break might be for 1 byte in the middle of a sw.
 		return writeVal != prevVal;
 	}
 
@@ -756,7 +771,7 @@ namespace MIPSAnalyst {
 		for (auto iter = functions.begin(); iter != functions.end(); iter++) {
 			AnalyzedFunction &f = *iter;
 			if (f.hasHash && f.size > 16) {
-				hashToFunction.emplace(f.hash, &f);
+				hashToFunction.insert(std::make_pair(f.hash, &f));
 			}
 		}
 	}
@@ -813,7 +828,7 @@ namespace MIPSAnalyst {
 			break;
 		}
 
-		if (reg >= 32) {
+		if (reg > 32) {
 			return USAGE_UNKNOWN;
 		}
 
@@ -932,7 +947,7 @@ skip:
 	}
 
 	static const char *DefaultFunctionName(char buffer[256], u32 startAddr) {
-		snprintf(buffer, 256, "z_un_%08x", startAddr);
+		sprintf(buffer, "z_un_%08x", startAddr);
 		return buffer;
 	}
 
@@ -941,10 +956,6 @@ skip:
 			// Must be I guess?
 			return true;
 		}
-
-		// Un named stubs, just in case.
-		if (!strncmp(name, "[UNK:", strlen("[UNK:")))
-			return true;
 
 		// Assume any z_un, not just the address, is a default func.
 		return !strncmp(name, "z_un_", strlen("z_un_")) || !strncmp(name, "u_un_", strlen("u_un_"));
@@ -1195,12 +1206,6 @@ skip:
 		}
 	}
 
-	bool SkipFuncHash(const std::string &name) {
-		std::vector<std::string> funcs;
-		SplitString(g_Config.sSkipFuncHashMap, ',', funcs);
-		return std::find(funcs.begin(), funcs.end(), name) != funcs.end();
-	}
-
 	void RegisterFunction(u32 startAddr, u32 size, const char *name) {
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
@@ -1208,7 +1213,7 @@ skip:
 		for (auto iter = functions.begin(); iter != functions.end(); iter++) {
 			if (iter->start == startAddr) {
 				// Let's just add it to the hashmap.
-				if (iter->hasHash && size > 16 && SkipFuncHash(name)) {
+				if (iter->hasHash && size > 16) {
 					HashMapFunc hfun;
 					hfun.hash = iter->hash;
 					strncpy(hfun.name, name, 64);
@@ -1290,7 +1295,7 @@ skip:
 			}
 			// Functions with default names aren't very interesting either.
 			const std::string name = g_symbolMap->GetLabelString(f.start);
-			if (IsDefaultFunction(name) || SkipFuncHash(name)) {
+			if (IsDefaultFunction(name)) {
 				continue;
 			}
 
@@ -1415,7 +1420,6 @@ skip:
 
 	std::vector<MIPSGPReg> GetOutputRegs(MIPSOpcode op) {
 		std::vector<MIPSGPReg> vec;
-		vec.reserve(3);
 		MIPSInfo info = MIPSGetInfo(op);
 		if (info & OUT_RD) vec.push_back(MIPS_GET_RD(op));
 		if (info & OUT_RT) vec.push_back(MIPS_GET_RT(op));
@@ -1460,7 +1464,7 @@ skip:
 		case 0x08:	// addi
 		case 0x09:	// addiu
 			info.hasRelevantAddress = true;
-			info.relevantAddress = cpu->GetRegValue(0, MIPS_GET_RS(op)) + SignExtend16ToS32(op & 0xFFFF);
+			info.relevantAddress = cpu->GetRegValue(0,MIPS_GET_RS(op))+((s16)(op & 0xFFFF));
 			break;
 		}
 
@@ -1546,7 +1550,21 @@ skip:
 		// lw, sh, ...
 		if (!IsSyscall(op) && (opInfo & (IN_MEM | OUT_MEM)) != 0) {
 			info.isDataAccess = true;
-			info.dataSize = MIPSGetMemoryAccessSize(op);
+			switch (opInfo & MEMTYPE_MASK) {
+			case MEMTYPE_BYTE:
+				info.dataSize = 1;
+				break;
+			case MEMTYPE_HWORD:
+				info.dataSize = 2;
+				break;
+			case MEMTYPE_WORD:
+			case MEMTYPE_FLOAT:
+				info.dataSize = 4;
+				break;
+
+			case MEMTYPE_VQUAD:
+				info.dataSize = 16;
+			}
 
 			u32 rs = cpu->GetRegValue(0, (int)MIPS_GET_RS(op));
 			s16 imm16 = op & 0xFFFF;

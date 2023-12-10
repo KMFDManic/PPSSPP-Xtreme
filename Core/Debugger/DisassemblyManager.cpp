@@ -16,7 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-
 #include <string>
 #include <algorithm>
 #include <map>
@@ -25,7 +24,6 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Data/Encoding/Utf8.h"
-#include "Common/StringUtils.h"
 #include "Core/MemMap.h"
 #include "Core/System.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
@@ -102,33 +100,37 @@ static HashType computeHash(u32 address, u32 size)
 }
 
 
-static void parseDisasm(const char *disasm, char *opcode, size_t opcodeSize, char *arguments, size_t argumentsSize, bool insertSymbols) {
+void parseDisasm(const char* disasm, char* opcode, char* arguments, bool insertSymbols)
+{
 	// copy opcode
-	size_t opcodePos = 0;
-	while (*disasm != 0 && *disasm != '\t' && opcodePos + 1 < opcodeSize) {
-		opcode[opcodePos++] = *disasm++;
+	while (*disasm != 0 && *disasm != '\t')
+	{
+		*opcode++ = *disasm++;
 	}
-	opcode[opcodePos] = 0;
+	*opcode = 0;
 
-	// Otherwise it's a tab, and we skip intentionally.
-	if (*disasm++ == 0) {
+	if (*disasm++ == 0)
+	{
 		*arguments = 0;
 		return;
 	}
 
 	const char* jumpAddress = strstr(disasm,"->$");
 	const char* jumpRegister = strstr(disasm,"->");
-	size_t argumentsPos = 0;
-	while (*disasm != 0 && argumentsPos + 1 < argumentsSize) {
+	while (*disasm != 0)
+	{
 		// parse symbol
-		if (disasm == jumpAddress) {
-			u32 branchTarget = 0;
-			sscanf(disasm+3, "%08x", &branchTarget);
+		if (disasm == jumpAddress)
+		{
+			u32 branchTarget;
+			sscanf(disasm+3,"%08x",&branchTarget);
+
 			const std::string addressSymbol = g_symbolMap->GetLabelString(branchTarget);
-			if (!addressSymbol.empty() && insertSymbols) {
-				argumentsPos += snprintf(&arguments[argumentsPos], argumentsSize - argumentsPos, "%s", addressSymbol.c_str());
+			if (!addressSymbol.empty() && insertSymbols)
+			{
+				arguments += sprintf(arguments,"%s",addressSymbol.c_str());
 			} else {
-				argumentsPos += snprintf(&arguments[argumentsPos], argumentsSize - argumentsPos, "0x%08X", branchTarget);
+				arguments += sprintf(arguments,"0x%08X",branchTarget);
 			}
 
 			disasm += 3+8;
@@ -138,14 +140,15 @@ static void parseDisasm(const char *disasm, char *opcode, size_t opcodeSize, cha
 		if (disasm == jumpRegister)
 			disasm += 2;
 
-		if (*disasm == ' ') {
+		if (*disasm == ' ')
+		{
 			disasm++;
 			continue;
 		}
-		arguments[argumentsPos++] = *disasm++;
+		*arguments++ = *disasm++;
 	}
 
-	arguments[argumentsPos] = 0;
+	*arguments = 0;
 }
 
 std::map<u32,DisassemblyEntry*>::iterator findDisassemblyEntry(std::map<u32,DisassemblyEntry*>& entries, u32 address, bool exact)
@@ -313,7 +316,7 @@ void DisassemblyManager::getLine(u32 address, bool insertSymbols, DisassemblyLin
 		dest.params = "Disassembly failure";
 	} else {
 		dest.name = "-";
-		dest.params.clear();
+		dest.params = "";
 	}
 }
 
@@ -361,7 +364,7 @@ u32 DisassemblyManager::getNthPreviousAddress(u32 address, int n)
 		analyze(address-127,128);
 	}
 	
-	return (address - n * 4) & ~3;
+	return address-n*4;
 }
 
 u32 DisassemblyManager::getNthNextAddress(u32 address, int n)
@@ -393,7 +396,7 @@ u32 DisassemblyManager::getNthNextAddress(u32 address, int n)
 		analyze(address);
 	}
 
-	return (address + n * 4) & ~3;
+	return address+n*4;
 }
 
 DisassemblyManager::~DisassemblyManager() {
@@ -706,8 +709,22 @@ void DisassemblyFunction::load()
 				case 0x2B:	// sw
 					macro = new DisassemblyMacro(opAddress);
 					
-					int dataSize = MIPSGetMemoryAccessSize(next);
-					if (dataSize == 0) {
+					int dataSize;
+					switch (nextInfo & MEMTYPE_MASK) {
+					case MEMTYPE_BYTE:
+						dataSize = 1;
+						break;
+					case MEMTYPE_HWORD:
+						dataSize = 2;
+						break;
+					case MEMTYPE_WORD:
+					case MEMTYPE_FLOAT:
+						dataSize = 4;
+						break;
+					case MEMTYPE_VQUAD:
+						dataSize = 16;
+						break;
+					default:
 						delete macro;
 						return;
 					}
@@ -762,9 +779,8 @@ bool DisassemblyOpcode::disassemble(u32 address, DisassemblyLineInfo &dest, bool
 		cpuDebug = DisassemblyManager::getCpu();
 
 	char opcode[64],arguments[256];
-	char dizz[512];
-	cpuDebug->DisAsm(address, dizz, sizeof(dizz));
-	parseDisasm(dizz, opcode, sizeof(opcode), arguments, sizeof(arguments), insertSymbols);
+	const char *dizz = cpuDebug->disasm(address, 4);
+	parseDisasm(dizz,opcode,arguments,insertSymbols);
 	dest.type = DISTYPE_OPCODE;
 	dest.name = opcode;
 	dest.params = arguments;
@@ -847,9 +863,9 @@ bool DisassemblyMacro::disassemble(u32 address, DisassemblyLineInfo &dest, bool 
 		
 		addressSymbol = g_symbolMap->GetLabelString(immediate);
 		if (!addressSymbol.empty() && insertSymbols) {
-			snprintf(buffer, sizeof(buffer), "%s,%s", cpuDebug->GetRegName(0, rt).c_str(), addressSymbol.c_str());
+			sprintf(buffer, "%s,%s", cpuDebug->GetRegName(0, rt), addressSymbol.c_str());
 		} else {
-			snprintf(buffer, sizeof(buffer), "%s,0x%08X", cpuDebug->GetRegName(0, rt).c_str(), immediate);
+			sprintf(buffer, "%s,0x%08X", cpuDebug->GetRegName(0, rt), immediate);
 		}
 
 		dest.params = buffer;
@@ -862,9 +878,9 @@ bool DisassemblyMacro::disassemble(u32 address, DisassemblyLineInfo &dest, bool 
 
 		addressSymbol = g_symbolMap->GetLabelString(immediate);
 		if (!addressSymbol.empty() && insertSymbols) {
-			snprintf(buffer, sizeof(buffer), "%s,%s", cpuDebug->GetRegName(0, rt).c_str(), addressSymbol.c_str());
+			sprintf(buffer, "%s,%s", cpuDebug->GetRegName(0, rt), addressSymbol.c_str());
 		} else {
-			snprintf(buffer, sizeof(buffer), "%s,0x%08X", cpuDebug->GetRegName(0, rt).c_str(), immediate);
+			sprintf(buffer, "%s,0x%08X", cpuDebug->GetRegName(0, rt), immediate);
 		}
 
 		dest.params = buffer;
@@ -987,7 +1003,7 @@ void DisassemblyData::createLines()
 					lines[currentLineStart] = entry;
 					lineAddresses.push_back(currentLineStart);
 					
-					currentLine.clear();
+					currentLine = "";
 					currentLineStart = pos-1;
 					inString = false;
 				}
@@ -999,9 +1015,9 @@ void DisassemblyData::createLines()
 			} else {
 				char buffer[64];
 				if (pos == end && b == 0)
-					truncate_cpy(buffer, "0");
+					strcpy(buffer,"0");
 				else
-					snprintf(buffer, sizeof(buffer), "0x%02X", b);
+					sprintf(buffer,"0x%02X",b);
 
 				if (currentLine.size()+strlen(buffer) >= maxChars)
 				{
@@ -1012,7 +1028,7 @@ void DisassemblyData::createLines()
 					lines[currentLineStart] = entry;
 					lineAddresses.push_back(currentLineStart);
 					
-					currentLine.clear();
+					currentLine = "";
 					currentLineStart = pos-1;
 					inString = false;
 				}
@@ -1083,7 +1099,7 @@ void DisassemblyData::createLines()
 				lines[currentLineStart] = entry;
 				lineAddresses.push_back(currentLineStart);
 
-				currentLine.clear();
+				currentLine = "";
 				currentLineStart = currentPos;
 			}
 

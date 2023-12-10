@@ -16,7 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <set>
-#include <mutex>
 
 #include "Common/Data/Format/IniFile.h"
 #include "Common/File/FileUtil.h"
@@ -30,10 +29,6 @@
 #include "Core/HLE/sceKernelModule.h"
 
 namespace HLEPlugins {
-
-std::mutex g_inputMutex;
-float PluginDataAxis[JOYSTICK_AXIS_MAX];
-std::map<int, uint8_t> PluginDataKeys;
 
 static bool anyEnabled = false;
 static std::vector<std::string> prxPlugins;
@@ -105,17 +100,15 @@ static std::vector<PluginInfo> FindPlugins(const std::string &gameID, const std:
 		std::set<std::string> matches;
 
 		std::string gameIni;
-		if (ini.GetOrCreateSection("games")->Get(gameID.c_str(), &gameIni, "")) {
+		if (ini.GetOrCreateSection("games")->Get("ALL", &gameIni, "")) {
 			if (!strcasecmp(gameIni.c_str(), "true")) {
 				matches.insert("plugin.ini");
-			} else if (!strcasecmp(gameIni.c_str(), "false")){
-				continue;
 			} else if (!gameIni.empty()) {
 				matches.insert(gameIni);
 			}
 		}
 
-		if (ini.GetOrCreateSection("games")->Get("ALL", &gameIni, "")) {
+		if (ini.GetOrCreateSection("games")->Get(gameID.c_str(), &gameIni, "")) {
 			if (!strcasecmp(gameIni.c_str(), "true")) {
 				matches.insert("plugin.ini");
 			} else if (!gameIni.empty()) {
@@ -194,8 +187,6 @@ bool Load() {
 		started = true;
 	}
 
-	std::lock_guard<std::mutex> guard(g_inputMutex);
-	PluginDataKeys.clear();
 	return started;
 }
 
@@ -206,8 +197,6 @@ void Unload() {
 void Shutdown() {
 	prxPlugins.clear();
 	anyEnabled = false;
-	std::lock_guard<std::mutex> guard(g_inputMutex);
-	PluginDataKeys.clear();
 }
 
 void DoState(PointerWrap &p) {
@@ -223,16 +212,4 @@ bool HasEnabled() {
 	return anyEnabled;
 }
 
-void SetKey(int key, uint8_t value) {
-	if (anyEnabled) {
-		std::lock_guard<std::mutex> guard(g_inputMutex);
-		PluginDataKeys[key] = value;
-	}
-}
-
-uint8_t GetKey(int key) {
-	std::lock_guard<std::mutex> guard(g_inputMutex);
-	return PluginDataKeys[key];
-}
-
-}  // namespace
+};

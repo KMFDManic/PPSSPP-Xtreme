@@ -6,7 +6,6 @@
 #include <direct.h>
 #if PPSSPP_PLATFORM(UWP)
 #include <fileapifromapp.h>
-#include <UWP/UWPHelpers/StorageManager.h>
 #endif
 #else
 #include <strings.h>
@@ -149,7 +148,7 @@ std::vector<File::FileInfo> ApplyFilter(std::vector<File::FileInfo> files, const
 		std::string tmp;
 		while (*filter) {
 			if (*filter == ':') {
-				filters.emplace("." + tmp);
+				filters.insert("." + tmp);
 				tmp.clear();
 			} else {
 				tmp.push_back(*filter);
@@ -157,7 +156,7 @@ std::vector<File::FileInfo> ApplyFilter(std::vector<File::FileInfo> files, const
 			filter++;
 		}
 		if (!tmp.empty())
-			filters.emplace("." + tmp);
+			filters.insert("." + tmp);
 	}
 
 	auto pred = [&](const File::FileInfo &info) {
@@ -172,11 +171,10 @@ std::vector<File::FileInfo> ApplyFilter(std::vector<File::FileInfo> files, const
 
 bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const char *filter, int flags) {
 	if (directory.Type() == PathType::CONTENT_URI) {
-		bool exists = false;
-		std::vector<File::FileInfo> fileList = Android_ListContentUri(directory.ToString(), &exists);
+		std::vector<File::FileInfo> fileList = Android_ListContentUri(directory.ToString());
 		*files = ApplyFilter(fileList, filter);
 		std::sort(files->begin(), files->end());
-		return exists;
+		return true;
 	}
 
 	std::set<std::string> filters;
@@ -184,7 +182,7 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 		std::string tmp;
 		while (*filter) {
 			if (*filter == ':') {
-				filters.insert(tmp);
+				filters.insert(std::move(tmp));
 				tmp.clear();
 			} else {
 				tmp.push_back(*filter);
@@ -192,7 +190,7 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 			filter++;
 		}
 		if (!tmp.empty())
-			filters.insert(tmp);
+			filters.insert(std::move(tmp));
 	}
 
 #if PPSSPP_PLATFORM(WINDOWS)
@@ -221,14 +219,7 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 	HANDLE hFind = FindFirstFileEx((directory.ToWString() + L"\\*").c_str(), FindExInfoStandard, &ffd, FindExSearchNameMatch, NULL, 0);
 #endif
 	if (hFind == INVALID_HANDLE_VALUE) {
-#if PPSSPP_PLATFORM(UWP)
-		// This step just to avoid empty results by adding fake folders
-		// it will help also to navigate back between selected folder
-		// we must ignore this function for any request other than UI navigation
-		if (GetFakeFolders(directory, files, filter, filters))
-			return true;
-#endif
-		return false;
+		return 0;
 	}
 	do {
 		const std::string virtualName = ConvertWStringToUTF8(ffd.cFileName);
@@ -275,7 +266,7 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 	struct dirent *result = NULL;
 	DIR *dirp = opendir(directory.c_str());
 	if (!dirp)
-		return false;
+		return 0;
 	while ((result = readdir(dirp))) {
 		const std::string virtualName(result->d_name);
 		// check for "." and ".."
@@ -325,7 +316,7 @@ std::vector<std::string> GetWindowsDrives()
 	{
 		if (logicaldrives & (1 << i))
 		{
-			CHAR driveName[] = { (CHAR)(TEXT('A') + i), TEXT(':'), TEXT('\\'), TEXT('\0') };
+			CHAR driveName[] = { TEXT('A') + i, TEXT(':'), TEXT('\\'), TEXT('\0') };
 			std::string str(driveName);
 			drives.push_back(driveName);
 		}

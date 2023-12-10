@@ -1,5 +1,5 @@
 set(GIT_VERSION_FILE "${OUTPUT_DIR}/git-version.cpp")
-set(GIT_VERSION "unknown")
+set(GIT_VERSION "1.13.1b")
 set(GIT_VERSION_UPDATE "1")
 
 find_package(Git)
@@ -20,14 +20,6 @@ if(EXISTS ${GIT_VERSION_FILE})
 	# Don't update if marked not to update.
 	file(STRINGS ${GIT_VERSION_FILE} match
 		REGEX "PPSSPP_GIT_VERSION_NO_UPDATE 1")
-	if(NOT ${match} EQUAL "")
-		set(GIT_VERSION_UPDATE "0")
-	endif()
-
-	# Let's also skip if it's the same.
-	string(REPLACE "." "\\." GIT_VERSION_ESCAPED ${GIT_VERSION})
-	file(STRINGS ${GIT_VERSION_FILE} match
-		REGEX "PPSSPP_GIT_VERSION = \"${GIT_VERSION_ESCAPED}\";")
 	if(NOT ${match} EQUAL "")
 		set(GIT_VERSION_UPDATE "0")
 	endif()

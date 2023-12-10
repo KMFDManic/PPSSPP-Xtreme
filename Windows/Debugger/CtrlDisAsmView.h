@@ -1,22 +1,25 @@
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
 #pragma once
 
-// CtrlDisAsmView
-//  
-// This Win32 control is made to be flexible and usable with
-// every kind of CPU architecture that has fixed width instruction words.
-// Just supply it an instance of a class derived from Debugger, with all methods
-// overridden for full functionality. Look at the ppc one for an example.
-// 
-// To add to a dialog box, just draw a User Control in the dialog editor,
-// and set classname to "CtrlDisAsmView". you also need to call CtrlDisAsmView::init()
-// before opening this dialog, to register the window class.
-// 
-// To get a class instance to be able to access it, just use 
-//   CtrlDisAsmView::getFrom(GetDlgItem(yourdialog, IDC_yourid)).
+//////////////////////////////////////////////////////////////////////////
+//CtrlDisAsmView
+// CtrlDisAsmView.cpp
+//////////////////////////////////////////////////////////////////////////
+//This Win32 control is made to be flexible and usable with
+//every kind of CPU architechture that has fixed width instruction words.
+//Just supply it an instance of a class derived from Debugger, with all methods
+//overridden for full functionality. Look at the ppc one for an example.
+//
+//To add to a dialog box, just draw a User Control in the dialog editor,
+//and set classname to "CtrlDisAsmView". you also need to call CtrlDisAsmView::init()
+//before opening this dialog, to register the window class.
+//
+//To get a class instance to be able to access it, just use 
+//  CtrlDisAsmView::getFrom(GetDlgItem(yourdialog, IDC_yourid)).
 
 #include <vector>
 #include <algorithm>
-
 #include "Common/CommonWindows.h"
 #include "Common/Log.h"
 #include "Core/Debugger/DebugInterface.h"
@@ -61,12 +64,6 @@ class CtrlDisAsmView
 	bool dontRedraw;
 	bool keyTaken;
 
-	enum class CopyInstructionsMode {
-		OPCODES,
-		DISASM,
-		ADDRESSES,
-	};
-
 	void assembleOpcode(u32 address, std::string defaultText);
 	std::string disassembleRange(u32 start, u32 size);
 	void disassembleToFile();
@@ -75,9 +72,8 @@ class CtrlDisAsmView
 	void calculatePixelPositions();
 	bool getDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData);
 	void updateStatusBarText();
-	void drawBranchLine(HDC hdc, std::map<u32, int> &addressPositions, const BranchLine &line);
-	void CopyInstructions(u32 startAddr, u32 endAddr, CopyInstructionsMode mode);
-	void NopInstructions(u32 startAddr, u32 endAddr);
+	void drawBranchLine(HDC hdc, std::map<u32,int>& addressPositions, BranchLine& line);
+	void copyInstructions(u32 startAddr, u32 endAddr, bool withDisasm);
 	std::set<std::string> getSelectedLineArguments();
 	void drawArguments(HDC hdc, const DisassemblyLineInfo &line, int x, int y, int textColor, const std::set<std::string> &currentArguments);
 

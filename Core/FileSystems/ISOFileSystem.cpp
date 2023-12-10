@@ -148,7 +148,7 @@ ISOFileSystem::ISOFileSystem(IHandleAllocator *_hAlloc, BlockDevice *_blockDevic
 	if (!blockDevice->ReadBlock(16, (u8*)&desc))
 		blockDevice->NotifyReadError();
 
-	entireISO.name.clear();
+	entireISO.name = "";
 	entireISO.isDirectory = false;
 	entireISO.startingPosition = 0;
 	entireISO.size = _blockDevice->GetNumBlocks();
@@ -175,14 +175,6 @@ ISOFileSystem::ISOFileSystem(IHandleAllocator *_hAlloc, BlockDevice *_blockDevic
 ISOFileSystem::~ISOFileSystem() {
 	delete blockDevice;
 	delete treeroot;
-}
-
-std::string ISOFileSystem::TreeEntry::BuildPath() {
-	if (parent) {
-		return parent->BuildPath() + "/" + name;
-	} else {
-		return name;
-	}
 }
 
 void ISOFileSystem::ReadDirectory(TreeEntry *root) {
@@ -236,12 +228,12 @@ void ISOFileSystem::ReadDirectory(TreeEntry *root) {
 			entry->startsector = dir.firstDataSector;
 			entry->dirsize = dir.dataLength;
 			entry->valid = isFile;  // Can pre-mark as valid if file, as we don't recurse into those.
-			VERBOSE_LOG(FILESYS, "%s: %s %08x %08x %d", entry->isDirectory ? "D" : "F", entry->name.c_str(), (u32)dir.firstDataSector, entry->startingPosition, entry->startingPosition);
+			VERBOSE_LOG(FILESYS, "%s: %s %08x %08x %i", entry->isDirectory ? "D" : "F", entry->name.c_str(), (u32)dir.firstDataSector, entry->startingPosition, entry->startingPosition);
 
 			// Round down to avoid any false reports.
 			if (isFile && dir.firstDataSector + (dir.dataLength / 2048) > blockDevice->GetNumBlocks()) {
 				blockDevice->NotifyReadError();
-				ERROR_LOG(FILESYS, "File '%s' starts or ends outside ISO. firstDataSector: %d len: %d", entry->BuildPath().c_str(), (int)dir.firstDataSector, (int)dir.dataLength);
+				ERROR_LOG(FILESYS, "File '%s' starts or ends outside ISO", entry->name.c_str());
 			}
 
 			if (entry->isDirectory && !relative) {
@@ -409,8 +401,8 @@ int ISOFileSystem::Ioctl(u32 handle, u32 cmd, u32 indataPtr, u32 inlen, u32 outd
 			return SCE_KERNEL_ERROR_ERRNO_FUNCTION_NOT_SUPPORTED;
 		}
 
-		if (!Memory::IsValidRange(outdataPtr, 0x800) || outlen < 0x800) {
-			WARN_LOG_REPORT(FILESYS, "sceIoIoctl: Invalid out pointer %08x while reading ISO9660 volume descriptor", outdataPtr);
+		if (!Memory::IsValidAddress(outdataPtr) || outlen < 0x800) {
+			WARN_LOG_REPORT(FILESYS, "sceIoIoctl: Invalid out pointer while reading ISO9660 volume descriptor");
 			return SCE_KERNEL_ERROR_ERRNO_INVALID_ARGUMENT;
 		}
 
@@ -432,7 +424,7 @@ int ISOFileSystem::Ioctl(u32 handle, u32 cmd, u32 indataPtr, u32 inlen, u32 outd
 		} else {
 			int block = (u16)desc.firstLETableSector;
 			u32 size = Memory::ValidSize(outdataPtr, (u32)desc.pathTableLength);
-			u8 *out = Memory::GetPointerWriteRange(outdataPtr, size);
+			u8 *out = Memory::GetPointerWrite(outdataPtr);
 
 			int blocks = size / blockDevice->GetBlockSize();
 			blockDevice->ReadBlocks(block, blocks, out);
@@ -639,14 +631,11 @@ PSPFileInfo ISOFileSystem::GetFileInfo(std::string filename) {
 	return x;
 }
 
-std::vector<PSPFileInfo> ISOFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> ISOFileSystem::GetDirListing(std::string path) {
 	std::vector<PSPFileInfo> myVector;
 	TreeEntry *entry = GetFromPath(path);
-	if (!entry) {
-		if (exists)
-			*exists = false;
+	if (!entry)
 		return myVector;
-	}
 
 	const std::string dot(".");
 	const std::string dotdot("..");
@@ -662,7 +651,6 @@ std::vector<PSPFileInfo> ISOFileSystem::GetDirListing(const std::string &path, b
 		x.name = e->name;
 		// Strangely, it seems to be executable even for files.
 		x.access = 0555;
-		x.exists = true;
 		x.size = e->size;
 		x.type = e->isDirectory ? FILETYPE_DIRECTORY : FILETYPE_NORMAL;
 		x.isOnSectorSystem = true;
@@ -671,8 +659,6 @@ std::vector<PSPFileInfo> ISOFileSystem::GetDirListing(const std::string &path, b
 		x.numSectors = (u32)((e->size + sectorSize - 1) / sectorSize);
 		myVector.push_back(x);
 	}
-	if (exists)
-		*exists = true;
 	return myVector;
 }
 

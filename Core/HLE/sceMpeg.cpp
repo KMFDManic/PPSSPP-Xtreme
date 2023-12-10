@@ -125,7 +125,7 @@ struct SceMpegLLI
 };
 
 void SceMpegAu::read(u32 addr) {
-	Memory::Memcpy(this, addr, sizeof(*this), "SceMpegAu");
+	Memory::ReadStruct(addr, this);
 	pts = (pts & 0xFFFFFFFFULL) << 32 | (((u64)pts) >> 32);
 	dts = (dts & 0xFFFFFFFFULL) << 32 | (((u64)dts) >> 32);
 }
@@ -133,7 +133,7 @@ void SceMpegAu::read(u32 addr) {
 void SceMpegAu::write(u32 addr) {
 	pts = (pts & 0xFFFFFFFFULL) << 32 | (((u64)pts) >> 32);
 	dts = (dts & 0xFFFFFFFFULL) << 32 | (((u64)dts) >> 32);
-	Memory::Memcpy(addr, this, sizeof(*this), "SceMpegAu");
+	Memory::WriteStruct(addr, this);
 }
 
 /*
@@ -258,8 +258,7 @@ struct MpegContext {
 };
 
 static bool isMpegInit;
-static int mpegLibVersion = 0;
-static u32 mpegLibCrc = 0;
+static int mpegLibVersion;
 static u32 streamIdGen;
 static int actionPostPut;
 static std::map<u32, MpegContext *> mpegMap;
@@ -314,7 +313,7 @@ static u32 getMpegVersion(u32 mpegRawVersion) {
 	}
 }
 
-static void AnalyzeMpeg(const u8 *buffer, u32 validSize, MpegContext *ctx) {
+static void AnalyzeMpeg(u8 *buffer, u32 validSize, MpegContext *ctx) {
 	ctx->mpegMagic = *(u32_le*)buffer;
 	ctx->mpegRawVersion = *(u32_le*)(buffer + PSMF_STREAM_VERSION_OFFSET);
 	ctx->mpegVersion = getMpegVersion(ctx->mpegRawVersion);
@@ -404,7 +403,7 @@ void __MpegInit() {
 }
 
 void __MpegDoState(PointerWrap &p) {
-	auto s = p.Section("sceMpeg", 1, 4);
+	auto s = p.Section("sceMpeg", 1, 3);
 	if (!s)
 		return;
 
@@ -422,14 +421,7 @@ void __MpegDoState(PointerWrap &p) {
 			ringbufferPutPacketsAdded = 0;
 		} else {
 			Do(p, ringbufferPutPacketsAdded);
-		} 
-		if (s < 4) {
-			mpegLibCrc = 0;
 		}
-		else {
-			Do(p, mpegLibCrc);
-		}
-
 		Do(p, streamIdGen);
 		Do(p, mpegLibVersion);
 	}
@@ -448,9 +440,8 @@ void __MpegShutdown() {
 	mpegMap.clear();
 }
 
-void __MpegLoadModule(int version,u32 crc) {
+void __MpegLoadModule(int version) {
 	mpegLibVersion = version;
-	mpegLibCrc = crc;
 }
 
 static u32 sceMpegInit() {
@@ -459,7 +450,7 @@ static u32 sceMpegInit() {
 		// TODO: Need to properly hook module load/unload for this to work right.
 		//return ERROR_MPEG_ALREADY_INIT;
 	} else {
-		INFO_LOG(ME, "sceMpegInit(), mpegLibVersion 0x%0x, mpegLibcrc %x", mpegLibVersion, mpegLibCrc);
+		INFO_LOG(ME, "sceMpegInit()");
 	}
 	isMpegInit = true;
 	return hleDelayResult(0, "mpeg init", 750);
@@ -636,7 +627,7 @@ static int sceMpegQueryStreamOffset(u32 mpeg, u32 bufferAddr, u32 offsetAddr)
 
 	DEBUG_LOG(ME, "sceMpegQueryStreamOffset(%08x, %08x, %08x)", mpeg, bufferAddr, offsetAddr);
 
-	// Kinda destructive, no? Shouldn't this just do what sceMpegQueryStreamSize does?
+	// Kinda destructive, no?
 	AnalyzeMpeg(Memory::GetPointerWriteUnchecked(bufferAddr), Memory::ValidSize(bufferAddr, 32768), ctx);
 
 	if (ctx->mpegMagic != PSMF_MAGIC) {
@@ -667,8 +658,7 @@ static u32 sceMpegQueryStreamSize(u32 bufferAddr, u32 sizeAddr)
 	DEBUG_LOG(ME, "sceMpegQueryStreamSize(%08x, %08x)", bufferAddr, sizeAddr);
 
 	MpegContext ctx;
-	ctx.mediaengine = nullptr;  // makes sure we don't actually load the stream.
-	ctx.isAnalyzed = false;
+	ctx.mediaengine = 0;
 
 	AnalyzeMpeg(Memory::GetPointerWriteUnchecked(bufferAddr), Memory::ValidSize(bufferAddr, 32768), &ctx);
 
@@ -884,11 +874,11 @@ public:
 		}
 	};
 	
-	void add(const H264Frames *p) {
+	void add(H264Frames *p){
 		add(p->stream, p->size);
 	};
 
-	void add(const u8 *str, int sz) {
+	void add(u8* str, int sz){
 		int newsize = size + sz;
 		u8* newstream = new u8[newsize];
 		// join two streams
@@ -975,9 +965,7 @@ static bool decodePmpVideo(PSPPointer<SceMpegRingBuffer> ringbuffer, u32 pmpctxA
 		for (int i = 0; i < pmp_nBlocks; i++){
 			auto lli = PSPPointer<SceMpegLLI>::Create(pmp_videoSource);
 			// add source block into pmpframes
-			const uint8_t *ptr = Memory::GetPointerRange(lli->pSrc, lli->iSize);
-			if (ptr)
-				pmpframes->add(ptr, lli->iSize);
+			pmpframes->add(Memory::GetPointerWrite(lli->pSrc), lli->iSize);
 			// get next block
 			pmp_videoSource += sizeof(SceMpegLLI);
 		}
@@ -1174,7 +1162,7 @@ static u32 sceMpegAvcDecode(u32 mpeg, u32 auAddr, u32 frameWidth, u32 bufferAddr
 			// playing all pmp_queue frames
 			ctx->mediaengine->m_pFrameRGB = pmp_queue.front();
 			int bufferSize = ctx->mediaengine->writeVideoImage(buffer, frameWidth, ctx->videoPixelMode);
-			gpu->PerformWriteFormattedFromMemory(buffer, bufferSize, frameWidth, (GEBufferFormat)ctx->videoPixelMode);
+			gpu->NotifyVideoUpload(buffer, bufferSize, frameWidth, ctx->videoPixelMode);
 			ctx->avc.avcFrameStatus = 1;
 			ctx->videoFrameCount++;
 			
@@ -1186,7 +1174,7 @@ static u32 sceMpegAvcDecode(u32 mpeg, u32 auAddr, u32 frameWidth, u32 bufferAddr
 	}
 	else if(ctx->mediaengine->stepVideo(ctx->videoPixelMode)) {
 		int bufferSize = ctx->mediaengine->writeVideoImage(buffer, frameWidth, ctx->videoPixelMode);
-		gpu->PerformWriteFormattedFromMemory(buffer, bufferSize, frameWidth, (GEBufferFormat)ctx->videoPixelMode);
+		gpu->NotifyVideoUpload(buffer, bufferSize, frameWidth, ctx->videoPixelMode);
 		ctx->avc.avcFrameStatus = 1;
 		ctx->videoFrameCount++;
 	} else {
@@ -1206,14 +1194,8 @@ static u32 sceMpegAvcDecode(u32 mpeg, u32 auAddr, u32 frameWidth, u32 bufferAddr
 	// Flush structs back to memory
 	avcAu.write(auAddr);
 
-	if (mpegLibVersion >= 0x0105 && mpegLibVersion < 0x010a) {
-		//Killzone - Liberation expect , issue #16727
-		Memory::Write_U32(1, initAddr);
-	}
-	else {
-		// Save the current frame's status to initAddr 
-		Memory::Write_U32(ctx->avc.avcFrameStatus, initAddr);
-	}
+	// Save the current frame's status to initAddr 
+	Memory::Write_U32(ctx->avc.avcFrameStatus, initAddr);
 	ctx->avc.avcDecodeResult = MPEG_AVC_DECODE_SUCCESS;
 
 	DEBUG_LOG(ME, "sceMpegAvcDecode(%08x, %08x, %i, %08x, %08x)", mpeg, auAddr, frameWidth, bufferAddr, initAddr);
@@ -1379,14 +1361,8 @@ static int sceMpegAvcDecodeYCbCr(u32 mpeg, u32 auAddr, u32 bufferAddr, u32 initA
 	// Flush structs back to memory
 	avcAu.write(auAddr);
 
-	if (mpegLibVersion >= 0x010A) {
-		// Sunday Vs Magazine Shuuketsu! Choujou Daikessen expect, issue #11060
-		Memory::Write_U32(1, initAddr);
-	}
-	else {	
-	// Save the current frame's status to initAddr
-		Memory::Write_U32(ctx->avc.avcFrameStatus, initAddr);
-	}
+	// Save the current frame's status to initAddr 
+	Memory::Write_U32(ctx->avc.avcFrameStatus, initAddr);
 	ctx->avc.avcDecodeResult = MPEG_AVC_DECODE_SUCCESS;
 
 	DEBUG_LOG(ME, "sceMpegAvcDecodeYCbCr(%08x, %08x, %08x, %08x)", mpeg, auAddr, bufferAddr, initAddr);
@@ -1505,6 +1481,7 @@ void PostPutAction::run(MipsCall &call) {
 
 	MpegContext *ctx = getMpegCtx(ringbuffer->mpeg);
 	int writeOffset = ringbuffer->packetsWritePos % (s32)ringbuffer->packets;
+	const u8 *data = Memory::GetPointer(ringbuffer->data + writeOffset * 2048);
 
 	int packetsAddedThisRound = currentMIPS->r[MIPS_REG_V0];
 	if (packetsAddedThisRound > 0) {
@@ -1516,10 +1493,9 @@ void PostPutAction::run(MipsCall &call) {
 		// TODO: Faster / less wasteful validation.
 		std::unique_ptr<MpegDemux> demuxer(new MpegDemux(packetsAddedThisRound * 2048, 0));
 		int readOffset = ringbuffer->packetsRead % (s32)ringbuffer->packets;
-		uint32_t bufSize = Memory::ValidSize(ringbuffer->data + readOffset * 2048, packetsAddedThisRound * 2048);
 		const u8 *buf = Memory::GetPointer(ringbuffer->data + readOffset * 2048);
 		bool invalid = false;
-		for (uint32_t i = 0; i < bufSize / 2048; ++i) {
+		for (int i = 0; i < packetsAddedThisRound; ++i) {
 			demuxer->addStreamData(buf, 2048);
 			buf += 2048;
 
@@ -1551,9 +1527,7 @@ void PostPutAction::run(MipsCall &call) {
 			WARN_LOG(ME, "sceMpegRingbufferPut clamping packetsAdded old=%i new=%i", packetsAddedThisRound, ringbuffer->packets - ringbuffer->packetsAvail);
 			packetsAddedThisRound = ringbuffer->packets - ringbuffer->packetsAvail;
 		}
-		const u8 *data = Memory::GetPointer(ringbuffer->data + writeOffset * 2048);
-		uint32_t dataSize = Memory::ValidSize(ringbuffer->data + writeOffset * 2048, packetsAddedThisRound * 2048);
-		int actuallyAdded = ctx->mediaengine == NULL ? 8 : ctx->mediaengine->addStreamData(data, dataSize) / 2048;
+		int actuallyAdded = ctx->mediaengine == NULL ? 8 : ctx->mediaengine->addStreamData(data, packetsAddedThisRound * 2048) / 2048;
 		if (actuallyAdded != packetsAddedThisRound) {
 			WARN_LOG_REPORT(ME, "sceMpegRingbufferPut(): unable to enqueue all added packets, going to overwrite some frames.");
 		}
@@ -2061,7 +2035,7 @@ static u32 sceMpegAvcCsc(u32 mpeg, u32 sourceAddr, u32 rangeAddr, int frameWidth
 	}
 
 	int destSize = ctx->mediaengine->writeVideoImageWithRange(destAddr, frameWidth, ctx->videoPixelMode, x, y, width, height);
-	gpu->PerformWriteFormattedFromMemory(destAddr, destSize, frameWidth, (GEBufferFormat)ctx->videoPixelMode);
+	gpu->NotifyVideoUpload(destAddr, destSize, frameWidth, ctx->videoPixelMode);
 
 	// Do not use avcDecodeDelayMs 's value
 	// Will cause video 's screen dislocation in Bleach heat of soul 6
@@ -2092,7 +2066,7 @@ static u32 sceMpegAvcInitYCbCr(u32 mpeg, int mode, int width, int height, u32 yc
 		return -1;
 	}
 
-	WARN_LOG_ONCE(sceMpegAvcInitYCbCr, ME, "UNIMPL sceMpegAvcInitYCbCr(%08x, %i, %i, %i, %08x)", mpeg, mode, width, height, ycbcr_addr);
+	ERROR_LOG(ME, "UNIMPL sceMpegAvcInitYCbCr(%08x, %i, %i, %i, %08x)", mpeg, mode, width, height, ycbcr_addr);
 	return 0;
 }
 
@@ -2176,53 +2150,59 @@ static u32 convertABGRToYCbCr(u32 abgr) {
 	return (y << 16) | (cb << 8) | cr;
 }
 
-// bufferOutputAddr is checked in the caller.
 static int __MpegAvcConvertToYuv420(const void *data, u32 bufferOutputAddr, int width, int height) {
 	u32 *imageBuffer = (u32*)data;
 	int sizeY = width * height;
 	int sizeCb = sizeY >> 2;
-	u8 *Y = Memory::GetPointerWriteRange(bufferOutputAddr, sizeY + sizeCb + sizeCb);
+	u8 *Y = (u8*)Memory::GetPointer(bufferOutputAddr);
 	u8 *Cb = Y + sizeY;
 	u8 *Cr = Cb + sizeCb;
 
-	if (!Y)
-		return hleLogError(ME, 0, "Bad output buffer pointer for yuv conv: %08x", bufferOutputAddr);
-
-	for (int y = 0; y < height; y += 2) {
-		for (int x = 0; x < width; x += 2) {
-			u32 abgr0 = imageBuffer[width * (y + 0) + x + 0];
-			u32 abgr1 = imageBuffer[width * (y + 0) + x + 1];
-			u32 abgr2 = imageBuffer[width * (y + 1) + x + 0];
-			u32 abgr3 = imageBuffer[width * (y + 1) + x + 1];
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; x += 4) {
+			u32 abgr0 = imageBuffer[x + 0];
+			u32 abgr1 = imageBuffer[x + 1];
+			u32 abgr2 = imageBuffer[x + 2];
+			u32 abgr3 = imageBuffer[x + 3];
 
 			u32 yCbCr0 = convertABGRToYCbCr(abgr0);
 			u32 yCbCr1 = convertABGRToYCbCr(abgr1);
 			u32 yCbCr2 = convertABGRToYCbCr(abgr2);
 			u32 yCbCr3 = convertABGRToYCbCr(abgr3);
 			
-			Y[width * (y + 0) + x + 0] = (yCbCr0 >> 16) & 0xFF;
-			Y[width * (y + 0) + x + 1] = (yCbCr1 >> 16) & 0xFF;
-			Y[width * (y + 1) + x + 0] = (yCbCr2 >> 16) & 0xFF;
-			Y[width * (y + 1) + x + 1] = (yCbCr3 >> 16) & 0xFF;
+			Y[x + 0] = (yCbCr0 >> 16) & 0xFF;
+			Y[x + 1] = (yCbCr1 >> 16) & 0xFF;
+			Y[x + 2] = (yCbCr2 >> 16) & 0xFF;
+			Y[x + 3] = (yCbCr3 >> 16) & 0xFF;
 
-			Cb[(width >> 1) * (y >> 1) + (x >> 1)] = (yCbCr0 >> 8) & 0xFF;
-			Cr[(width >> 1) * (y >> 1) + (x >> 1)] = yCbCr0 & 0xFF;
+			*Cb++ = (yCbCr0 >> 8) & 0xFF;
+			*Cr++ = yCbCr0 & 0xFF;
 		}
+		imageBuffer += width;
+		Y += width ;
 	}
 	return (width << 16) | height;
 }
 
-static int sceMpegAvcConvertToYuv420(u32 mpeg, u32 bufferOutputAddr, u32 bufferAddr, int unknown2) {
-	if (!Memory::IsValidAddress(bufferOutputAddr))
-		return hleLogError(ME, ERROR_MPEG_INVALID_VALUE, "invalid addresses");
+static int sceMpegAvcConvertToYuv420(u32 mpeg, u32 bufferOutputAddr, u32 unknown1, int unknown2)
+{
+	if (!Memory::IsValidAddress(bufferOutputAddr)) {
+		ERROR_LOG(ME, "sceMpegAvcConvertToYuv420(%08x, %08x, %08x, %08x): invalid addresses", mpeg, bufferOutputAddr, unknown1, unknown2);
+		return -1;
+	}
 
 	MpegContext *ctx = getMpegCtx(mpeg);
-	if (!ctx)
-		return hleLogWarning(ME, -1, "bad mpeg handle");
+	if (!ctx) {
+		WARN_LOG(ME, "sceMpegAvcConvertToYuv420(%08x, %08x, %08x, %08x): bad mpeg handle", mpeg, bufferOutputAddr, unknown1, unknown2);
+		return -1;
+	}
 
-	if (ctx->mediaengine->m_buffer == 0)
-		return hleLogWarning(ME, ERROR_MPEG_AVC_INVALID_VALUE, "m_buffer is zero");
+	if (ctx->mediaengine->m_buffer == 0){
+		WARN_LOG(ME, "sceMpegAvcConvertToYuv420(%08x, %08x, %08x, %08x): m_buffer is zero ", mpeg, bufferOutputAddr, unknown1, unknown2);
+		return ERROR_MPEG_AVC_INVALID_VALUE;
+	}
 
+	DEBUG_LOG(ME, "sceMpegAvcConvertToYuv420(%08x, %08x, %08x, %08x)", mpeg, bufferOutputAddr, unknown1, unknown2);
 	const u8 *data = ctx->mediaengine->getFrameImage();
 	int width = ctx->mediaengine->m_desWidth;
 	int height = ctx->mediaengine->m_desHeight;
@@ -2230,7 +2210,7 @@ static int sceMpegAvcConvertToYuv420(u32 mpeg, u32 bufferOutputAddr, u32 bufferA
 	if (data) {
 		__MpegAvcConvertToYuv420(data, bufferOutputAddr, width, height);
 	}
-	return hleLogSuccessX(ME, (width << 16) | height);
+	return 0;
 }
 
 static int sceMpegGetUserdataAu(u32 mpeg, u32 streamUid, u32 auAddr, u32 resultAddr)
@@ -2402,7 +2382,7 @@ const HLEFunction sceMpeg[] =
 	{0X8160A2FE, &WrapU_U<sceMpegAvcResourceFinish>,           "sceMpegAvcResourceFinish",           'x', "x"      },
 	{0XAF26BB01, &WrapU_U<sceMpegAvcResourceGetAvcEsBuf>,      "sceMpegAvcResourceGetAvcEsBuf",      'x', "x"      },
 	{0XFCBDB5AD, &WrapU_U<sceMpegAvcResourceInit>,             "sceMpegAvcResourceInit",             'x', "x"      },
-	{0XF5E7EA31, &WrapI_UUUI<sceMpegAvcConvertToYuv420>,       "sceMpegAvcConvertToYuv420",          'x', "xxxi"   },
+	{0XF5E7EA31, &WrapI_UUUI<sceMpegAvcConvertToYuv420>,       "sceMpegAvcConvertToYuv420",          'i', "xxxi"   },
 	{0X01977054, &WrapI_UUUU<sceMpegGetUserdataAu>,            "sceMpegGetUserdataAu",               'i', "xxxx"   },
 	{0X3C37A7A6, &WrapU_UU<sceMpegNextAvcRpAu>,                "sceMpegNextAvcRpAu",                 'x', "xx"     },
 	{0X11F95CF1, &WrapU_U<sceMpegGetAvcNalAu>,                 "sceMpegGetAvcNalAu",                 'x', "x"      },
@@ -2430,15 +2410,15 @@ static u32 sceMpegBasePESpacketCopy(u32 p)
 {
 	pmp_videoSource = p;
 	pmp_nBlocks = 0;
-
-	auto lli = PSPPointer<SceMpegLLI>::Create(p);
-	while (lli.IsValid()) {
+	SceMpegLLI lli;
+	while (1){
+		Memory::ReadStruct(p, &lli);
 		pmp_nBlocks++;
 		// lli.Next ==0 for last block
-		if (lli->Next == 0){
+		if (lli.Next == 0){
 			break;
 		}
-		++lli;
+		p = p + sizeof(SceMpegLLI);
 	}
 	
 	DEBUG_LOG(ME, "sceMpegBasePESpacketCopy(%08x), received %d block(s)", pmp_videoSource, pmp_nBlocks);

@@ -30,6 +30,7 @@
 #include "Common/Log.h"
 #include "Common/CommonTypes.h"
 #include "Core/Config.h"
+#include "Core/Reporting.h"
 #include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
@@ -62,7 +63,7 @@ std::string D3D11FragmentShader::GetShaderString(DebugShaderStringType type) con
 	}
 }
 
-D3D11VertexShader::D3D11VertexShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, VShaderID id, const char *code, bool useHWTransform)
+D3D11VertexShader::D3D11VertexShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, VShaderID id, const char *code, int vertType, bool useHWTransform)
 	: device_(device), useHWTransform_(useHWTransform), id_(id) {
 	source_ = code;
 
@@ -87,11 +88,9 @@ std::string D3D11VertexShader::GetShaderString(DebugShaderStringType type) const
 	}
 }
 
-static constexpr size_t CODE_BUFFER_SIZE = 32768;
-
 ShaderManagerD3D11::ShaderManagerD3D11(Draw::DrawContext *draw, ID3D11Device *device, ID3D11DeviceContext *context, D3D_FEATURE_LEVEL featureLevel)
 	: ShaderManagerCommon(draw), device_(device), context_(context), featureLevel_(featureLevel) {
-	codeBuffer_ = new char[CODE_BUFFER_SIZE];
+	codeBuffer_ = new char[16384];
 	memset(&ub_base, 0, sizeof(ub_base));
 	memset(&ub_lights, 0, sizeof(ub_lights));
 	memset(&ub_bones, 0, sizeof(ub_bones));
@@ -178,20 +177,20 @@ void ShaderManagerD3D11::BindUniforms() {
 	context_->PSSetConstantBuffers(0, 1, ps_cbs);
 }
 
-void ShaderManagerD3D11::GetShaders(int prim, VertexDecoder *decoder, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, const ComputedPipelineState &pipelineState, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode) {
+void ShaderManagerD3D11::GetShaders(int prim, u32 vertType, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat) {
 	VShaderID VSID;
 	FShaderID FSID;
 
 	if (gstate_c.IsDirty(DIRTY_VERTEXSHADER_STATE)) {
 		gstate_c.Clean(DIRTY_VERTEXSHADER_STATE);
-		ComputeVertexShaderID(&VSID, decoder, useHWTransform, useHWTessellation, weightsAsFloat, useSkinInDecode);
+		ComputeVertexShaderID(&VSID, vertType, useHWTransform, useHWTessellation, weightsAsFloat);
 	} else {
 		VSID = lastVSID_;
 	}
 
 	if (gstate_c.IsDirty(DIRTY_FRAGMENTSHADER_STATE)) {
 		gstate_c.Clean(DIRTY_FRAGMENTSHADER_STATE);
-		ComputeFragmentShaderID(&FSID, pipelineState, draw_->GetBugs());
+		ComputeFragmentShaderID(&FSID, draw_->GetBugs());
 	} else {
 		FSID = lastFSID_;
 	}
@@ -211,10 +210,8 @@ void ShaderManagerD3D11::GetShaders(int prim, VertexDecoder *decoder, D3D11Verte
 		std::string genErrorString;
 		uint32_t attrMask;
 		uint64_t uniformMask;
-		VertexShaderFlags flags;
-		GenerateVertexShader(VSID, codeBuffer_, draw_->GetShaderLanguageDesc(), draw_->GetBugs(), &attrMask, &uniformMask, &flags, &genErrorString);
-		_assert_msg_(strlen(codeBuffer_) < CODE_BUFFER_SIZE, "VS length error: %d", (int)strlen(codeBuffer_));
-		vs = new D3D11VertexShader(device_, featureLevel_, VSID, codeBuffer_, useHWTransform);
+		GenerateVertexShader(VSID, codeBuffer_, draw_->GetShaderLanguageDesc(), draw_->GetBugs(), &attrMask, &uniformMask, &genErrorString);
+		vs = new D3D11VertexShader(device_, featureLevel_, VSID, codeBuffer_, vertType, useHWTransform);
 		vsCache_[VSID] = vs;
 	} else {
 		vs = vsIter->second;
@@ -227,9 +224,7 @@ void ShaderManagerD3D11::GetShaders(int prim, VertexDecoder *decoder, D3D11Verte
 		// Fragment shader not in cache. Let's compile it.
 		std::string genErrorString;
 		uint64_t uniformMask;
-		FragmentShaderFlags flags;
-		GenerateFragmentShader(FSID, codeBuffer_, draw_->GetShaderLanguageDesc(), draw_->GetBugs(), &uniformMask, &flags, &genErrorString);
-		_assert_msg_(strlen(codeBuffer_) < CODE_BUFFER_SIZE, "FS length error: %d", (int)strlen(codeBuffer_));
+		GenerateFragmentShader(FSID, codeBuffer_, draw_->GetShaderLanguageDesc(), draw_->GetBugs(), &uniformMask, &genErrorString);
 		fs = new D3D11FragmentShader(device_, featureLevel_, FSID, codeBuffer_, useHWTransform);
 		fsCache_[FSID] = fs;
 	} else {

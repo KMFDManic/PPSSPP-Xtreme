@@ -99,7 +99,8 @@ private:
 class DisassemblyOpcode: public DisassemblyEntry
 {
 public:
-	DisassemblyOpcode(u32 _address, int _num): address(_address), num(_num) { }
+	DisassemblyOpcode(u32 _address, int _num): address(_address), num(_num) { };
+	virtual ~DisassemblyOpcode() { };
 	void recheck() override { };
 	int getNumLines() override { return num; };
 	int getLineNum(u32 address, bool findStart) override { return (address - this->address) / 4; };
@@ -117,7 +118,8 @@ private:
 class DisassemblyMacro: public DisassemblyEntry
 {
 public:
-	DisassemblyMacro(u32 _address): address(_address) { }
+	DisassemblyMacro(u32 _address): address(_address) { };
+	virtual ~DisassemblyMacro() { };
 
 	void setMacroLi(u32 _immediate, u8 _rt);
 	void setMacroMemory(std::string _name, u32 _immediate, u8 _rt, int _dataSize);
@@ -145,6 +147,7 @@ class DisassemblyData: public DisassemblyEntry
 {
 public:
 	DisassemblyData(u32 _address, u32 _size, DataType _type);
+	virtual ~DisassemblyData() { };
 
 	void recheck() override;
 	int getNumLines() override { return (int)lines.size(); };
@@ -176,6 +179,7 @@ class DisassemblyComment: public DisassemblyEntry
 {
 public:
 	DisassemblyComment(u32 _address, u32 _size, std::string name, std::string param);
+	virtual ~DisassemblyComment() { };
 
 	void recheck() override { };
 	int getNumLines() override { return 1; };

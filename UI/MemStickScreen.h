@@ -29,8 +29,6 @@
 
 #include "UI/MiscScreens.h"
 
-class NoticeView;
-
 // MemStickScreen - let's you configure your memory stick directory.
 // Currently only useful for Android.
 class MemStickScreen : public UIDialogScreenWithBackground {
@@ -38,7 +36,7 @@ public:
 	MemStickScreen(bool initialSetup);
 	~MemStickScreen() {}
 
-	const char *tag() const override { return "MemStick"; }
+	std::string tag() const override { return "game"; }
 
 	enum Choice {
 		CHOICE_BROWSE_FOLDER,
@@ -50,6 +48,7 @@ public:
 protected:
 	void CreateViews() override;
 
+	void sendMessage(const char *message, const char *value) override;
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
 	void update() override;
 	void render() override {
@@ -77,17 +76,12 @@ private:
 	UI::EventReturn OnChoiceClick(UI::EventParams &params);
 
 	SettingInfoMessage *settingInfo_ = nullptr;
-	NoticeView *errorNoticeView_ = nullptr;
 
 	bool initialSetup_;
 	bool storageBrowserWorking_;
 	bool done_ = false;
 
-#if PPSSPP_PLATFORM(UWP) && !defined(__LIBRETRO__)
-	int choice_ = CHOICE_PRIVATE_DIRECTORY;
-#else
 	int choice_ = 0;
-#endif
 };
 
 class ProgressReporter {
@@ -118,9 +112,6 @@ class ConfirmMemstickMoveScreen : public UIDialogScreenWithBackground {
 public:
 	ConfirmMemstickMoveScreen(Path newMemstickFolder, bool initialSetup);
 	~ConfirmMemstickMoveScreen();
-
-	const char *tag() const override { return "ConfirmMemstickMove"; }
-
 protected:
 	void update() override;
 	void CreateViews() override;
@@ -133,11 +124,7 @@ private:
 
 	Path newMemstickFolder_;
 	bool existingFilesInNewFolder_;
-#if PPSSPP_PLATFORM(UWP) && !defined(__LIBRETRO__)
-	bool moveData_ = false;
-#else
 	bool moveData_ = true;
-#endif
 	bool initialSetup_;
 
 	ProgressReporter progressReporter_;

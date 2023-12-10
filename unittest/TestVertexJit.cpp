@@ -38,12 +38,15 @@ public:
 		dst_ = new u8[BUFFER_SIZE];
 		cache_ = new VertexDecoderJitCache();
 
+		g_Config.bVertexDecoderJit = true;
+		// Required for jit to be enabled.
+		g_Config.iCpuCore = (int)CPUCore::JIT;
 		gstate_c.uv.uScale = 1.0f;
 		gstate_c.uv.vScale = 1.0f;
 	}
 	~VertexDecoderTestHarness() {
-		delete [] src_;
-		delete [] dst_;
+		delete src_;
+		delete dst_;
 		delete cache_;
 		delete dec_;
 	}
@@ -78,7 +81,7 @@ public:
 	void Execute(int vtype, int indexUpperBound, bool useJit) {
 		SetupExecute(vtype, useJit);
 
-		dec_->DecodeVerts(dst_, src_, &gstate_c.uv, indexLowerBound_, indexUpperBound);
+		dec_->DecodeVerts(dst_, src_, indexLowerBound_, indexUpperBound);
 	}
 
 	double ExecuteTimed(int vtype, int indexUpperBound, bool useJit) {
@@ -88,7 +91,7 @@ public:
 		double st = time_now_d();
 		do {
 			for (int j = 0; j < ROUNDS; ++j) {
-				dec_->DecodeVerts(dst_, src_, &gstate_c.uv, indexLowerBound_, indexUpperBound);
+				dec_->DecodeVerts(dst_, src_, indexLowerBound_, indexUpperBound);
 				++total;
 			}
 		} while (time_now_d() - st < 0.5);
@@ -397,7 +400,7 @@ static bool TestVertexFloatThrough() {
 		dec.Execute(vtype, 0, jit == 1);
 		dec.AssertFloat("TestVertexFloatThrough-TC", 1.0f, -1.0f);
 		dec.AssertFloat("TestVertexFloatThrough-Nrm", 1.0f, 0.5f, -1.0f);
-		dec.AssertFloat("TestVertexFloatThrough-Pos", 1.0f, 0.5f, 0.0f);
+		dec.AssertFloat("TestVertexFloatThrough-Pos", 1.0f, 0.5f, -1.0f);
 	}
 
 	return !dec.HasFailed();
@@ -542,10 +545,8 @@ static bool TestVertexColor565() {
 
 static bool TestVertex8Skin() {
 	VertexDecoderTestHarness dec;
-	VertexDecoderOptions opts{};
-	opts.applySkinInDecode = true;
-	dec.SetOptions(opts);
 
+	g_Config.bSoftwareSkinning = true;
 	for (int i = 0; i < 8 * 12; ++i) {
 		gstate.boneMatrix[i] = 0.0f;
 	}
@@ -574,10 +575,8 @@ static bool TestVertex8Skin() {
 
 static bool TestVertex16Skin() {
 	VertexDecoderTestHarness dec;
-	VertexDecoderOptions opts{};
-	opts.applySkinInDecode = true;
-	dec.SetOptions(opts);
 
+	g_Config.bSoftwareSkinning = true;
 	for (int i = 0; i < 8 * 12; ++i) {
 		gstate.boneMatrix[i] = 0.0f;
 	}
@@ -606,10 +605,8 @@ static bool TestVertex16Skin() {
 
 static bool TestVertexFloatSkin() {
 	VertexDecoderTestHarness dec;
-	VertexDecoderOptions opts{};
-	opts.applySkinInDecode = true;
-	dec.SetOptions(opts);
 
+	g_Config.bSoftwareSkinning = true;
 	for (int i = 0; i < 8 * 12; ++i) {
 		gstate.boneMatrix[i] = 0.0f;
 	}

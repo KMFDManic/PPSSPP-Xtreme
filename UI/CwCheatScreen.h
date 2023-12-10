@@ -15,8 +15,6 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#pragma once
-
 #include <cstdint>
 #include <functional>
 
@@ -28,7 +26,7 @@
 struct CheatFileInfo;
 class CWCheatEngine;
 
-class CwCheatScreen : public UIDialogScreenWithGameBackground {
+class CwCheatScreen : public UIDialogScreenWithBackground {
 public:
 	CwCheatScreen(const Path &gamePath);
 	~CwCheatScreen();
@@ -37,33 +35,27 @@ public:
 
 	UI::EventReturn OnAddCheat(UI::EventParams &params);
 	UI::EventReturn OnImportCheat(UI::EventParams &params);
-	UI::EventReturn OnImportBrowse(UI::EventParams &params);
 	UI::EventReturn OnEditCheatFile(UI::EventParams &params);
-	UI::EventReturn OnDisableAll(UI::EventParams &params);
+	UI::EventReturn OnEnableAll(UI::EventParams &params);
 
 	void update() override;
 	void onFinish(DialogResult result) override;
-
-	const char *tag() const override { return "CwCheat"; }
 
 protected:
 	void CreateViews() override;
 
 private:
 	UI::EventReturn OnCheckBox(int index);
-	bool ImportCheats(const Path &cheatFile);
 
 	enum { INDEX_ALL = -1 };
-	bool HasCheatWithName(const std::string &name);
 	bool RebuildCheatFile(int index);
 
 	UI::ScrollView *rightScroll_ = nullptr;
-	UI::TextView *errorMessageView_ = nullptr;
-
 	CWCheatEngine *engine_ = nullptr;
 	std::vector<CheatFileInfo> fileInfo_;
+	Path gamePath_;
 	std::string gameID_;
 	int fileCheckCounter_ = 0;
-	uint64_t fileCheckHash_ = 0;
+	uint64_t fileCheckHash_;
 	bool enableAllFlag_ = false;
 };

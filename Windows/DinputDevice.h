@@ -32,7 +32,7 @@ public:
 	//getDevices(), enumerates all devices if not done yet
 	DinputDevice(int devnum);
 	~DinputDevice();
-	int UpdateState() override;
+	virtual int UpdateState() override;
 	static size_t getNumPads();
 	static void CheckDevices() {
 		needsCheck_ = true;

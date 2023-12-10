@@ -29,20 +29,9 @@
 
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
-#include "Common/Data/Encoding/Utf8.h"
-
-#ifndef HTTPS_NOT_AVAILABLE
-#include "ext/naett/naett.h"
-#endif
-
-#if PPSSPP_PLATFORM(ANDROID)
-#include <jni.h>
-extern JavaVM *gJvm;
-#endif
 
 namespace net {
 
-static bool g_naettInitialized;
 
 void Init()
 {
@@ -51,17 +40,6 @@ void Init()
 	WSADATA wsaData = {0};
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
-	if (!g_naettInitialized) {
-#ifndef HTTPS_NOT_AVAILABLE
-#if PPSSPP_PLATFORM(ANDROID)
-		_assert_(gJvm != nullptr);
-		naettInit(gJvm);
-#else
-		naettInit(NULL);
-#endif
-#endif
-		g_naettInitialized = true;
-	}
 }
 
 void Shutdown()
@@ -110,7 +88,7 @@ bool DNSResolve(const std::string &host, const std::string &service, addrinfo **
 
 	if (result != 0) {
 #ifdef _WIN32
-		error = ConvertWStringToUTF8(gai_strerror(result));
+		error = gai_strerrorA(result);
 #else
 		error = gai_strerror(result);
 #endif

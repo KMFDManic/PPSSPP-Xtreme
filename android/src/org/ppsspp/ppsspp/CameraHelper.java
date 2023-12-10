@@ -126,9 +126,9 @@ class CameraHelper {
 	private Camera.PreviewCallback mPreviewCallback = new Camera.PreviewCallback() {
 		@Override
 		public void onPreviewFrame(byte[] previewData, Camera camera) {
-			// throttle at 16 ms
+			// throttle at 66 ms
 			long currentTime = SystemClock.elapsedRealtime();
-			if (currentTime - mLastFrameTime < 16) {
+			if (currentTime - mLastFrameTime < 66) {
 				return;
 			}
 			mLastFrameTime = currentTime;
@@ -159,9 +159,6 @@ class CameraHelper {
 
 	static ArrayList<String> getDeviceList() {
 		ArrayList<String> deviceList = new ArrayList<>();
-		if (NativeActivity.isVRDevice()) {
-			return deviceList;
-		}
 		int nrCam = Camera.getNumberOfCameras();
 		for (int index = 0; index < nrCam; index++) {
 			try {
@@ -224,35 +221,19 @@ class CameraHelper {
 				throw new Exception("Couldn't find a viable preview size");
 			}
 
-			Log.i(TAG, "setPreviewSize(" + mPreviewSize.width + ", " + mPreviewSize.height + ")");
+			Log.d(TAG, "setPreviewSize(" + mPreviewSize.width + ", " + mPreviewSize.height + ")");
 			param.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
 
 			// Set preview FPS
+			int[] fps;
 			List<int[]> previewFps = param.getSupportedPreviewFpsRange();
-
-			int idealRate = 30000;
-
-			int bestIndex = -1;
-			int bestDistance = 0;  // bestIndex is -1 so irrelevant what the initial value is here.
-
+			fps = previewFps.get(0);
 			for (int i = 0; i < previewFps.size(); i++) {
-				int rangeStart = previewFps.get(i)[0];
-				int rangeEnd = previewFps.get(i)[1];
-				int distance = Integer.max(Math.abs(rangeStart - idealRate), Math.abs(rangeEnd - idealRate));
-
-				if (bestIndex == -1 || distance < bestDistance) {
-					bestDistance = distance;
-					bestIndex = i;
-				}
 				Log.d(TAG, "getSupportedPreviewFpsRange[" + i + "]: " + previewFps.get(i)[0] + " " + previewFps.get(i)[1]);
+				if (previewFps.get(i)[0] <= fps[0] && previewFps.get(i)[1] <= fps[1]) {
+					fps = previewFps.get(i);
+				}
 			}
-
-			if (bestIndex == -1) {
-				// This is pretty much impossible.
-				throw new Exception("Couldn't find a viable preview FPS");
-			}
-
-			int[] fps = previewFps.get(bestIndex);
 			Log.d(TAG, "setPreviewFpsRange(" + fps[0] + ", " + fps[1] + ")");
 			param.setPreviewFpsRange(fps[0], fps[1]);
 

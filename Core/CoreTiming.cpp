@@ -32,6 +32,7 @@
 #include "Core/Config.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/Reporting.h"
 
 static const int initialHz = 222000000;
 int CPU_HZ = 222000000;
@@ -233,28 +234,25 @@ void Shutdown()
 	ClearPendingEvents();
 	UnregisterAllEvents();
 
-	while (eventPool) {
+	while(eventPool)
+	{
 		Event *ev = eventPool;
 		eventPool = ev->next;
 		delete ev;
 	}
 
 	std::lock_guard<std::mutex> lk(externalEventLock);
-	while (eventTsPool) {
+	while(eventTsPool)
+	{
 		Event *ev = eventTsPool;
 		eventTsPool = ev->next;
 		delete ev;
 	}
 }
- 
+
 u64 GetTicks()
 {
-	if (currentMIPS) {
-		return (u64)globalTimer + slicelength - currentMIPS->downcount;
-	} else {
-		// Reporting can actually end up here during weird task switching sequences on Android
-		return false;
-	}
+	return (u64)globalTimer + slicelength - currentMIPS->downcount;
 }
 
 u64 GetIdleTicks()
@@ -608,6 +606,7 @@ void Advance() {
 
 	if (!first) {
 		// This should never happen in PPSSPP.
+		// WARN_LOG_REPORT(TIME, "WARNING - no events in queue. Setting currentMIPS->downcount to 10000");
 		if (slicelength < 10000) {
 			slicelength += 10000;
 			currentMIPS->downcount += 10000;
@@ -672,7 +671,7 @@ std::string GetScheduledEventsSummary() {
 		if (!name)
 			name = "[unknown]";
 		char temp[512];
-		snprintf(temp, sizeof(temp), "%s : %i %08x%08x\n", name, (int)ptr->time, (u32)(ptr->userdata >> 32), (u32)(ptr->userdata));
+		sprintf(temp, "%s : %i %08x%08x\n", name, (int)ptr->time, (u32)(ptr->userdata >> 32), (u32)(ptr->userdata));
 		text += temp;
 		ptr = ptr->next;
 	}

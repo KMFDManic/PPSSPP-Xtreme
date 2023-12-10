@@ -360,11 +360,11 @@ public:
 
 					// Pre-tessellate U lines
 					tess_pos.SampleU(wu.basis);
-					if constexpr (sampleCol)
+					if (sampleCol)
 						tess_col.SampleU(wu.basis);
-					if constexpr (sampleTex)
+					if (sampleTex)
 						tess_tex.SampleU(wu.basis);
-					if constexpr (sampleNrm)
+					if (sampleNrm)
 						tess_nrm.SampleU(wu.deriv);
 
 					for (int tile_v = start_v; tile_v <= surface.tess_v; ++tile_v) {
@@ -375,24 +375,24 @@ public:
 
 						// Tessellate
 						vert.pos = tess_pos.SampleV(wv.basis);
-						if constexpr (sampleCol) {
+						if (sampleCol) {
 							vert.color_32 = tess_col.SampleV(wv.basis).ToRGBA();
 						} else {
 							vert.color_32 = points.defcolor;
 						}
-						if constexpr (sampleTex) {
+						if (sampleTex) {
 							tess_tex.SampleV(wv.basis).Write(vert.uv);
 						} else {
 							// Generate texcoord
 							vert.uv[0] = patch_u + tile_u * inv_u;
 							vert.uv[1] = patch_v + tile_v * inv_v;
 						}
-						if constexpr (sampleNrm) {
+						if (sampleNrm) {
 							const Vec3f derivU = tess_nrm.SampleV(wv.basis);
 							const Vec3f derivV = tess_pos.SampleV(wv.deriv);
 
 							vert.nrm = Cross(derivU, derivV).Normalized(useSSE4);
-							if constexpr (patchFacing)
+							if (patchFacing)
 								vert.nrm *= -1.0f;
 						} else {
 							vert.nrm.SetZero();
@@ -498,7 +498,7 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 	if (surface.num_points_u < 4 || surface.num_points_v < 4)
 		return;
 
-	SimpleBufferManager managedBuf(decoded_, DECODED_VERTEX_BUFFER_SIZE / 2);
+	SimpleBufferManager managedBuf(decoded, DECODED_VERTEX_BUFFER_SIZE / 2);
 
 	int num_points = surface.num_points_u * surface.num_points_v;
 	u16 index_lower_bound = 0;
@@ -507,7 +507,7 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 	if (indices)
 		GetIndexBounds(indices, num_points, vertType, &index_lower_bound, &index_upper_bound);
 
-	VertexDecoder *origVDecoder = GetVertexDecoder(GetVertTypeID(vertType, gstate.getUVGenMode(), decOptions_.applySkinInDecode));
+	VertexDecoder *origVDecoder = GetVertexDecoder((vertType & 0xFFFFFF) | (gstate.getUVGenMode() << 24));
 	*bytesRead = num_points * origVDecoder->VertexSize();
 
 	// Simplify away bones and morph before proceeding
@@ -544,13 +544,11 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 		points[idx] = simplified_control_points + (indices ? ConvertIndex(idx) : idx);
 
 	OutputBuffers output;
-	output.vertices = (SimpleVertex *)(decoded_ + DECODED_VERTEX_BUFFER_SIZE / 2);
-	output.indices = decIndex_;
+	output.vertices = (SimpleVertex *)(decoded + DECODED_VERTEX_BUFFER_SIZE / 2);
+	output.indices = decIndex;
 	output.count = 0;
 
-	int maxVerts = DECODED_VERTEX_BUFFER_SIZE / 2 / vertexSize;
-
-	surface.Init(maxVerts);
+	surface.Init(DECODED_VERTEX_BUFFER_SIZE / 2 / vertexSize);
 
 	if (CanUseHardwareTessellation(surface.primType)) {
 		HardwareTessellation(output, surface, origVertType, points, tessDataTransfer);
@@ -574,13 +572,12 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 		gstate_c.uv.vOff = 0;
 	}
 
-	uint32_t vertTypeID = GetVertTypeID(vertTypeWithIndex16, gstate.getUVGenMode(), decOptions_.applySkinInDecode);
+	uint32_t vertTypeID = GetVertTypeID(vertTypeWithIndex16, gstate.getUVGenMode());
 	int generatedBytesRead;
 	if (output.count)
-		DispatchSubmitPrim(output.vertices, output.indices, PatchPrimToPrim(surface.primType), output.count, vertTypeID, true, &generatedBytesRead);
+		DispatchSubmitPrim(output.vertices, output.indices, PatchPrimToPrim(surface.primType), output.count, vertTypeID, gstate.getCullMode(), &generatedBytesRead);
 
-	if (flushOnParams_)
-		DispatchFlush();
+	DispatchFlush();
 
 	if (origVertType & GE_VTYPE_TC_MASK) {
 		gstate_c.uv = prevUVScale;

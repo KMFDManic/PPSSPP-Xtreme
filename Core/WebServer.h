@@ -15,8 +15,6 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#pragma once
-
 enum class WebServerFlags {
 	DISCS = 1,
 	DEBUGGER = 2,

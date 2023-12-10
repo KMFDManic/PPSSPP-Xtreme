@@ -1,3 +1,5 @@
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
 #include "Windows/stdafx.h"
 #include <windowsx.h>
 #include <commctrl.h>
@@ -193,7 +195,7 @@ BOOL CMemoryDlg::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 			switch (HIWORD(wParam)) {
 			case BN_CLICKED:
 				GetWindowText(searchBoxHdl, temp, 255);
-				std::vector<u32> results = memView->searchString(ConvertWStringToUTF8(temp));
+				std::vector<u32> results = memView->searchString(ConvertWStringToUTF8(temp).c_str());
 				if (results.size() > 0){
 					searchBoxRedraw(results);
 				}
@@ -255,7 +257,7 @@ void CMemoryDlg::Goto(u32 addr)
 
 void CMemoryDlg::Size()
 {
-	const float fontScale = 1.0f / g_display.dpi_scale_real_y;
+	const float fontScale = 1.0f / g_dpi_scale_real_y;
 
 	GetClientRect(m_hDlg,&winRect);
 	int dlg_w = winRect.right - winRect.left;

@@ -25,6 +25,7 @@
 #include "ppsspp_config.h"
 
 #include "android/jni/app-android.h"
+#include "android/jni/AndroidContentURI.h"
 
 #ifdef __MINGW32__
 #include <unistd.h>
@@ -32,14 +33,12 @@
 #define _POSIX_THREAD_SAFE_FUNCTIONS 200112L
 #endif
 #endif
-
 #include <cstring>
 #include <ctime>
 #include <memory>
 
 #include "Common/Log.h"
 #include "Common/LogReporting.h"
-#include "Common/File/AndroidContentURI.h"
 #include "Common/File/FileUtil.h"
 #include "Common/StringUtils.h"
 #include "Common/SysError.h"
@@ -54,7 +53,6 @@
 #include <direct.h>		// getcwd
 #if PPSSPP_PLATFORM(UWP)
 #include <fileapifromapp.h>
-#include "UWP/UWPHelpers/StorageManager.h"
 #endif
 #else
 #include <sys/param.h>
@@ -137,20 +135,14 @@ FILE *OpenCFile(const Path &path, const char *mode) {
 			}
 
 			// TODO: Support append modes and stuff... For now let's go with the most common one.
-			Android_OpenContentUriMode openMode = Android_OpenContentUriMode::READ_WRITE_TRUNCATE;
-			const char *fmode = "wb";
-			if (!strcmp(mode, "at") || !strcmp(mode, "a")) {
-				openMode = Android_OpenContentUriMode::READ_WRITE;
-				fmode = "ab";
-			}
-			int descriptor = Android_OpenContentUriFd(path.ToString(), openMode);
+			int descriptor = Android_OpenContentUriFd(path.ToString(), Android_OpenContentUriMode::READ_WRITE_TRUNCATE);
 			if (descriptor < 0) {
 				INFO_LOG(COMMON, "Opening '%s' for write failed", path.ToString().c_str());
 				return nullptr;
 			}
-			FILE *f = fdopen(descriptor, fmode);
-			if (f && (!strcmp(mode, "at") || !strcmp(mode, "a"))) {
-				// Append mode - not sure we got a "true" append mode, so seek to the end.
+			FILE *f = fdopen(descriptor, "wb");
+			if (!strcmp(mode, "at") || !strcmp(mode, "a")) {
+				// Append mode.
 				fseek(f, 0, SEEK_END);
 			}
 			return f;
@@ -165,18 +157,7 @@ FILE *OpenCFile(const Path &path, const char *mode) {
 	}
 
 #if defined(_WIN32) && defined(UNICODE)
-#if PPSSPP_PLATFORM(UWP) && !defined(__LIBRETRO__)
-	// We shouldn't use _wfopen here, 
-	// this function is not allowed to read outside Local and Installation folders
-	// FileSystem (broadFileSystemAccess) doesn't apply on _wfopen
-	// if we have custom memory stick location _wfopen will return null
-	// 'GetFileStreamFromApp' will convert 'mode' to [access, share, creationDisposition]
-	// then it will call 'CreateFile2FromAppW' -> convert HANDLE to FILE*
-	FILE* file = GetFileStreamFromApp(path.ToString(), mode);
-	return file;
-#else
 	return _wfopen(path.ToWString().c_str(), ConvertUTF8ToWString(mode).c_str());
-#endif
 #else
 	return fopen(path.c_str(), mode);
 #endif
@@ -269,8 +250,7 @@ static bool ResolvePathVista(const std::wstring &path, wchar_t *buf, DWORD bufSi
 #else
 	if (!getFinalPathNameByHandleW) {
 		HMODULE kernel32 = GetModuleHandle(L"kernel32.dll");
-		if (kernel32)
-			getFinalPathNameByHandleW = (getFinalPathNameByHandleW_f)GetProcAddress(kernel32, "GetFinalPathNameByHandleW");
+		getFinalPathNameByHandleW = (getFinalPathNameByHandleW_f)GetProcAddress(kernel32, "GetFinalPathNameByHandleW");
 	}
 #endif
 
@@ -592,7 +572,7 @@ bool CreateFullPath(const Path &path) {
 		return false;
 	}
 
-	std::vector<std::string_view> parts;
+	std::vector<std::string> parts;
 	SplitString(diff, '/', parts);
 
 	// Probably not necessary sanity check, ported from the old code.
@@ -602,7 +582,7 @@ bool CreateFullPath(const Path &path) {
 	}
 
 	Path curPath = root;
-	for (auto part : parts) {
+	for (auto &part : parts) {
 		curPath /= part;
 		if (!File::Exists(curPath)) {
 			File::CreateDir(curPath);
@@ -677,15 +657,10 @@ bool Rename(const Path &srcFilename, const Path &destFilename) {
 	INFO_LOG(COMMON, "Rename: %s --> %s", srcFilename.c_str(), destFilename.c_str());
 
 #if defined(_WIN32) && defined(UNICODE)
-#if PPSSPP_PLATFORM(UWP)
-	if (MoveFileFromAppW(srcFilename.ToWString().c_str(), destFilename.ToWString().c_str()))
-		return true;
-#else
 	std::wstring srcw = srcFilename.ToWString();
 	std::wstring destw = destFilename.ToWString();
 	if (_wrename(srcw.c_str(), destw.c_str()) == 0)
 		return true;
-#endif
 #else
 	if (rename(srcFilename.c_str(), destFilename.c_str()) == 0)
 		return true;
@@ -969,7 +944,7 @@ bool OpenFileInEditor(const Path &fileName) {
 
 #if PPSSPP_PLATFORM(WINDOWS)
 #if PPSSPP_PLATFORM(UWP)
-	OpenFile(fileName.ToString());
+	// Do nothing.
 #else
 	ShellExecuteW(nullptr, L"open", fileName.ToWString().c_str(), nullptr, nullptr, SW_SHOW);
 #endif
@@ -1181,7 +1156,6 @@ uint8_t *ReadLocalFile(const Path &filename, size_t *size) {
 		return nullptr;
 	}
 	fseek(file, 0, SEEK_SET);
-	// NOTE: If you find ~10 memory leaks from here, with very varying sizes, it might be the VFPU LUTs.
 	uint8_t *contents = new uint8_t[f_size + 1];
 	if (fread(contents, 1, f_size, file) != f_size) {
 		delete[] contents;

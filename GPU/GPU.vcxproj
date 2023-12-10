@@ -164,7 +164,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_SECURE_NO_WARNINGS;WIN32;_ARCH_32=1;_M_IX86=1;_DEBUG;_LIB;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
@@ -174,7 +174,6 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -183,7 +182,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
@@ -195,7 +194,6 @@
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <SupportJustMyCode>false</SupportJustMyCode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -204,7 +202,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
@@ -215,7 +213,6 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -224,7 +221,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
@@ -236,7 +233,6 @@
       <ForcedIncludeFiles>
       </ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -248,7 +244,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
@@ -258,7 +254,6 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -272,7 +267,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
@@ -284,7 +279,6 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <StringPooling>true</StringPooling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -298,7 +292,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
@@ -310,7 +304,6 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <StringPooling>true</StringPooling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -324,7 +317,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib;../ext/libpng17</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\dx9sdk\Include\DX11;../common;..;../ext;../ext/glew;../ext/snappy;../ext/glslang;../ext/zstd/lib</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
@@ -336,7 +329,6 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <StringPooling>true</StringPooling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -346,11 +338,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\ext\xbrz\xbrz.h" />
-    <ClInclude Include="Common\ReplacedTexture.h" />
-    <ClInclude Include="Common\TextureReplacer.h" />
-    <ClInclude Include="Common\TextureShaderCommon.h" />
-    <ClInclude Include="Common\Draw2D.h" />
-    <ClInclude Include="Common\GeometryShaderGenerator.h" />
     <ClInclude Include="Common\ReinterpretFramebuffer.h" />
     <ClInclude Include="Common\DepalettizeShaderCommon.h" />
     <ClInclude Include="Common\DrawEngineCommon.h" />
@@ -373,26 +360,35 @@
     <ClInclude Include="Common\VertexDecoderCommon.h" />
     <ClInclude Include="Common\VertexShaderGenerator.h" />
     <ClInclude Include="D3D11\D3D11Util.h" />
+    <ClInclude Include="D3D11\DepalettizeShaderD3D11.h" />
     <ClInclude Include="D3D11\DrawEngineD3D11.h" />
     <ClInclude Include="D3D11\FramebufferManagerD3D11.h" />
     <ClInclude Include="D3D11\GPU_D3D11.h" />
     <ClInclude Include="D3D11\ShaderManagerD3D11.h" />
     <ClInclude Include="D3D11\StateMappingD3D11.h" />
     <ClInclude Include="D3D11\TextureCacheD3D11.h" />
+    <ClInclude Include="D3D11\TextureScalerD3D11.h" />
     <ClInclude Include="Debugger\Breakpoints.h" />
     <ClInclude Include="Debugger\Debugger.h" />
-    <ClInclude Include="Debugger\GECommandTable.h" />
     <ClInclude Include="Debugger\Playback.h" />
     <ClInclude Include="Debugger\Record.h" />
     <ClInclude Include="Debugger\RecordFormat.h" />
     <ClInclude Include="Debugger\Stepping.h" />
+    <ClInclude Include="Directx9\DepalettizeShaderDX9.h" />
     <ClInclude Include="Directx9\FramebufferManagerDX9.h" />
     <ClInclude Include="Directx9\GPU_DX9.h" />
     <ClInclude Include="Directx9\ShaderManagerDX9.h" />
     <ClInclude Include="Directx9\TextureCacheDX9.h" />
+    <ClInclude Include="Directx9\TextureScalerDX9.h" />
     <ClInclude Include="Directx9\DrawEngineDX9.h" />
     <ClInclude Include="ge_constants.h" />
     <ClInclude Include="GeDisasm.h" />
+    <ClInclude Include="GLES\DepalettizeShaderGLES.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="GLES\FragmentTestCacheGLES.h">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
@@ -429,6 +425,12 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
     </ClInclude>
+    <ClInclude Include="GLES\TextureScalerGLES.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="GLES\DrawEngineGLES.h">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
@@ -437,7 +439,6 @@
     </ClInclude>
     <ClInclude Include="GPU.h" />
     <ClInclude Include="GPUCommon.h" />
-    <ClInclude Include="GPUCommonHW.h" />
     <ClInclude Include="GPUInterface.h" />
     <ClInclude Include="GPUState.h" />
     <ClInclude Include="Math3D.h" />
@@ -454,6 +455,7 @@
     <ClInclude Include="Software\TransformUnit.h" />
     <ClInclude Include="Common\TextureDecoder.h" />
     <ClInclude Include="Vulkan\DebugVisVulkan.h" />
+    <ClInclude Include="Vulkan\DepalettizeShaderVulkan.h" />
     <ClInclude Include="Vulkan\DrawEngineVulkan.h" />
     <ClInclude Include="Vulkan\FramebufferManagerVulkan.h" />
     <ClInclude Include="Vulkan\GPU_Vulkan.h" />
@@ -461,16 +463,11 @@
     <ClInclude Include="Vulkan\ShaderManagerVulkan.h" />
     <ClInclude Include="Vulkan\StateMappingVulkan.h" />
     <ClInclude Include="Vulkan\TextureCacheVulkan.h" />
+    <ClInclude Include="Vulkan\TextureScalerVulkan.h" />
     <ClInclude Include="Vulkan\VulkanUtil.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ext\xbrz\xbrz.cpp" />
-    <ClCompile Include="Common\DepthBufferCommon.cpp" />
-    <ClCompile Include="Common\ReplacedTexture.cpp" />
-    <ClCompile Include="Common\TextureReplacer.cpp" />
-    <ClCompile Include="Common\TextureShaderCommon.cpp" />
-    <ClCompile Include="Common\Draw2D.cpp" />
-    <ClCompile Include="Common\GeometryShaderGenerator.cpp" />
     <ClCompile Include="Common\ReinterpretFramebuffer.cpp" />
     <ClCompile Include="Common\DepalettizeShaderCommon.cpp" />
     <ClCompile Include="Common\DrawEngineCommon.cpp" />
@@ -511,7 +508,6 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="Common\VertexDecoderCommon.cpp" />
-    <ClCompile Include="Common\VertexDecoderRiscV.cpp" />
     <ClCompile Include="Common\VertexDecoderX86.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
@@ -520,26 +516,43 @@
     </ClCompile>
     <ClCompile Include="Common\VertexShaderGenerator.cpp" />
     <ClCompile Include="D3D11\D3D11Util.cpp" />
+    <ClCompile Include="D3D11\DepalettizeShaderD3D11.cpp" />
     <ClCompile Include="D3D11\DrawEngineD3D11.cpp" />
     <ClCompile Include="D3D11\FramebufferManagerD3D11.cpp" />
     <ClCompile Include="D3D11\GPU_D3D11.cpp" />
     <ClCompile Include="D3D11\ShaderManagerD3D11.cpp" />
     <ClCompile Include="D3D11\StateMappingD3D11.cpp" />
+    <ClCompile Include="D3D11\StencilBufferD3D11.cpp" />
     <ClCompile Include="D3D11\TextureCacheD3D11.cpp" />
+    <ClCompile Include="D3D11\TextureScalerD3D11.cpp" />
     <ClCompile Include="Debugger\Breakpoints.cpp" />
     <ClCompile Include="Debugger\Debugger.cpp" />
-    <ClCompile Include="Debugger\GECommandTable.cpp" />
     <ClCompile Include="Debugger\Playback.cpp" />
     <ClCompile Include="Debugger\Record.cpp" />
     <ClCompile Include="Debugger\Stepping.cpp" />
+    <ClCompile Include="Directx9\DepalettizeShaderDX9.cpp" />
     <ClCompile Include="Directx9\FramebufferManagerDX9.cpp" />
     <ClCompile Include="Directx9\GPU_DX9.cpp" />
     <ClCompile Include="Directx9\ShaderManagerDX9.cpp" />
     <ClCompile Include="Directx9\StateMappingDX9.cpp" />
+    <ClCompile Include="Directx9\StencilBufferDX9.cpp" />
     <ClCompile Include="Directx9\TextureCacheDX9.cpp" />
+    <ClCompile Include="Directx9\TextureScalerDX9.cpp" />
     <ClCompile Include="Directx9\DrawEngineDX9.cpp" />
     <ClCompile Include="GeDisasm.cpp" />
     <ClCompile Include="GeConstants.cpp" />
+    <ClCompile Include="GLES\DepalettizeShaderGLES.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="GLES\DepthBufferGLES.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="GLES\FragmentTestCacheGLES.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
@@ -570,8 +583,19 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="GLES\StencilBufferGLES.cpp" />
+    <ClCompile Include="GLES\StencilBufferGLES.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="GLES\TextureCacheGLES.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="GLES\TextureScalerGLES.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
@@ -585,7 +609,6 @@
     </ClCompile>
     <ClCompile Include="GPU.cpp" />
     <ClCompile Include="GPUCommon.cpp" />
-    <ClCompile Include="GPUCommonHW.cpp" />
     <ClCompile Include="GPUState.cpp" />
     <ClCompile Include="Math3D.cpp" />
     <ClCompile Include="Software\BinManager.cpp" />
@@ -603,13 +626,16 @@
     <ClCompile Include="Software\TransformUnit.cpp" />
     <ClCompile Include="Common\TextureDecoder.cpp" />
     <ClCompile Include="Vulkan\DebugVisVulkan.cpp" />
+    <ClCompile Include="Vulkan\DepalettizeShaderVulkan.cpp" />
     <ClCompile Include="Vulkan\DrawEngineVulkan.cpp" />
     <ClCompile Include="Vulkan\FramebufferManagerVulkan.cpp" />
     <ClCompile Include="Vulkan\GPU_Vulkan.cpp" />
     <ClCompile Include="Vulkan\PipelineManagerVulkan.cpp" />
     <ClCompile Include="Vulkan\ShaderManagerVulkan.cpp" />
     <ClCompile Include="Vulkan\StateMappingVulkan.cpp" />
+    <ClCompile Include="Vulkan\StencilBufferVulkan.cpp" />
     <ClCompile Include="Vulkan\TextureCacheVulkan.cpp" />
+    <ClCompile Include="Vulkan\TextureScalerVulkan.cpp" />
     <ClCompile Include="Vulkan\VulkanUtil.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -654,26 +680,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\assets\shaders\defaultshaders.ini">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </None>
-    <None Include="..\assets\shaders\stereo_red_blue.fsh">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </None>
-    <None Include="..\assets\shaders\stereo_sbs.fsh">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</ExcludedFromBuild>

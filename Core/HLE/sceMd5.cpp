@@ -15,14 +15,13 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "Common/Crypto/md5.h"
-#include "Common/Crypto/sha1.h"
-#include "Common/Data/Random/Rng.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/HLE/sceMd5.h"
 #include "Core/MemMap.h"
 #include "Core/Reporting.h"
+#include "Common/Crypto/md5.h"
+#include "Common/Crypto/sha1.h"
 
 #ifdef USE_CRT_DBG
 #undef new
@@ -58,7 +57,7 @@ static int sceMd5Digest(u32 dataAddr, u32 len, u32 digestAddr) {
 	if (!Memory::IsValidAddress(dataAddr) || !Memory::IsValidAddress(digestAddr))
 		return -1;
 
-	ppsspp_md5(Memory::GetPointerWriteUnchecked(dataAddr), (int)len, Memory::GetPointerWriteUnchecked(digestAddr));
+	md5(Memory::GetPointerWriteUnchecked(dataAddr), (int)len, Memory::GetPointerWriteUnchecked(digestAddr));
 	return 0;
 }
 
@@ -70,7 +69,7 @@ static int sceMd5BlockInit(u32 ctxAddr) {
 	// TODO: Until I know how large a context is, we just go all lazy and use a global context,
 	// which will work just fine unless games do several MD5 concurrently.
 
-	ppsspp_md5_starts(&md5_ctx);
+	md5_starts(&md5_ctx);
 	return 0;
 }
 
@@ -79,7 +78,7 @@ static int sceMd5BlockUpdate(u32 ctxAddr, u32 dataPtr, u32 len) {
 	if (!Memory::IsValidAddress(ctxAddr) || !Memory::IsValidAddress(dataPtr))
 		return -1;
 	
-	ppsspp_md5_update(&md5_ctx, Memory::GetPointerWriteUnchecked(dataPtr), (int)len);
+	md5_update(&md5_ctx, Memory::GetPointerWriteUnchecked(dataPtr), (int)len);
 	return 0;
 }
 
@@ -88,7 +87,7 @@ static int sceMd5BlockResult(u32 ctxAddr, u32 digestAddr) {
 	if (!Memory::IsValidAddress(ctxAddr) || !Memory::IsValidAddress(digestAddr))
 		return -1;
 
-	ppsspp_md5_finish(&md5_ctx, Memory::GetPointerWriteUnchecked(digestAddr));
+	md5_finish(&md5_ctx, Memory::GetPointerWriteUnchecked(digestAddr));
 	return 0;
 }
 
@@ -98,7 +97,7 @@ int sceKernelUtilsMd5Digest(u32 dataAddr, int len, u32 digestAddr) {
 	if (!Memory::IsValidAddress(dataAddr) || !Memory::IsValidAddress(digestAddr))
 		return -1;
 
-	ppsspp_md5(Memory::GetPointerWriteUnchecked(dataAddr), (int)len, Memory::GetPointerWriteUnchecked(digestAddr));
+	md5(Memory::GetPointerWriteUnchecked(dataAddr), (int)len, Memory::GetPointerWriteUnchecked(digestAddr));
 	return 0;
 }
 
@@ -110,7 +109,7 @@ int sceKernelUtilsMd5BlockInit(u32 ctxAddr) {
 	// TODO: Until I know how large a context is, we just go all lazy and use a global context,
 	// which will work just fine unless games do several MD5 concurrently.
 
-	ppsspp_md5_starts(&md5_ctx);
+	md5_starts(&md5_ctx);
 	return 0;
 }
 
@@ -119,7 +118,7 @@ int sceKernelUtilsMd5BlockUpdate(u32 ctxAddr, u32 dataPtr, int len) {
 	if (!Memory::IsValidAddress(ctxAddr) || !Memory::IsValidAddress(dataPtr))
 		return -1;
 
-	ppsspp_md5_update(&md5_ctx, Memory::GetPointerWriteUnchecked(dataPtr), (int)len);
+	md5_update(&md5_ctx, Memory::GetPointerWriteUnchecked(dataPtr), (int)len);
 	return 0;
 }
 
@@ -128,7 +127,7 @@ int sceKernelUtilsMd5BlockResult(u32 ctxAddr, u32 digestAddr) {
 	if (!Memory::IsValidAddress(ctxAddr) || !Memory::IsValidAddress(digestAddr))
 		return -1;
 
-	ppsspp_md5_finish(&md5_ctx, Memory::GetPointerWriteUnchecked(digestAddr));
+	md5_finish(&md5_ctx, Memory::GetPointerWriteUnchecked(digestAddr));
 	return 0;
 }
 

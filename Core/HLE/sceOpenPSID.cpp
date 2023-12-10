@@ -20,7 +20,6 @@
 #include "Core/HLE/proAdhoc.h"
 #include "Core/HLE/sceOpenPSID.h"
 #include "Core/MemMapHelpers.h"
-#include "Core/Reporting.h"
 
 SceOpenPSID dummyOpenPSID = { 0x10, 0x02, 0xA3, 0x44, 0x13, 0xF5, 0x93, 0xB0, 0xCC, 0x6E, 0xD1, 0x32, 0x27, 0x85, 0x0F, 0x9D };
 
@@ -39,10 +38,9 @@ static int sceOpenPSIDGetOpenPSID(u32 OpenPSIDPtr)
 {
 	WARN_LOG(HLE, "UNTESTED %s(%08x)", __FUNCTION__, OpenPSIDPtr);
 
-	auto ptr = PSPPointer<SceOpenPSID>::Create(OpenPSIDPtr);
-	if (ptr.IsValid()) {
-		*ptr = dummyOpenPSID;
-		ptr.NotifyWrite("OpenPSIDGetOpenPSID");
+	if (Memory::IsValidAddress(OpenPSIDPtr))
+	{
+		Memory::WriteStruct(OpenPSIDPtr, &dummyOpenPSID);
 	}
 	return 0;
 }
@@ -51,10 +49,9 @@ static int sceOpenPSIDGetPSID(u32 OpenPSIDPtr,u32 unknown)
 {
 	WARN_LOG(HLE, "UNTESTED %s(%08x, %08x)", __FUNCTION__, OpenPSIDPtr, unknown);
 
-	auto ptr = PSPPointer<SceOpenPSID>::Create(OpenPSIDPtr);
-	if (ptr.IsValid()) {
-		*ptr = dummyOpenPSID;
-		ptr.NotifyWrite("OpenPSIDGetPSID");
+	if (Memory::IsValidAddress(OpenPSIDPtr))
+	{
+		Memory::WriteStruct(OpenPSIDPtr, &dummyOpenPSID);
 	}
 	return 0;
 }
@@ -80,8 +77,8 @@ static s32 sceDdrdb_F013F8BF(u32 pDataPtr, u32 pSigPtr) {
 }
 
 // unkPtr might be a pointer to OpenPSID
-static s32 sceOpenPSIDGetProductCode(u32 unkPtr) {
-	ERROR_LOG_REPORT(HLE, "UNIMPL %s(%08x)", __FUNCTION__, unkPtr);
+static s32 sceOpenPSID_B29330DE(u32 unkPtr) {
+	ERROR_LOG(HLE, "UNIMPL %s(%08x)", __FUNCTION__, unkPtr);
 
 	return 0;
 }
@@ -89,8 +86,8 @@ static s32 sceOpenPSIDGetProductCode(u32 unkPtr) {
 
 const HLEFunction sceOpenPSID[] = 
 {
-	{0xC69BEBCE, &WrapI_U<sceOpenPSIDGetOpenPSID>,    "sceOpenPSIDGetOpenPSID",      'i', "x" },
-	{0xB29330DE, &WrapI_U<sceOpenPSIDGetProductCode>, "sceOpenPSIDGetProductCode",   'i', "x" },
+	{0XC69BEBCE, &WrapI_U<sceOpenPSIDGetOpenPSID>,   "sceOpenPSIDGetOpenPSID", 'i', "x" },
+	{0xB29330DE, &WrapI_U<sceOpenPSID_B29330DE>,     "sceOpenPSID_B29330DE",   'i', "x" },
 };
 
 void Register_sceOpenPSID()

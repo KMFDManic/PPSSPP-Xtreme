@@ -69,7 +69,6 @@ TextDrawerWin32::TextDrawerWin32(Draw::DrawContext *draw) : TextDrawer(draw), ct
 	bmi.bmiHeader.biBitCount = 32;
 
 	ctx_->hbmBitmap = CreateDIBSection(ctx_->hDC, &bmi, DIB_RGB_COLORS, (VOID**)&ctx_->pBitmapBits, NULL, 0);
-	_assert_(ctx_->hbmBitmap != nullptr);
 	SetMapMode(ctx_->hDC, MM_TEXT);
 
 	SelectObject(ctx_->hDC, ctx_->hbmBitmap);
@@ -134,25 +133,13 @@ void TextDrawerWin32::MeasureString(const char *str, size_t len, float *w, float
 			SelectObject(ctx_->hDC, iter->second->hFont);
 		}
 
-		std::string toMeasure = ReplaceAll(std::string(str, len), "&&", "&");
-
-		std::vector<std::string> lines;
-		SplitString(toMeasure, '\n', lines);
-
-		int extW = 0, extH = 0;
-		for (auto &line : lines) {
-			SIZE size;
-			std::wstring wstr = ConvertUTF8ToWString(line);
-			GetTextExtentPoint32(ctx_->hDC, wstr.c_str(), (int)wstr.size(), &size);
-
-			if (size.cx > extW)
-				extW = size.cx;
-			extH += size.cy;
-		}
+		SIZE size;
+		std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(ReplaceAll(std::string(str, len), "\n", "\r\n"), "&&", "&"));
+		GetTextExtentPoint32(ctx_->hDC, wstr.c_str(), (int)wstr.size(), &size);
 
 		entry = new TextMeasureEntry();
-		entry->width = extW;
-		entry->height = extH;
+		entry->width = size.cx;
+		entry->height = size.cy;
 		sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
 	}
 

@@ -27,7 +27,7 @@
 class RamCachingFileLoader : public ProxiedFileLoader {
 public:
 	RamCachingFileLoader(FileLoader *backend);
-	~RamCachingFileLoader();
+	~RamCachingFileLoader() override;
 
 	bool Exists() override;
 	bool ExistsFast() override;
