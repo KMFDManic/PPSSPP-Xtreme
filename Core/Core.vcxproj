@@ -139,7 +139,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/glew;../ext/snappy;../ext/libpng17;../ext/zlib;../ext;../ext/zstd/lib</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_M_IX86=1;_DEBUG;_LIB;_UNICODE;UNICODE;MINIUPNP_STATICLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_M_IX86=1;_DEBUG;_LIB;_UNICODE;UNICODE;MINIUPNP_STATICLIB;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -148,6 +148,7 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -157,12 +158,15 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/glew;../ext/snappy;../ext/libpng17;../ext/zlib;../ext;../ext/zstd/lib;../ext/zstd/lib</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_M_X64=1;_DEBUG;_LIB;_UNICODE;UNICODE;MINIUPNP_STATICLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_M_X64=1;_DEBUG;_LIB;_UNICODE;UNICODE;MINIUPNP_STATICLIB;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
@@ -172,6 +176,7 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -181,12 +186,15 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\aarch64\include;../common;..;../ext/glew;../ext/snappy;../ext/libpng17;../ext/zlib;../ext;../ext/zstd/lib</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_DEBUG;_LIB;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_DEBUG;_LIB;_UNICODE;UNICODE;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
@@ -196,6 +204,7 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -205,12 +214,15 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\arm\include;../common;..;../ext/glew;../ext/snappy;../ext/libpng17;../ext/zlib;../ext;../ext/zstd/lib</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_DEBUG;_LIB;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_DEBUG;_LIB;_UNICODE;UNICODE;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
@@ -221,6 +233,7 @@
       <ForcedIncludeFiles>
       </ForcedIncludeFiles>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -230,6 +243,9 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
@@ -241,12 +257,13 @@
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Precise</FloatingPointModel>
-      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_M_IX86=1;_LIB;NDEBUG;_UNICODE;UNICODE;MINIUPNP_STATICLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_M_IX86=1;_LIB;NDEBUG;_UNICODE;UNICODE;MINIUPNP_STATICLIB;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -255,6 +272,7 @@
     </Link>
     <Lib>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
     </Lib>
     <CustomBuildStep>
       <Command>../Windows/git-version-gen.cmd</Command>
@@ -276,11 +294,12 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_M_X64=1;_LIB;NDEBUG;_UNICODE;UNICODE;MINIUPNP_STATICLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_M_X64=1;_LIB;NDEBUG;_UNICODE;UNICODE;MINIUPNP_STATICLIB;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <StringPooling>true</StringPooling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -292,6 +311,9 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <ClCompile>
@@ -307,11 +329,12 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_LIB;NDEBUG;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_64=1;_LIB;NDEBUG;_UNICODE;UNICODE;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <StringPooling>true</StringPooling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -323,6 +346,9 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">
     <ClCompile>
@@ -338,11 +364,12 @@
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_LIB;NDEBUG;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>USING_WIN_UI;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WITH_UPNP;WIN32;_ARCH_32=1;_LIB;NDEBUG;_UNICODE;UNICODE;ARMIPS_USE_STD_FILESYSTEM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <StringPooling>true</StringPooling>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -354,6 +381,9 @@
       <Outputs>../git-version.cpp;%(Outputs)</Outputs>
       <Message>Updating git-version.cpp</Message>
     </CustomBuildStep>
+    <Lib>
+      <AdditionalOptions>/ignore:4221 %(AdditionalOptions)</AdditionalOptions>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\ext\cityhash\city.cpp" />
@@ -496,6 +526,7 @@
     <ClCompile Include="..\ext\libzip\zip_unchange_archive.c" />
     <ClCompile Include="..\ext\libzip\zip_unchange_data.c" />
     <ClCompile Include="..\ext\libzip\zip_utf-8.c" />
+    <ClCompile Include="..\ext\riscv-disas.cpp" />
     <ClCompile Include="..\ext\sfmt19937\SFMT.c" />
     <ClCompile Include="..\ext\sha1\sha1.cpp" />
     <ClCompile Include="..\ext\snappy\snappy-c.cpp" />
@@ -509,12 +540,14 @@
     <ClCompile Include="..\ext\udis86\syn-intel.c" />
     <ClCompile Include="..\ext\udis86\syn.c" />
     <ClCompile Include="..\ext\udis86\udis86.c" />
+    <ClCompile Include="ConfigSettings.cpp" />
     <ClCompile Include="ControlMapper.cpp" />
     <ClCompile Include="AVIDump.cpp" />
     <ClCompile Include="Debugger\MemBlockInfo.cpp" />
     <ClCompile Include="Debugger\WebSocket.cpp" />
     <ClCompile Include="Debugger\WebSocket\BreakpointSubscriber.cpp" />
     <ClCompile Include="Debugger\WebSocket\CPUCoreSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\ClientConfigSubscriber.cpp" />
     <ClCompile Include="Debugger\WebSocket\GameBroadcaster.cpp" />
     <ClCompile Include="Debugger\WebSocket\GameSubscriber.cpp" />
     <ClCompile Include="Debugger\WebSocket\GPUBufferSubscriber.cpp" />
@@ -532,9 +565,11 @@
     <ClCompile Include="Debugger\WebSocket\SteppingSubscriber.cpp" />
     <ClCompile Include="Debugger\WebSocket\WebSocketUtils.cpp" />
     <ClCompile Include="FileSystems\BlobFileSystem.cpp" />
+    <ClCompile Include="FrameTiming.cpp" />
     <ClCompile Include="HLE\KUBridge.cpp" />
     <ClCompile Include="HLE\Plugins.cpp" />
     <ClCompile Include="HLE\sceKernelHeap.cpp" />
+    <ClCompile Include="HLE\sceNp2.cpp" />
     <ClCompile Include="HLE\sceUsbAcc.cpp" />
     <ClCompile Include="HLE\sceUsbCam.cpp" />
     <ClCompile Include="HLE\sceUsbMic.cpp" />
@@ -545,7 +580,17 @@
     <ClCompile Include="KeyMap.cpp" />
     <ClCompile Include="KeyMapDefaults.cpp" />
     <ClCompile Include="MemFault.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRAsm.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRCompALU.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRCompBranch.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRCompFPU.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRCompLoadStore.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRCompSystem.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRCompVec.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRJit.cpp" />
+    <ClCompile Include="MIPS\ARM64\Arm64IRRegCache.cpp" />
     <ClCompile Include="MIPS\fake\FakeJit.cpp" />
+    <ClCompile Include="MIPS\IR\IRAnalysis.cpp" />
     <ClCompile Include="MIPS\IR\IRAsm.cpp" />
     <ClCompile Include="MIPS\IR\IRCompALU.cpp" />
     <ClCompile Include="MIPS\IR\IRCompBranch.cpp" />
@@ -556,10 +601,28 @@
     <ClCompile Include="MIPS\IR\IRInst.cpp" />
     <ClCompile Include="MIPS\IR\IRInterpreter.cpp" />
     <ClCompile Include="MIPS\IR\IRJit.cpp" />
+    <ClCompile Include="MIPS\IR\IRNativeCommon.cpp" />
     <ClCompile Include="MIPS\IR\IRPassSimplify.cpp" />
     <ClCompile Include="MIPS\IR\IRRegCache.cpp" />
+    <ClCompile Include="MIPS\MIPSVFPUFallbacks.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVAsm.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVCompALU.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVCompBranch.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVCompSystem.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVCompFPU.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVCompLoadStore.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVCompVec.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVJit.cpp" />
+    <ClCompile Include="MIPS\RiscV\RiscVRegCache.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRAsm.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRCompALU.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRCompBranch.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRCompFPU.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRCompLoadStore.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRCompSystem.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRCompVec.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRJit.cpp" />
     <ClCompile Include="Replay.cpp" />
-    <ClCompile Include="TextureReplacer.cpp" />
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="Config.cpp" />
     <ClCompile Include="Core.cpp" />
@@ -567,11 +630,21 @@
     <ClCompile Include="Cwcheat.cpp" />
     <ClCompile Include="Debugger\Breakpoints.cpp" />
     <ClCompile Include="Debugger\DisassemblyManager.cpp" />
-    <ClCompile Include="Debugger\SymbolMap.cpp" />
+    <ClCompile Include="Debugger\SymbolMap.cpp">
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\arm\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\arm\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\aarch64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\aarch64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+    </ClCompile>
     <ClCompile Include="Dialog\PSPGamedataInstallDialog.cpp" />
     <ClCompile Include="Dialog\PSPDialog.cpp" />
     <ClCompile Include="Dialog\PSPMsgDialog.cpp" />
     <ClCompile Include="Dialog\PSPNetconfDialog.cpp" />
+    <ClCompile Include="Dialog\PSPNpSigninDialog.cpp" />
     <ClCompile Include="Dialog\PSPOskDialog.cpp" />
     <ClCompile Include="Dialog\PSPPlaceholderDialog.cpp" />
     <ClCompile Include="Dialog\PSPSaveDialog.cpp" />
@@ -670,7 +743,6 @@
     <ClCompile Include="HLE\sceUtility.cpp" />
     <ClCompile Include="HLE\sceVaudio.cpp" />
     <ClCompile Include="HLE\__sceAudio.cpp" />
-    <ClCompile Include="Host.cpp" />
     <ClCompile Include="HW\MediaEngine.cpp" />
     <ClCompile Include="HW\MemoryStick.cpp" />
     <ClCompile Include="HW\MpegDemux.cpp" />
@@ -898,7 +970,16 @@
     <ClCompile Include="MIPS\JitCommon\JitState.cpp" />
     <ClCompile Include="MIPS\MIPS.cpp" />
     <ClCompile Include="MIPS\MIPSAnalyst.cpp" />
-    <ClCompile Include="MIPS\MIPSAsm.cpp" />
+    <ClCompile Include="MIPS\MIPSAsm.cpp">
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\arm\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\arm\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\aarch64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\aarch64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/native/ext/libpng17;../ext/zlib;../ext/native/ext;../ext/armips/;../ext/armips/ext/filesystem/include/;../ext/armips/ext/tinyformat/</AdditionalIncludeDirectories>
+    </ClCompile>
     <ClCompile Include="MIPS\MIPSCodeUtils.cpp" />
     <ClCompile Include="MIPS\MIPSDebugInterface.cpp" />
     <ClCompile Include="MIPS\MIPSDis.cpp" />
@@ -985,11 +1066,13 @@
     </ClCompile>
     <ClCompile Include="PSPLoaders.cpp" />
     <ClCompile Include="Reporting.cpp" />
+    <ClCompile Include="RetroAchievements.cpp" />
     <ClCompile Include="SaveState.cpp" />
     <ClCompile Include="MIPS\MIPSStackWalk.cpp" />
     <ClCompile Include="Screenshot.cpp" />
     <ClCompile Include="System.cpp" />
     <ClCompile Include="ThreadPools.cpp" />
+    <ClCompile Include="TiltEventProcessor.cpp" />
     <ClCompile Include="Util\AudioFormat.cpp" />
     <ClCompile Include="Util\BlockAllocator.cpp" />
     <ClCompile Include="Util\DisArm64.cpp" />
@@ -1025,6 +1108,7 @@
     </ClCompile>
     <ClCompile Include="WaveFile.cpp" />
     <ClCompile Include="WebServer.cpp" />
+    <ClCompile Include="MIPS\x86\X64IRRegCache.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\ext\cityhash\city.h" />
@@ -1041,6 +1125,7 @@
     <ClInclude Include="..\ext\libzip\zip_source_file.h" />
     <ClInclude Include="..\ext\libzip\zip_source_file_stdio.h" />
     <ClInclude Include="..\ext\libzip\zip_source_file_win32.h" />
+    <ClInclude Include="..\ext\riscv-disas.h" />
     <ClInclude Include="..\ext\sfmt19937\SFMT-common.h" />
     <ClInclude Include="..\ext\sfmt19937\SFMT-params.h" />
     <ClInclude Include="..\ext\sfmt19937\SFMT-params19937.h" />
@@ -1058,12 +1143,14 @@
     <ClInclude Include="..\ext\udis86\types.h" />
     <ClInclude Include="..\ext\udis86\udint.h" />
     <ClInclude Include="..\ext\udis86\udis86.h" />
+    <ClInclude Include="ConfigSettings.h" />
     <ClInclude Include="ControlMapper.h" />
     <ClInclude Include="AVIDump.h" />
     <ClInclude Include="ConfigValues.h" />
     <ClInclude Include="Debugger\MemBlockInfo.h" />
     <ClInclude Include="Debugger\WebSocket.h" />
     <ClInclude Include="Debugger\WebSocket\BreakpointSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\ClientConfigSubscriber.h" />
     <ClInclude Include="Debugger\WebSocket\GameSubscriber.h" />
     <ClInclude Include="Debugger\WebSocket\DisasmSubscriber.h" />
     <ClInclude Include="Debugger\WebSocket\GPUBufferSubscriber.h" />
@@ -1082,10 +1169,12 @@
     <ClInclude Include="Debugger\WebSocket\LogBroadcaster.h" />
     <ClInclude Include="Debugger\WebSocket\SteppingBroadcaster.h" />
     <ClInclude Include="FileSystems\BlobFileSystem.h" />
+    <ClInclude Include="FrameTiming.h" />
     <ClInclude Include="HLE\KernelThreadDebugInterface.h" />
     <ClInclude Include="HLE\KUBridge.h" />
     <ClInclude Include="HLE\Plugins.h" />
     <ClInclude Include="HLE\sceKernelHeap.h" />
+    <ClInclude Include="HLE\sceNp2.h" />
     <ClInclude Include="HLE\sceUsbAcc.h" />
     <ClInclude Include="HLE\sceUsbCam.h" />
     <ClInclude Include="HLE\sceUsbMic.h" />
@@ -1095,15 +1184,22 @@
     <ClInclude Include="KeyMap.h" />
     <ClInclude Include="KeyMapDefaults.h" />
     <ClInclude Include="MemFault.h" />
+    <ClInclude Include="MIPS\ARM64\Arm64IRJit.h" />
+    <ClInclude Include="MIPS\ARM64\Arm64IRRegCache.h" />
     <ClInclude Include="MIPS\fake\FakeJit.h" />
+    <ClInclude Include="MIPS\IR\IRAnalysis.h" />
     <ClInclude Include="MIPS\IR\IRFrontend.h" />
     <ClInclude Include="MIPS\IR\IRInst.h" />
     <ClInclude Include="MIPS\IR\IRInterpreter.h" />
     <ClInclude Include="MIPS\IR\IRJit.h" />
+    <ClInclude Include="MIPS\IR\IRNativeCommon.h" />
     <ClInclude Include="MIPS\IR\IRPassSimplify.h" />
     <ClInclude Include="MIPS\IR\IRRegCache.h" />
+    <ClInclude Include="MIPS\MIPSVFPUFallbacks.h" />
+    <ClInclude Include="MIPS\RiscV\RiscVJit.h" />
+    <ClInclude Include="MIPS\RiscV\RiscVRegCache.h" />
+    <ClInclude Include="MIPS\x86\X64IRJit.h" />
     <ClInclude Include="Replay.h" />
-    <ClInclude Include="TextureReplacer.h" />
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="Config.h" />
     <ClInclude Include="Core.h" />
@@ -1118,6 +1214,7 @@
     <ClInclude Include="Dialog\PSPDialog.h" />
     <ClInclude Include="Dialog\PSPMsgDialog.h" />
     <ClInclude Include="Dialog\PSPNetconfDialog.h" />
+    <ClInclude Include="Dialog\PSPNpSigninDialog.h" />
     <ClInclude Include="Dialog\PSPOskDialog.h" />
     <ClInclude Include="Dialog\PSPPlaceholderDialog.h" />
     <ClInclude Include="Dialog\PSPSaveDialog.h" />
@@ -1212,7 +1309,6 @@
     <ClInclude Include="HLE\sceVaudio.h" />
     <ClInclude Include="HLE\ThreadQueueList.h" />
     <ClInclude Include="HLE\__sceAudio.h" />
-    <ClInclude Include="Host.h" />
     <ClInclude Include="HW\BufferQueue.h" />
     <ClInclude Include="HW\MediaEngine.h" />
     <ClInclude Include="HW\MpegDemux.h" />
@@ -1337,12 +1433,14 @@
     <ClInclude Include="Opcode.h" />
     <ClInclude Include="PSPLoaders.h" />
     <ClInclude Include="Reporting.h" />
+    <ClInclude Include="RetroAchievements.h" />
     <ClInclude Include="SaveState.h" />
     <ClInclude Include="MIPS\MIPSStackWalk.h" />
     <ClInclude Include="Screenshot.h" />
     <ClInclude Include="System.h" />
     <ClInclude Include="ThreadEventQueue.h" />
     <ClInclude Include="ThreadPools.h" />
+    <ClInclude Include="TiltEventProcessor.h" />
     <ClInclude Include="Util\AudioFormat.h" />
     <ClInclude Include="Util\BlockAllocator.h" />
     <ClInclude Include="Util\DisArm64.h" />
@@ -1352,15 +1450,14 @@
     <ClInclude Include="..\ext\xxhash.h" />
     <ClInclude Include="WaveFile.h" />
     <ClInclude Include="WebServer.h" />
+    <ClInclude Include="MIPS\x86\X64IRRegCache.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\android\jni\Android.mk" />
     <None Include="..\ext\cityhash\COPYING" />
     <None Include="..\ext\cityhash\README" />
     <None Include="..\ext\gason\LICENSE" />
     <None Include="..\ext\libzip\Android.mk" />
     <None Include="..\LICENSE.TXT" />
-    <None Include="CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Common\Common.vcxproj">
@@ -1380,6 +1477,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <Text Include="..\ext\CMakeLists.txt" />
     <Text Include="..\ext\libzip\CMakeLists.txt" />
     <Text Include="..\ext\sha1\CMakeLists.txt" />
   </ItemGroup>
