@@ -124,6 +124,11 @@ private slots:
 	}
 	void linearAct() { g_Config.iTexFiltering = (g_Config.iTexFiltering != 0) ? 0 : 3; }
 
+//  Transparency: int to float
+//	void renderingResolutionGroup_triggered(QAction *action) {
+//		g_Config.iInternalResolution = action->data().toInt();
+//		System_PostUIMessage("gpu_renderResized", "");
+
 	void renderingResolutionGroup_triggered(QAction *action) {
 		g_Config.iInternalResolution = action->data().toFloat();
 		System_PostUIMessage("gpu_renderResized", "");

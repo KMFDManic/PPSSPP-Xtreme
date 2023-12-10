@@ -583,6 +583,7 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.bAnalogIsCircular = true;
    }
 
+// Transparency: Tie in additional Resolution Values with libretro_core_options.h
 
    var.key = "ppsspp_internal_resolution";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -702,6 +703,22 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.iInflightFrames = 1;
       else if (!strcmp(var.value, "Up to 2"))
          g_Config.iInflightFrames = 2;
+      else if (!strcmp(var.value, "Up to 3"))
+         g_Config.iInflightFrames = 3;
+      else if (!strcmp(var.value, "Up to 4"))
+         g_Config.iInflightFrames = 4;
+      else if (!strcmp(var.value, "Up to 5"))
+         g_Config.iInflightFrames = 5;
+      else if (!strcmp(var.value, "Up to 6"))
+         g_Config.iInflightFrames = 6;
+      else if (!strcmp(var.value, "Up to 7"))
+         g_Config.iInflightFrames = 7;
+      else if (!strcmp(var.value, "Up to 8"))
+         g_Config.iInflightFrames = 8;
+      else if (!strcmp(var.value, "Up to 9"))
+         g_Config.iInflightFrames = 9;
+      else if (!strcmp(var.value, "Up to 10"))
+         g_Config.iInflightFrames = 10;	 
    }
 
    var.key = "ppsspp_gpu_hardware_transform";
@@ -1152,7 +1169,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 void retro_get_system_info(struct retro_system_info *info)
 {
    *info = {};
-   info->library_name     = "PPSSPP";
+   info->library_name     = "PPSSPP Xtreme Amped";
    info->library_version  = PPSSPP_GIT_VERSION;
    info->need_fullpath    = true;
    info->valid_extensions = "elf|iso|cso|prx|pbp";

@@ -176,6 +176,9 @@ public:
 	float fUITint;
 	float fUISaturation;
 
+//  Transparency: int to float
+//	int iInternalResolution;  // 0 = Auto (native), 1 = 1x (480x272), 2 = 2x, 3 = 3x, 4 = 4x and so on.
+
 	bool bVertexCache;
 	bool bTextureBackoffCache;
 	bool bVertexDecoderJit;
@@ -298,8 +301,6 @@ public:
 	float fSwipeSensitivity;
 	float fSwipeSmoothing;
 	int iDoubleTapGesture;
-	bool bAnalogGesture;
-	float fAnalogGestureSensibility;
 
 	// Disable diagonals
 	bool bDisableDpadDiagonals;
@@ -315,9 +316,6 @@ public:
 
 	// Floating analog stick (recenters on thumb on press).
 	bool bAutoCenterTouchAnalog;
-
-	// Sticky D-pad (can't glide off it)
-	bool bStickyTouchDPad;
 
 	//space between PSP buttons
 	//the PSP button's center (triangle, circle, square, cross)

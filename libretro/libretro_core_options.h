@@ -139,15 +139,15 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "ppsspp_cpu_core",
-      "CPU Core",
+      "Xtreme CPU Core",
       NULL,
       NULL,
       NULL,
       "system",
       {
-         { "JIT",         "Dynarec (JIT)" },
-         { "IR JIT",      "IR Interpreter" },
-         { "Interpreter", NULL },
+         { "JIT",         "JIT Xtreme" },
+         { "IR JIT",      "IR JIT Stable" },
+         { "Interpreter", "Debug Very Slow" },
          { NULL, NULL },
       },
       "JIT"
@@ -199,16 +199,50 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "ppsspp_locked_cpu_speed",
-      "Locked CPU Speed",
+      "Xtreme Reverse CPU OverClock",
       NULL,
       NULL,
       NULL,
       "system",
       {
          { "disabled", NULL },
+         { "144MHz",   NULL },
+         { "155MHz",   NULL },
+         { "166MHz",   NULL },
+         { "177MHz",   NULL },
+         { "188MHz",   NULL },
+         { "199MHz",   NULL },
+         { "211MHz",   NULL },
          { "222MHz",   NULL },
+         { "233MHz",   NULL },
+         { "244MHz",   NULL },
+         { "255MHz",   NULL },
          { "266MHz",   NULL },
+         { "277MHz",   NULL },
+         { "288MHz",   NULL },
+         { "299MHz",   NULL },
+         { "311MHz",   NULL },
+         { "322MHz",   NULL },
          { "333MHz",   NULL },
+         { "11MHz",   NULL },
+         { "13MHz",   NULL },
+         { "15MHz",   NULL },
+         { "17MHz",   NULL },
+         { "19MHz",   NULL },
+         { "21MHz",   NULL },
+         { "24MHz",   NULL },
+         { "27MHz",   NULL },
+         { "30MHz",   NULL },
+         { "33MHz",   NULL },
+         { "44MHz",   NULL },
+         { "55MHz",   NULL },
+         { "66MHz",   NULL },
+         { "77MHz",   NULL },
+         { "88MHz",   NULL },
+         { "99MHz",   NULL },
+         { "111MHz",   NULL },
+         { "122MHz",   NULL },
+         { "133MHz",   NULL },
          { NULL, NULL },
       },
       "disabled"
@@ -225,13 +259,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "ppsspp_cheats",
-      "Internal Cheats Support",
+      "Activate Xtreme Cheats",
       NULL,
       NULL,
       NULL,
       "system",
       BOOL_OPTIONS,
-      "disabled"
+      "enabled"
    },
    {
       "ppsspp_psp_model",
@@ -286,10 +320,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "720x408",   NULL },
          { "840x476",   NULL },
          { "960x544",   NULL },
-         { "1080x612",   NULL },
-         { "1200x680",   NULL },
-         { "1320x748",   NULL },
-         { "1440x816",  NULL },
+         { "1080x612",  NULL },
+         { "1200x680",  NULL },
+         { "1320x748",  NULL },
          { "1920x1088", NULL },
          { "2400x1360", NULL },
          { "2880x1632", NULL },
@@ -327,32 +360,34 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "video",
       BOOL_OPTIONS,
-      "disabled"
+      "enabled"
    },
    {
       "ppsspp_frameskip",
-      "Frameskip",
+      "Xtreme TurboBoost",
       NULL,
       NULL,
       NULL,
       "video",
       {
-         { "disabled", NULL },
-         { "1",        NULL },
-         { "2",        NULL },
-         { "3",        NULL },
-         { "4",        NULL },
-         { "5",        NULL },
-         { "6",        NULL },
-         { "7",        NULL },
-         { "8",        NULL },
+         { "disabled", "Off" },
+         { "1",        "X1" },
+         { "2",        "X2" },
+         { "3",        "X3" },
+         { "4",        "X4" },
+         { "5",        "X5" },
+         { "6",        "X6" },
+         { "7",        "X7" },
+         { "8",        "X8" },
+         { "9",        "X9" },
+         { "10",       "XX" },
          { NULL, NULL },
       },
       "disabled"
    },
    {
       "ppsspp_frameskiptype",
-      "Frameskip Type",
+      "Xtreme TurboBoost Type",
       NULL,
       NULL,
       NULL,
@@ -362,11 +397,11 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "Percent of FPS",   NULL },
          { NULL, NULL },
       },
-      "Number of frames"
+      "Percent of FPS"
    },
    {
       "ppsspp_auto_frameskip",
-      "Auto Frameskip",
+      "Xtreme Auto TurboBoost",
       NULL,
       NULL,
       NULL,
@@ -396,7 +431,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "ppsspp_inflight_frames",
-      "Buffered Frames (GL/Vulkan only, slower, less lag, restart)",
+      "Frames in Flight CPU/GPU",
       NULL,
       NULL,
       NULL,
@@ -405,9 +440,17 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "No buffer", NULL },
          { "Up to 1",   NULL },
          { "Up to 2",   NULL },
+         { "Up to 3",   NULL },
+         { "Up to 4",   NULL },
+         { "Up to 5",   NULL },
+         { "Up to 6",   NULL },
+         { "Up to 7",   NULL },
+         { "Up to 8",   NULL },
+         { "Up to 9",   NULL },
+         { "Up to 10",  NULL },
          { NULL, NULL },
       },
-      "Up to 2"
+      "Up to 3"
    },
    {
       "ppsspp_gpu_hardware_transform",
@@ -437,7 +480,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "video",
       BOOL_OPTIONS,
-      "disabled"
+      "enabled"
    },
    {
       "ppsspp_lazy_texture_caching",
@@ -447,7 +490,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "video",
       BOOL_OPTIONS,
-      "disabled"
+      "enabled"
    },
    {
       "ppsspp_spline_quality",
@@ -462,7 +505,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "High",   NULL },
          { NULL, NULL },
       },
-      "High"
+      "Low"
    },
    {
       "ppsspp_hardware_tesselation",
@@ -488,7 +531,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "Aggressive", NULL },
          { NULL, NULL },
       },
-      "disabled"
+      "Aggressive"
    },
    {
       "ppsspp_texture_scaling_type",
@@ -531,7 +574,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "video",
       BOOL_OPTIONS,
-      "disabled"
+      "enabled"
    },
    {
       "ppsspp_texture_shader",
@@ -564,7 +607,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "16x",      NULL },
          { NULL, NULL },
       },
-      "16x"
+      "disabled"
    },
    {
       "ppsspp_texture_filtering",
