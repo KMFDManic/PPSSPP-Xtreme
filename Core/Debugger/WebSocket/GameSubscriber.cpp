@@ -15,11 +15,11 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "Common/System/System.h"
 #include "Core/Config.h"
 #include "Core/Debugger/WebSocket/GameSubscriber.h"
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
 #include "Core/ELF/ParamSFO.h"
+#include "Core/Host.h"
 #include "Core/System.h"
 
 DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map) {
@@ -39,7 +39,7 @@ DebuggerSubscriber *WebSocketGameInit(DebuggerEventHandlerMap &map) {
 //
 // Response (same event name) with no extra data or error.
 void WebSocketGameReset(DebuggerRequest &req) {
-	if (PSP_GetBootState() != BootState::Complete)
+	if (!PSP_IsInited())
 		return req.Fail("Game not running");
 
 	bool needBreak = false;
@@ -49,9 +49,14 @@ void WebSocketGameReset(DebuggerRequest &req) {
 	if (needBreak)
 		PSP_CoreParameter().startBreak = true;
 
-	// We can only support async resets here. A lot of the stuff in init must happen on the EmuThread,
-	// and we are not on it here.
-	System_PostUIMessage(UIMessage::REQUEST_GAME_RESET);
+	PSP_Shutdown();
+	std::string resetError;
+	if (!PSP_Init(PSP_CoreParameter(), &resetError)) {
+		ERROR_LOG(BOOT, "Error resetting: %s", resetError.c_str());
+		return req.Fail("Could not reset");
+	}
+	host->BootDone();
+	host->UpdateDisassembly();
 
 	req.Respond();
 }
@@ -68,7 +73,7 @@ void WebSocketGameReset(DebuggerRequest &req) {
 //  - paused: boolean, true when gameplay is paused (not the same as stepping.)
 void WebSocketGameStatus(DebuggerRequest &req) {
 	JsonWriter &json = req.Respond();
-	if (PSP_GetBootState() == BootState::Complete) {
+	if (PSP_IsInited()) {
 		json.pushDict("game");
 		json.writeString("id", g_paramSFO.GetDiscID());
 		json.writeString("version", g_paramSFO.GetValueString("DISC_VERSION"));
@@ -91,17 +96,6 @@ void WebSocketGameStatus(DebuggerRequest &req) {
 //  - version: string, typically starts with "v" and may have git build info.
 void WebSocketVersion(DebuggerRequest &req) {
 	JsonWriter &json = req.Respond();
-
-	std::string version = req.client->version;
-	if (!req.ParamString("version", &version, DebuggerParamType::OPTIONAL_LOOSE))
-		return;
-	std::string name = req.client->name;
-	if (!req.ParamString("name", &name, DebuggerParamType::OPTIONAL_LOOSE))
-		return;
-
-	req.client->version = version;
-	req.client->name = name;
-
 	json.writeString("name", "PPSSPP");
 	json.writeString("version", PPSSPP_GIT_VERSION);
 }

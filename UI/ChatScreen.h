@@ -5,8 +5,7 @@
 
 class ChatMenu : public UI::AnchorLayout {
 public:
-	ChatMenu(int token, const Bounds &screenBounds, ScreenManager *screenManager, UI::LayoutParams *lp = nullptr)
-		: UI::AnchorLayout(lp), screenManager_(screenManager), token_(token) {
+	ChatMenu(const Bounds &screenBounds, UI::LayoutParams *lp = nullptr): UI::AnchorLayout(lp) {
 		CreateSubviews(screenBounds);
 	}
 	void Update() override;
@@ -25,25 +24,21 @@ private:
 	void CreateContents(UI::ViewGroup *parent);
 	void UpdateChat();
 
-	void OnAskForChatMessage(UI::EventParams &e);
+	UI::EventReturn OnSubmit(UI::EventParams &e);
+	UI::EventReturn OnQuickChat1(UI::EventParams &e);
+	UI::EventReturn OnQuickChat2(UI::EventParams &e);
+	UI::EventReturn OnQuickChat3(UI::EventParams &e);
+	UI::EventReturn OnQuickChat4(UI::EventParams &e);
+	UI::EventReturn OnQuickChat5(UI::EventParams &e);
 
-	void OnSubmitMessage(UI::EventParams &e);
-	void OnQuickChat1(UI::EventParams &e);
-	void OnQuickChat2(UI::EventParams &e);
-	void OnQuickChat3(UI::EventParams &e);
-	void OnQuickChat4(UI::EventParams &e);
-	void OnQuickChat5(UI::EventParams &e);
-
+#if PPSSPP_PLATFORM(WINDOWS) || defined(USING_QT_UI) || defined(SDL)
 	UI::TextEdit *chatEdit_ = nullptr;
+#endif
 	UI::ScrollView *scroll_ = nullptr;
 	UI::LinearLayout *chatVert_ = nullptr;
 	UI::ViewGroup *box_ = nullptr;
-	ScreenManager *screenManager_;
 
 	int chatChangeID_ = 0;
 	bool toBottom_ = true;
 	bool promptInput_ = false;
-	int token_;
-	std::string messageTemp_;
-	UI::Button *chatButton_ = nullptr;
 };

@@ -2,8 +2,6 @@
 // TODO:
 // Zoom gesture a la http://www.zdnet.com/blog/burnette/how-to-use-multi-touch-in-android-2-part-6-implementing-the-pinch-zoom-gesture/1847
 
-#include <cstring>
-
 #include "Common/TimeUtil.h"
 #include "Common/Input/GestureDetector.h"
 
@@ -19,7 +17,7 @@ TouchInput GestureDetector::Update(const TouchInput &touch, const Bounds &bounds
 	}
 	// Mouse / 1-finger-touch control.
 	Pointer &p = pointers[touch.id];
-	if ((touch.flags & TouchInputFlags::DOWN) && bounds.Contains(touch.x, touch.y)) {
+	if ((touch.flags & TOUCH_DOWN) && bounds.Contains(touch.x, touch.y)) {
 		p.down = true;
 		p.downTime = time_now_d();
 		p.downX = touch.x;
@@ -30,7 +28,7 @@ TouchInput GestureDetector::Update(const TouchInput &touch, const Bounds &bounds
 		p.distanceY = 0.0f;
 		p.estimatedInertiaX = 0.0f;
 		p.estimatedInertiaY = 0.0f;
-	} else if (touch.flags & TouchInputFlags::UP) {
+	} else if (touch.flags & TOUCH_UP) {
 		p.down = false;
 	} else {
 		p.distanceX += fabsf(touch.x - p.lastX);
@@ -50,9 +48,9 @@ TouchInput GestureDetector::Update(const TouchInput &touch, const Bounds &bounds
 			double timeDown = time_now_d() - p.downTime;
 			if (!p.active && p.distanceY * timeDown > 3) {
 				p.active |= GESTURE_DRAG_VERTICAL;
-				// Kill the drag. TODO: Only cancel the drag in one direction.
+				// Kill the drag
 				TouchInput inp2 = touch;
-				inp2.flags = TouchInputFlags::UP | TouchInputFlags::CANCEL;
+				inp2.flags = TOUCH_UP | TOUCH_CANCEL;
 				return inp2;
 			}
 		} else {
@@ -65,9 +63,9 @@ TouchInput GestureDetector::Update(const TouchInput &touch, const Bounds &bounds
 			double timeDown = time_now_d() - p.downTime;
 			if (!p.active && p.distanceX * timeDown > 3) {
 				p.active |= GESTURE_DRAG_HORIZONTAL;
-				// Kill the drag. TODO: Only cancel the drag in one direction.
+				// Kill the drag
 				TouchInput inp2 = touch;
-				inp2.flags = TouchInputFlags::UP | TouchInputFlags::CANCEL;
+				inp2.flags = TOUCH_UP | TOUCH_CANCEL;
 				return inp2;
 			}
 		} else {

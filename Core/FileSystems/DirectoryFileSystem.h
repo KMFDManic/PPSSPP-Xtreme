@@ -24,7 +24,7 @@
 #include "Common/File/Path.h"
 #include "Core/FileSystems/FileSystem.h"
 
-#if defined(_WIN32) && !defined(HAVE_LIBRETRO_VFS)
+#ifdef _WIN32
 typedef void * HANDLE;
 #endif
 
@@ -34,9 +34,7 @@ struct DirectoryFileHandle {
 		SKIP_REPLAY,
 	};
 
-#ifdef HAVE_LIBRETRO_VFS
-	FILE *hFile = nullptr;
-#elif defined(_WIN32)
+#ifdef _WIN32
 	HANDLE hFile = (HANDLE)-1;
 #else
 	int hFile = -1;
@@ -67,7 +65,7 @@ public:
 	void CloseAll();
 
 	void DoState(PointerWrap &p) override;
-	std::vector<PSPFileInfo> GetDirListing(const std::string &path, bool *exists = nullptr) override;
+	std::vector<PSPFileInfo> GetDirListing(std::string path) override;
 	int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) override;
 	void     CloseFile(u32 handle) override;
 	size_t   ReadFile(u32 handle, u8 *pointer, s64 size) override;
@@ -76,7 +74,6 @@ public:
 	size_t   WriteFile(u32 handle, const u8 *pointer, s64 size, int &usec) override;
 	size_t   SeekFile(u32 handle, s32 position, FileMove type) override;
 	PSPFileInfo GetFileInfo(std::string filename) override;
-	PSPFileInfo GetFileInfoByHandle(u32 handle) override;
 	bool     OwnsHandle(u32 handle) override;
 	int      Ioctl(u32 handle, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 outlen, int &usec) override;
 	PSPDevType DevType(u32 handle) override;
@@ -85,11 +82,10 @@ public:
 	bool RmDir(const std::string &dirname) override;
 	int  RenameFile(const std::string &from, const std::string &to) override;
 	bool RemoveFile(const std::string &filename) override;
-	FileSystemFlags Flags() const override { return flags; }
-	u64 FreeDiskSpace(const std::string &path) override;
+	FileSystemFlags Flags() override { return flags; }
+	u64 FreeSpace(const std::string &path) override;
 
 	bool ComputeRecursiveDirSizeIfFast(const std::string &path, int64_t *size) override;
-	void Describe(char *buf, size_t size) const override { snprintf(buf, size, "Dir: %s", basePath.c_str()); }
 
 private:
 	struct OpenFileEntry {
@@ -115,7 +111,7 @@ public:
 	~VFSFileSystem();
 
 	void DoState(PointerWrap &p) override;
-	std::vector<PSPFileInfo> GetDirListing(const std::string &path, bool *exists = nullptr) override;
+	std::vector<PSPFileInfo> GetDirListing(std::string path) override;
 	int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) override;
 	void     CloseFile(u32 handle) override;
 	size_t   ReadFile(u32 handle, u8 *pointer, s64 size) override;
@@ -124,7 +120,6 @@ public:
 	size_t   WriteFile(u32 handle, const u8 *pointer, s64 size, int &usec) override;
 	size_t   SeekFile(u32 handle, s32 position, FileMove type) override;
 	PSPFileInfo GetFileInfo(std::string filename) override;
-	PSPFileInfo GetFileInfoByHandle(u32 handle) override;
 	bool     OwnsHandle(u32 handle) override;
 	int      Ioctl(u32 handle, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 outlen, int &usec) override;
 	PSPDevType DevType(u32 handle) override;
@@ -133,11 +128,10 @@ public:
 	bool RmDir(const std::string &dirname) override;
 	int  RenameFile(const std::string &from, const std::string &to) override;
 	bool RemoveFile(const std::string &filename) override;
-	FileSystemFlags Flags() const override { return FileSystemFlags::FLASH; }
-	u64 FreeDiskSpace(const std::string &path) override { return 0; }
+	FileSystemFlags Flags() override { return FileSystemFlags::FLASH; }
+	u64 FreeSpace(const std::string &path) override { return 0; }
 
 	bool ComputeRecursiveDirSizeIfFast(const std::string &path, int64_t *size) override { return false; }
-	void Describe(char *buf, size_t size) const override { snprintf(buf, size, "VFS: %s", basePath.c_str()); }
 
 private:
 	struct OpenFileEntry {
@@ -151,5 +145,5 @@ private:
 	std::string basePath;
 	IHandleAllocator *hAlloc;
 
-	std::string GetLocalPath(const std::string &localpath) const;
+	std::string GetLocalPath(std::string localpath);
 };

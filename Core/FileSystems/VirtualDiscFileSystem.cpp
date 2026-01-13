@@ -16,13 +16,19 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
+#ifdef __MINGW32__
+#include <unistd.h>
+#ifndef _POSIX_THREAD_SAFE_FUNCTIONS
+#define _POSIX_THREAD_SAFE_FUNCTIONS 200112L
+#endif
+#endif
 #include <ctime>
 
 #include "Common/File/FileUtil.h"
 #include "Common/File/DirListing.h"
+#include "Common/StringUtils.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/SysError.h"
 #include "Core/FileSystems/VirtualDiscFileSystem.h"
 #include "Core/FileSystems/ISOFileSystem.h"
 #include "Core/HLE/sceKernel.h"
@@ -75,6 +81,7 @@ void VirtualDiscFileSystem::LoadFileListIndex() {
 		return;
 	}
 
+	std::string buf;
 	static const int MAX_LINE_SIZE = 2048;
 	char linebuf[MAX_LINE_SIZE]{};
 	while (fgets(linebuf, MAX_LINE_SIZE, f)) {
@@ -97,7 +104,7 @@ void VirtualDiscFileSystem::LoadFileListIndex() {
 		// Syntax: HEXPOS filename or HEXPOS filename:handler
 		size_t filename_pos = line.find(' ');
 		if (filename_pos == line.npos) {
-			ERROR_LOG(Log::FileSystem, "Unexpected line in %s: %s", INDEX_FILENAME.c_str(), line.c_str());
+			ERROR_LOG(FILESYS, "Unexpected line in %s: %s", INDEX_FILENAME.c_str(), line.c_str());
 			continue;
 		}
 
@@ -128,14 +135,14 @@ void VirtualDiscFileSystem::LoadFileListIndex() {
 		if (trunc != entry.fileName.npos && trunc != entry.fileName.size())
 			entry.fileName.resize(trunc + 1);
 
-		entry.firstBlock = (u32)strtol(line.c_str(), NULL, 16);
+		entry.firstBlock = strtol(line.c_str(), NULL, 16);
 		if (entry.handler != NULL && entry.handler->IsValid()) {
 			HandlerFileHandle temp = entry.handler;
 			if (temp.Open(basePath.ToString(), entry.fileName, FILEACCESS_READ)) {
 				entry.totalSize = (u32)temp.Seek(0, FILEMOVE_END);
 				temp.Close();
 			} else {
-				ERROR_LOG(Log::FileSystem, "Unable to open virtual file: %s", entry.fileName.c_str());
+				ERROR_LOG(FILESYS, "Unable to open virtual file: %s", entry.fileName.c_str());
 			}
 		} else {
 			entry.totalSize = File::GetFileSize(GetLocalPath(entry.fileName));
@@ -200,7 +207,7 @@ void VirtualDiscFileSystem::DoState(PointerWrap &p)
 
 				bool success = of.Open(basePath, fileList[of.fileIndex].fileName, FILEACCESS_READ);
 				if (!success) {
-					ERROR_LOG(Log::FileSystem, "Failed to create file handle for %s.", fileList[of.fileIndex].fileName.c_str());
+					ERROR_LOG(FILESYS, "Failed to create file handle for %s.", fileList[of.fileIndex].fileName.c_str());
 				} else {
 					if (of.type == VFILETYPE_LBN) {
 						of.Seek(of.curOffset + of.startOffset, FILEMOVE_BEGIN);
@@ -236,7 +243,7 @@ void VirtualDiscFileSystem::DoState(PointerWrap &p)
 	// We don't savestate handlers (loaded on fs load), but if they change, it may not load properly.
 }
 
-Path VirtualDiscFileSystem::GetLocalPath(std::string localpath) const {
+Path VirtualDiscFileSystem::GetLocalPath(std::string localpath) {
 	if (localpath.empty())
 		return basePath;
 
@@ -296,14 +303,18 @@ int VirtualDiscFileSystem::getFileListIndex(std::string &fileName)
 	return (int)fileList.size()-1;
 }
 
-int VirtualDiscFileSystem::getFileListIndex(u32 accessBlock, u32 accessSize, bool blockMode) const {
-	for (size_t i = 0; i < fileList.size(); i++) {
-		if (fileList[i].firstBlock <= accessBlock) {
+int VirtualDiscFileSystem::getFileListIndex(u32 accessBlock, u32 accessSize, bool blockMode)
+{
+	for (size_t i = 0; i < fileList.size(); i++)
+	{
+		if (fileList[i].firstBlock <= accessBlock)
+		{
 			u32 sectorOffset = (accessBlock-fileList[i].firstBlock)*2048;
 			u32 totalFileSize = blockMode ? (fileList[i].totalSize+2047) & ~2047 : fileList[i].totalSize;
 
 			u32 endOffset = sectorOffset+accessSize;
-			if (endOffset <= totalFileSize) {
+			if (endOffset <= totalFileSize)
+			{
 				return (int)i;
 			}
 		}
@@ -319,7 +330,7 @@ int VirtualDiscFileSystem::OpenFile(std::string filename, FileAccess access, con
 	entry.size = 0;
 	entry.startOffset = 0;
 
-	if (filename.empty())
+	if (filename == "")
 	{
 		entry.type = VFILETYPE_ISO;
 		entry.fileIndex = -1;
@@ -330,7 +341,7 @@ int VirtualDiscFileSystem::OpenFile(std::string filename, FileAccess access, con
 		return newHandle;
 	}
 
-	if (filename.compare(0, 8, "/sce_lbn") == 0)
+	if (filename.compare(0,8,"/sce_lbn") == 0)
 	{
 		u32 sectorStart = 0xFFFFFFFF, readSize = 0xFFFFFFFF;
 		parseLBN(filename, &sectorStart, &readSize);
@@ -341,7 +352,7 @@ int VirtualDiscFileSystem::OpenFile(std::string filename, FileAccess access, con
 		int fileIndex = getFileListIndex(sectorStart,readSize);
 		if (fileIndex == -1)
 		{
-			ERROR_LOG(Log::FileSystem, "VirtualDiscFileSystem: sce_lbn used without calling fileinfo.");
+			ERROR_LOG(FILESYS, "VirtualDiscFileSystem: sce_lbn used without calling fileinfo.");
 			return 0;
 		}
 		entry.fileIndex = (u32)fileIndex;
@@ -355,13 +366,11 @@ int VirtualDiscFileSystem::OpenFile(std::string filename, FileAccess access, con
 		bool success = entry.Open(basePath, fileList[entry.fileIndex].fileName, FILEACCESS_READ);
 
 		if (!success) {
-			if (!(access & FILEACCESS_PPSSPP_QUIET)) {
 #ifdef _WIN32
-				ERROR_LOG(Log::FileSystem, "VirtualDiscFileSystem::OpenFile: FAILED, %i", (int)GetLastError());
+			ERROR_LOG(FILESYS, "VirtualDiscFileSystem::OpenFile: FAILED, %i", (int)GetLastError());
 #else
-				ERROR_LOG(Log::FileSystem, "VirtualDiscFileSystem::OpenFile: FAILED");
+			ERROR_LOG(FILESYS, "VirtualDiscFileSystem::OpenFile: FAILED");
 #endif
-			}
 			return 0;
 		}
 
@@ -380,16 +389,15 @@ int VirtualDiscFileSystem::OpenFile(std::string filename, FileAccess access, con
 	if (entry.fileIndex != (u32)-1 && fileList[entry.fileIndex].handler != NULL) {
 		entry.handler = fileList[entry.fileIndex].handler;
 	}
-	bool success = entry.Open(basePath, filename, (FileAccess)(access & FILEACCESS_PSP_FLAGS));
+	bool success = entry.Open(basePath, filename, access);
 
 	if (!success) {
-		if (!(access & FILEACCESS_PPSSPP_QUIET)) {
 #ifdef _WIN32
-			ERROR_LOG(Log::FileSystem, "VirtualDiscFileSystem::OpenFile: FAILED, %i - access = %i", (int)GetLastError(), (int)access);
+		ERROR_LOG(FILESYS, "VirtualDiscFileSystem::OpenFile: FAILED, %i - access = %i", (int)GetLastError(), (int)access);
 #else
-			ERROR_LOG(Log::FileSystem, "VirtualDiscFileSystem::OpenFile: FAILED, access = %i", (int)access);
+		ERROR_LOG(FILESYS, "VirtualDiscFileSystem::OpenFile: FAILED, access = %i", (int)access);
 #endif
-		}
+		//wwwwaaaaahh!!
 		return SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND;
 	} else {
 		u32 newHandle = hAlloc->GetNewHandle();
@@ -437,7 +445,7 @@ size_t VirtualDiscFileSystem::SeekFile(u32 handle, s32 position, FileMove type) 
 		return 0;
 	} else {
 		//This shouldn't happen...
-		ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot seek in file that hasn't been opened: %08x", handle);
+		ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot seek in file that hasn't been opened: %08x", handle);
 		return 0;
 	}
 }
@@ -451,7 +459,7 @@ size_t VirtualDiscFileSystem::ReadFile(u32 handle, u8 *pointer, s64 size, int &u
 	EntryMap::iterator iter = entries.find(handle);
 	if (iter != entries.end()) {
 		if (size < 0) {
-			ERROR_LOG_REPORT(Log::FileSystem, "Invalid read for %lld bytes from virtual umd", size);
+			ERROR_LOG_REPORT(FILESYS, "Invalid read for %lld bytes from virtual umd", size);
 			return 0;
 		}
 
@@ -463,7 +471,7 @@ size_t VirtualDiscFileSystem::ReadFile(u32 handle, u8 *pointer, s64 size, int &u
 			int fileIndex = getFileListIndex(iter->second.curOffset,size*2048,true);
 			if (fileIndex == -1)
 			{
-				ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Reading from unknown address in %08x at %08llx", handle, iter->second.curOffset);
+				ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Reading from unknown address in %08x at %08llx", handle, iter->second.curOffset);
 				return 0;
 			}
 
@@ -475,7 +483,7 @@ size_t VirtualDiscFileSystem::ReadFile(u32 handle, u8 *pointer, s64 size, int &u
 
 			if (!success)
 			{
-				ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Error opening file %s", fileList[fileIndex].fileName.c_str());
+				ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Error opening file %s", fileList[fileIndex].fileName.c_str());
 				return 0;
 			}
 
@@ -510,7 +518,7 @@ size_t VirtualDiscFileSystem::ReadFile(u32 handle, u8 *pointer, s64 size, int &u
 		if (iter->second.type == VFILETYPE_LBN && iter->second.curOffset + size > iter->second.size) {
 			// Clamp to the remaining size, but read what we can.
 			const s64 newSize = iter->second.size - iter->second.curOffset;
-			WARN_LOG(Log::FileSystem, "VirtualDiscFileSystem: Reading beyond end of file, clamping size %lld to %lld", size, newSize);
+			WARN_LOG(FILESYS, "VirtualDiscFileSystem: Reading beyond end of file, clamping size %lld to %lld", size, newSize);
 			size = newSize;
 		}
 
@@ -519,7 +527,7 @@ size_t VirtualDiscFileSystem::ReadFile(u32 handle, u8 *pointer, s64 size, int &u
 		return bytesRead;
 	} else {
 		//This shouldn't happen...
-		ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot read file that hasn't been opened: %08x", handle);
+		ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot read file that hasn't been opened: %08x", handle);
 		return 0;
 	}
 }
@@ -532,7 +540,7 @@ void VirtualDiscFileSystem::CloseFile(u32 handle) {
 		entries.erase(iter);
 	} else {
 		//This shouldn't happen...
-		ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot close file that hasn't been opened: %08x", handle);
+		ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot close file that hasn't been opened: %08x", handle);
 	}
 }
 
@@ -620,7 +628,7 @@ PSPFileInfo VirtualDiscFileSystem::GetFileInfo(std::string filename) {
 	if (x.type != FILETYPE_DIRECTORY) {
 		File::FileInfo details;
 		if (!File::GetFileInfo(fullName, &details)) {
-			ERROR_LOG(Log::FileSystem, "DirectoryFileSystem::GetFileInfo: GetFileInfo failed: %s", fullName.c_str());
+			ERROR_LOG(FILESYS, "DirectoryFileSystem::GetFileInfo: GetFileInfo failed: %s", fullName.c_str());
 			x.size = 0;
 			x.access = 0;
 		} else {
@@ -634,32 +642,28 @@ PSPFileInfo VirtualDiscFileSystem::GetFileInfo(std::string filename) {
 			localtime_r((time_t*)&mtime, &x.mtime);
 		}
 
-		// x.startSector was set above in "if (fileIndex != -1)".
+		x.startSector = fileList[fileIndex].firstBlock;
 		x.numSectors = (x.size+2047)/2048;
 	}
 
 	return x;
 }
 
-PSPFileInfo VirtualDiscFileSystem::GetFileInfoByHandle(u32 handle) {
-	WARN_LOG(Log::FileSystem, "GetFileInfoByHandle not yet implemented for VirtualDiscFileSystem");
-	return PSPFileInfo();
-}
-
 #ifdef _WIN32
 #define FILETIME_FROM_UNIX_EPOCH_US 11644473600000000ULL
 
-static void tmFromFiletime(tm &dest, const FILETIME &src)
+static void tmFromFiletime(tm &dest, FILETIME &src)
 {
 	u64 from_1601_us = (((u64) src.dwHighDateTime << 32ULL) + (u64) src.dwLowDateTime) / 10ULL;
 	u64 from_1970_us = from_1601_us - FILETIME_FROM_UNIX_EPOCH_US;
 
 	time_t t = (time_t) (from_1970_us / 1000000UL);
-	localtime_s(&dest, &t);
+	localtime_r(&t, &dest);
 }
 #endif
 
-std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(std::string path)
+{
 	std::vector<PSPFileInfo> myVector;
 
 	// TODO(scoped): Switch this over to GetFilesInDir!
@@ -678,13 +682,8 @@ std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(const std::string 
 	hFind = FindFirstFileEx(w32path.c_str(), FindExInfoStandard, &findData, FindExSearchNameMatch, NULL, 0);
 #endif
 	if (hFind == INVALID_HANDLE_VALUE) {
-		if (exists)
-			*exists = false;
 		return myVector; //the empty list
 	}
-
-	if (exists)
-		*exists = true;
 
 	for (BOOL retval = 1; retval; retval = FindNextFile(hFind, &findData)) {
 		if (!wcscmp(findData.cFileName, L"..") || !wcscmp(findData.cFileName, L".")) {
@@ -699,7 +698,6 @@ std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(const std::string 
 		}
 
 		entry.access = 0555;
-		entry.exists = true;
 		entry.size = findData.nFileSizeLow | ((u64)findData.nFileSizeHigh<<32);
 		entry.name = ConvertWStringToUTF8(findData.cFileName);
 		tmFromFiletime(entry.atime, findData.ftLastAccessTime);
@@ -720,23 +718,17 @@ std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(const std::string 
 	DIR *dp = opendir(localPath.c_str());
 
 #if HOST_IS_CASE_SENSITIVE
-	std::string fixedPath = path;
-	if(dp == NULL && FixPathCase(basePath, fixedPath, FPC_FILE_MUST_EXIST)) {
+	if(dp == NULL && FixPathCase(basePath, path, FPC_FILE_MUST_EXIST)) {
 		// May have failed due to case sensitivity, try again
-		localPath = GetLocalPath(fixedPath);
+		localPath = GetLocalPath(path);
 		dp = opendir(localPath.c_str());
 	}
 #endif
 
 	if (dp == NULL) {
-		ERROR_LOG(Log::FileSystem,"Error opening directory %s\n", path.c_str());
-		if (exists)
-			*exists = false;
+		ERROR_LOG(FILESYS,"Error opening directory %s\n", path.c_str());
 		return myVector;
 	}
-
-	if (exists)
-		*exists = true;
 
 	while ((dirp = readdir(dp)) != NULL) {
 		if (!strcmp(dirp->d_name, "..") || !strcmp(dirp->d_name, ".")) {
@@ -745,14 +737,13 @@ std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(const std::string 
 
 		PSPFileInfo entry;
 		struct stat s;
-		std::string fullName = (localPath / std::string(dirp->d_name)).ToString();
+		std::string fullName = (GetLocalPath(path) / std::string(dirp->d_name)).ToString();
 		stat(fullName.c_str(), &s);
 		if (S_ISDIR(s.st_mode))
 			entry.type = FILETYPE_DIRECTORY;
 		else
 			entry.type = FILETYPE_NORMAL;
 		entry.access = 0555;
-		entry.exists = true;
 		entry.name = dirp->d_name;
 		entry.size = s.st_size;
 		localtime_r((time_t*)&s.st_atime,&entry.atime);
@@ -773,41 +764,41 @@ std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(const std::string 
 
 size_t VirtualDiscFileSystem::WriteFile(u32 handle, const u8 *pointer, s64 size)
 {
-	ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot write to file on virtual disc");
+	ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot write to file on virtual disc");
 	return 0;
 }
 
 size_t VirtualDiscFileSystem::WriteFile(u32 handle, const u8 *pointer, s64 size, int &usec)
 {
-	ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot write to file on virtual disc");
+	ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot write to file on virtual disc");
 	return 0;
 }
 
 bool VirtualDiscFileSystem::MkDir(const std::string &dirname)
 {
-	ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot create directory on virtual disc");
+	ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot create directory on virtual disc");
 	return false;
 }
 
 bool VirtualDiscFileSystem::RmDir(const std::string &dirname)
 {
-	ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot remove directory on virtual disc");
+	ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot remove directory on virtual disc");
 	return false;
 }
 
 int VirtualDiscFileSystem::RenameFile(const std::string &from, const std::string &to)
 {
-	ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot rename file on virtual disc");
+	ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot rename file on virtual disc");
 	return -1;
 }
 
 bool VirtualDiscFileSystem::RemoveFile(const std::string &filename)
 {
-	ERROR_LOG(Log::FileSystem,"VirtualDiscFileSystem: Cannot remove file on virtual disc");
+	ERROR_LOG(FILESYS,"VirtualDiscFileSystem: Cannot remove file on virtual disc");
 	return false;
 }
 
-void VirtualDiscFileSystem::HandlerLogger(void *arg, HandlerHandle handle, LogLevel level, const char *msg) {
+void VirtualDiscFileSystem::HandlerLogger(void *arg, HandlerHandle handle, LogTypes::LOG_LEVELS level, const char *msg) {
 	VirtualDiscFileSystem *sys = static_cast<VirtualDiscFileSystem *>(arg);
 
 	// TODO: Probably could do this smarter / use a lookup.
@@ -820,14 +811,13 @@ void VirtualDiscFileSystem::HandlerLogger(void *arg, HandlerHandle handle, LogLe
 	}
 
 	if (filename != NULL) {
-		GENERIC_LOG(Log::FileSystem, level, "%s: %s", filename, msg);
+		GENERIC_LOG(LogTypes::FILESYS, level, "%s: %s", filename, msg);
 	} else {
-		GENERIC_LOG(Log::FileSystem, level, "%s", msg);
+		GENERIC_LOG(LogTypes::FILESYS, level, "%s", msg);
 	}
 }
 
-VirtualDiscFileSystem::Handler::Handler(const char *filename, VirtualDiscFileSystem *const sys)
-: sys_(sys) {
+VirtualDiscFileSystem::Handler::Handler(const char *filename, VirtualDiscFileSystem *const sys) {
 #if !PPSSPP_PLATFORM(SWITCH)
 #ifdef _WIN32
 #if PPSSPP_PLATFORM(UWP)
@@ -850,22 +840,17 @@ VirtualDiscFileSystem::Handler::Handler(const char *filename, VirtualDiscFileSys
 		Read = (ReadFunc)dlsym(library, "Read");
 		Close = (CloseFunc)dlsym(library, "Close");
 
-		VersionFunc Version = (VersionFunc)dlsym(library, "Version");
-		if (Version && Version() >= 2) {
-			ShutdownV2 = (ShutdownV2Func)Shutdown;
-		}
-
-		if (!Init || !Shutdown || !Open || !Seek || !Read || !Close) {
-			ERROR_LOG(Log::FileSystem, "Unable to find all handler functions: %s", filename);
+		if (Init == NULL || Shutdown == NULL || Open == NULL || Seek == NULL || Read == NULL || Close == NULL) {
+			ERROR_LOG(FILESYS, "Unable to find all handler functions: %s", filename);
 			dlclose(library);
 			library = NULL;
 		} else if (!Init(&HandlerLogger, sys)) {
-			ERROR_LOG(Log::FileSystem, "Unable to initialize handler: %s", filename);
+			ERROR_LOG(FILESYS, "Unable to initialize handler: %s", filename);
 			dlclose(library);
 			library = NULL;
 		}
 	} else {
-		ERROR_LOG(Log::FileSystem, "Unable to load handler '%s': %s", filename, GetLastErrorMsg().c_str());
+		ERROR_LOG(FILESYS, "Unable to load handler: %s", filename);
 	}
 #ifdef _WIN32
 #undef dlopen
@@ -877,10 +862,7 @@ VirtualDiscFileSystem::Handler::Handler(const char *filename, VirtualDiscFileSys
 
 VirtualDiscFileSystem::Handler::~Handler() {
 	if (library != NULL) {
-		if (ShutdownV2)
-			ShutdownV2(sys_);
-		else
-			Shutdown();
+		Shutdown();
 
 #if !PPSSPP_PLATFORM(UWP) && !PPSSPP_PLATFORM(SWITCH)
 #ifdef _WIN32

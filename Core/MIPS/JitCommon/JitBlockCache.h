@@ -26,10 +26,11 @@
 #include "ppsspp_config.h"
 #include "Common/CommonTypes.h"
 #include "Common/CodeBlock.h"
+#include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPS.h"
 
 #if PPSSPP_ARCH(ARM) || PPSSPP_ARCH(ARM64)
-const int MAX_JIT_BLOCK_EXITS = 4;
+const int MAX_JIT_BLOCK_EXITS = 2;
 #else
 const int MAX_JIT_BLOCK_EXITS = 8;
 #endif
@@ -42,6 +43,7 @@ struct BlockCacheStats {
 	u32 minBloatBlock;
 	float maxBloat;
 	u32 maxBloatBlock;
+	std::map<float, u32> bloatMap;
 };
 
 enum class DestroyType {
@@ -51,10 +53,14 @@ enum class DestroyType {
 	CLEAR,
 };
 
+// Define this in order to get VTune profile support for the Jit generated code.
+// Add the VTune include/lib directories to the project directories to get this to build.
+// #define USE_VTUNE
+
 // We should be careful not to access these block structures during runtime as they are large.
 // Fine to mess with them at block compile time though.
 struct JitBlock {
-	bool ContainsAddress(u32 em_address) const;
+	bool ContainsAddress(u32 em_address);
 
 	const u8 *checkedEntry;  // const, we have to translate to writable.
 	const u8 *normalEntry;
@@ -71,6 +77,10 @@ struct JitBlock {
 
 	bool invalid;
 	bool linkStatus[MAX_JIT_BLOCK_EXITS];
+
+#ifdef USE_VTUNE
+	char blockName[32];
+#endif
 
 	// By having a pointer, we avoid a constructor/destructor being generated and dog slow
 	// performance in debug.
@@ -94,28 +104,12 @@ struct JitBlockDebugInfo {
 	std::vector<std::string> targetDisasm;
 };
 
-struct JitBlockProfileStats {
-	int64_t executions;
-	int64_t totalNanos;
-};
-
-// Only used for debugging, so keeping it tight is not that important.
-struct JitBlockMeta {
-	bool valid;
-	uint32_t addr;
-	uint32_t sizeInBytes;
-};
-
 class JitBlockCacheDebugInterface {
 public:
 	virtual int GetNumBlocks() const = 0;
 	virtual int GetBlockNumberFromStartAddress(u32 em_address, bool realBlocksOnly = true) const = 0;
-	virtual JitBlockDebugInfo GetBlockDebugInfo(int blockNum) const = 0; // Expensive
-	virtual JitBlockMeta GetBlockMeta(int blockNum) const = 0;
-	virtual JitBlockProfileStats GetBlockProfileStats(int blockNum) const = 0;
+	virtual JitBlockDebugInfo GetBlockDebugInfo(int blockNum) const = 0;
 	virtual void ComputeStats(BlockCacheStats &bcStats) const = 0;
-	virtual bool IsValidBlock(int blockNum) const = 0;
-	virtual bool SupportsProfiling() const { return false; }
 
 	virtual ~JitBlockCacheDebugInterface() {}
 };
@@ -150,8 +144,6 @@ public:
 	// Returns a list of block numbers - only one block can start at a particular address, but they CAN overlap.
 	// This one is slow so should only be used for one-shots from the debugger UI, not for anything during runtime.
 	void GetBlockNumbersFromAddress(u32 em_address, std::vector<int> *block_numbers);
-	// Similar to above, but only the first matching address.
-	int GetBlockNumberFromAddress(u32 em_address);
 	int GetBlockNumberFromEmuHackOp(MIPSOpcode inst, bool ignoreBad = false) const;
 
 	u32 GetAddressFromBlockPtr(const u8 *ptr) const;
@@ -168,22 +160,9 @@ public:
 	// No jit operations may be run between these calls.
 	// Meant to be used to make memory safe for savestates, memcpy, etc.
 	std::vector<u32> SaveAndClearEmuHackOps();
-	void RestoreSavedEmuHackOps(const std::vector<u32> &saved);
+	void RestoreSavedEmuHackOps(std::vector<u32> saved);
 
 	int GetNumBlocks() const override { return num_blocks_; }
-	bool IsValidBlock(int blockNum) const override { return blockNum >= 0 && blockNum < num_blocks_ && !blocks_[blockNum].invalid; }
-	JitBlockMeta GetBlockMeta(int blockNum) const override {
-		JitBlockMeta meta{};
-		if (IsValidBlock(blockNum)) {
-			meta.valid = true;
-			meta.addr = blocks_[blockNum].originalAddress;
-			meta.sizeInBytes = blocks_[blockNum].originalSize;
-		}
-		return meta;
-	}
-	JitBlockProfileStats GetBlockProfileStats(int blockNum) const override {
-		return JitBlockProfileStats{};
-	}
 
 	static int GetBlockExitSize();
 
@@ -204,10 +183,10 @@ private:
 	MIPSOpcode GetEmuHackOpForBlock(int block_num) const;
 
 	CodeBlockCommon *codeBlock_;
-	JitBlock *blocks_ = nullptr;
+	JitBlock *blocks_;
 	std::unordered_multimap<u32, int> proxyBlockMap_;
 
-	int num_blocks_ = 0;
+	int num_blocks_;
 	std::unordered_multimap<u32, int> links_to_;
 	std::map<std::pair<u32,u32>, u32> block_map_; // (end_addr, start_addr) -> number
 
@@ -220,8 +199,7 @@ private:
 	std::pair<u32, u32> blockMemRanges_[3];
 
 	enum {
-		// Where does this number come from?
-		MAX_NUM_BLOCKS = 65536 * 4
+		MAX_NUM_BLOCKS = 65536*2
 	};
 };
 

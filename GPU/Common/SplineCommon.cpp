@@ -15,13 +15,15 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <string.h>
+#include <algorithm>
 
 #include "Common/Common.h"
 #include "Common/CPUDetect.h"
 #include "Common/Profiler/Profiler.h"
+#include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
-#include "GPU/Common/SoftwareTransformCommon.h"
 #include "GPU/ge_constants.h"
 #include "GPU/GPUState.h"  // only needed for UVScale stuff
 
@@ -79,7 +81,7 @@ void BuildIndex(u16 *indices, int &count, int num_u, int num_v, GEPatchPrimType 
 
 class Bezier3DWeight {
 private:
-	static void CalcWeights(float t, Weight &w) {
+	void CalcWeights(float t, Weight &w) {
 		// Bernstein 3D basis polynomial
 		w.basis[0] = (1 - t) * (1 - t) * (1 - t);
 		w.basis[1] = 3 * t * (1 - t) * (1 - t);
@@ -93,7 +95,7 @@ private:
 		w.deriv[3] = 3 * t * t;
 	}
 public:
-	static Weight *CalcWeightsAll(u32 key) {
+	Weight *CalcWeightsAll(u32 key) {
 		int tess = (int)key;
 		Weight *weights = new Weight[tess + 1];
 		const float inv_tess = 1.0f / (float)tess;
@@ -127,7 +129,7 @@ private:
 	};
 
 	// knot should be an array sized n + 5  (n + 1 + 1 + degree (cubic))
-	static void CalcKnots(int n, int type, float *knots, KnotDiv *divs) {
+	void CalcKnots(int n, int type, float *knots, KnotDiv *divs) {
 		// Basic theory (-2 to +3), optimized with KnotDiv (-2 to +0) 
 	//	for (int i = 0; i < n + 5; ++i) {
 		for (int i = 0; i < n + 2; ++i) {
@@ -158,7 +160,7 @@ private:
 		}
 	}
 
-	static void CalcWeights(float t, const float *knots, const KnotDiv &div, Weight &w) {
+	void CalcWeights(float t, const float *knots, const KnotDiv &div, Weight &w) {
 #ifdef _M_SSE
 		const __m128 knot012 = _mm_loadu_ps(knots);
 		const __m128 t012 = _mm_sub_ps(_mm_set_ps1(t), knot012);
@@ -358,11 +360,11 @@ public:
 
 					// Pre-tessellate U lines
 					tess_pos.SampleU(wu.basis);
-					if constexpr (sampleCol)
+					if (sampleCol)
 						tess_col.SampleU(wu.basis);
-					if constexpr (sampleTex)
+					if (sampleTex)
 						tess_tex.SampleU(wu.basis);
-					if constexpr (sampleNrm)
+					if (sampleNrm)
 						tess_nrm.SampleU(wu.deriv);
 
 					for (int tile_v = start_v; tile_v <= surface.tess_v; ++tile_v) {
@@ -373,24 +375,24 @@ public:
 
 						// Tessellate
 						vert.pos = tess_pos.SampleV(wv.basis);
-						if constexpr (sampleCol) {
+						if (sampleCol) {
 							vert.color_32 = tess_col.SampleV(wv.basis).ToRGBA();
 						} else {
 							vert.color_32 = points.defcolor;
 						}
-						if constexpr (sampleTex) {
+						if (sampleTex) {
 							tess_tex.SampleV(wv.basis).Write(vert.uv);
 						} else {
 							// Generate texcoord
 							vert.uv[0] = patch_u + tile_u * inv_u;
 							vert.uv[1] = patch_v + tile_v * inv_v;
 						}
-						if constexpr (sampleNrm) {
+						if (sampleNrm) {
 							const Vec3f derivU = tess_nrm.SampleV(wv.basis);
 							const Vec3f derivV = tess_pos.SampleV(wv.deriv);
 
 							vert.nrm = Cross(derivU, derivV).Normalized(useSSE4);
-							if constexpr (patchFacing)
+							if (patchFacing)
 								vert.nrm *= -1.0f;
 						} else {
 							vert.nrm.SetZero();
@@ -496,7 +498,7 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 	if (surface.num_points_u < 4 || surface.num_points_v < 4)
 		return;
 
-	SimpleBufferManager managedBuf(decoded_, DECODED_VERTEX_BUFFER_SIZE / 2);
+	SimpleBufferManager managedBuf(decoded, DECODED_VERTEX_BUFFER_SIZE / 2);
 
 	int num_points = surface.num_points_u * surface.num_points_v;
 	u16 index_lower_bound = 0;
@@ -505,51 +507,48 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 	if (indices)
 		GetIndexBounds(indices, num_points, vertType, &index_lower_bound, &index_upper_bound);
 
-	u32 vertTypeID = GetVertTypeID(vertType, gstate.getUVGenMode(), applySkinInDecode_);
-	VertexDecoder *origVDecoder = GetVertexDecoder(vertTypeID);
+	VertexDecoder *origVDecoder = GetVertexDecoder((vertType & 0xFFFFFF) | (gstate.getUVGenMode() << 24));
 	*bytesRead = num_points * origVDecoder->VertexSize();
 
 	// Simplify away bones and morph before proceeding
 	// There are normally not a lot of control points so just splitting decoded should be reasonably safe, although not great.
 	SimpleVertex *simplified_control_points = (SimpleVertex *)managedBuf.Allocate(sizeof(SimpleVertex) * (index_upper_bound + 1));
 	if (!simplified_control_points) {
-		ERROR_LOG(Log::G3D, "Failed to allocate space for simplified control points, skipping curve draw");
+		ERROR_LOG(G3D, "Failed to allocate space for simplified control points, skipping curve draw");
 		return;
 	}
 
 	u8 *temp_buffer = managedBuf.Allocate(sizeof(SimpleVertex) * num_points);
 	if (!temp_buffer) {
-		ERROR_LOG(Log::G3D, "Failed to allocate space for temp buffer, skipping curve draw");
+		ERROR_LOG(G3D, "Failed to allocate space for temp buffer, skipping curve draw");
 		return;
 	}
 
 	u32 origVertType = vertType;
-	vertType = ::NormalizeVertices(simplified_control_points, temp_buffer, (u8 *)control_points, index_lower_bound, index_upper_bound, origVDecoder, vertType);
+	vertType = NormalizeVertices((u8 *)simplified_control_points, temp_buffer, (u8 *)control_points, index_lower_bound, index_upper_bound, vertType);
 
 	VertexDecoder *vdecoder = GetVertexDecoder(vertType);
 
 	int vertexSize = vdecoder->VertexSize();
 	if (vertexSize != sizeof(SimpleVertex)) {
-		ERROR_LOG(Log::G3D, "Something went really wrong, vertex size: %d vs %d", vertexSize, (int)sizeof(SimpleVertex));
+		ERROR_LOG(G3D, "Something went really wrong, vertex size: %d vs %d", vertexSize, (int)sizeof(SimpleVertex));
 	}
 
 	// Make an array of pointers to the control points, to get rid of indices.
 	const SimpleVertex **points = (const SimpleVertex **)managedBuf.Allocate(sizeof(SimpleVertex *) * num_points);
 	if (!points) {
-		ERROR_LOG(Log::G3D, "Failed to allocate space for control point pointers, skipping curve draw");
+		ERROR_LOG(G3D, "Failed to allocate space for control point pointers, skipping curve draw");
 		return;
 	}
 	for (int idx = 0; idx < num_points; idx++)
 		points[idx] = simplified_control_points + (indices ? ConvertIndex(idx) : idx);
 
 	OutputBuffers output;
-	output.vertices = (SimpleVertex *)(decoded_ + DECODED_VERTEX_BUFFER_SIZE / 2);
-	output.indices = decIndex_;
+	output.vertices = (SimpleVertex *)(decoded + DECODED_VERTEX_BUFFER_SIZE / 2);
+	output.indices = decIndex;
 	output.count = 0;
 
-	int maxVerts = DECODED_VERTEX_BUFFER_SIZE / 2 / vertexSize;
-
-	surface.Init(maxVerts);
+	surface.Init(DECODED_VERTEX_BUFFER_SIZE / 2 / vertexSize);
 
 	if (CanUseHardwareTessellation(surface.primType)) {
 		HardwareTessellation(output, surface, origVertType, points, tessDataTransfer);
@@ -558,7 +557,7 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 		if (cpoints.IsValid())
 			SoftwareTessellation(output, surface, origVertType, cpoints);
 		else
-			ERROR_LOG(Log::G3D, "Failed to allocate space for control point values, skipping curve draw");
+			ERROR_LOG(G3D, "Failed to allocate space for control point values, skipping curve draw");
 	}
 
 	u32 vertTypeWithIndex16 = (vertType & ~GE_VTYPE_IDX_MASK) | GE_VTYPE_IDX_16BIT;
@@ -573,13 +572,12 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 		gstate_c.uv.vOff = 0;
 	}
 
-	vertTypeID = GetVertTypeID(vertTypeWithIndex16, gstate.getUVGenMode(), applySkinInDecode_);
+	uint32_t vertTypeID = GetVertTypeID(vertTypeWithIndex16, gstate.getUVGenMode());
 	int generatedBytesRead;
 	if (output.count)
-		DispatchSubmitPrim(output.vertices, output.indices, PatchPrimToPrim(surface.primType), output.count, vertTypeID, true, &generatedBytesRead);
+		DispatchSubmitPrim(output.vertices, output.indices, PatchPrimToPrim(surface.primType), output.count, vertTypeID, gstate.getCullMode(), &generatedBytesRead);
 
-	if (flushOnParams_)
-		Flush();
+	DispatchFlush();
 
 	if (origVertType & GE_VTYPE_TC_MASK) {
 		gstate_c.uv = prevUVScale;

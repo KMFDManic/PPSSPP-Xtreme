@@ -15,12 +15,11 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "ppsspp_config.h"
 #include <mutex>
 #include "Common/Common.h"
 #include "Common/Data/Convert/ColorConv.h"
 #include "Core/Config.h"
-#include "GPU/Software/BinManager.h"
+#include "GPU/GPUState.h"
 #include "GPU/Software/DrawPixel.h"
 #include "GPU/Software/FuncId.h"
 #include "GPU/Software/Rasterizer.h"
@@ -35,10 +34,6 @@ PixelJitCache *jitCache = nullptr;
 
 void Init() {
 	jitCache = new PixelJitCache();
-}
-
-void FlushJit() {
-	jitCache->Flush();
 }
 
 void Shutdown() {
@@ -330,10 +325,6 @@ static inline bool DepthTestPassed(GEComparison func, int x, int y, int stride, 
 	}
 }
 
-bool CheckDepthTestPassed(GEComparison func, int x, int y, int stride, u16 z) {
-	return DepthTestPassed(func, x, y, stride, z);
-}
-
 static inline u32 ApplyLogicOp(GELogicOp op, u32 old_color, u32 new_color) {
 	// All of the operations here intentionally preserve alpha/stencil.
 	switch (op) {
@@ -405,267 +396,11 @@ static inline u32 ApplyLogicOp(GELogicOp op, u32 old_color, u32 new_color) {
 	return new_color;
 }
 
-static inline Vec3<int> GetSourceFactor(PixelBlendFactor factor, const Vec4<int> &source, const Vec4<int> &dst, uint32_t fix) {
-	switch (factor) {
-	case PixelBlendFactor::OTHERCOLOR:
-		return dst.rgb();
-
-	case PixelBlendFactor::INVOTHERCOLOR:
-		return Vec3<int>::AssignToAll(255) - dst.rgb();
-
-	case PixelBlendFactor::SRCALPHA:
-#if defined(_M_SSE)
-		return Vec3<int>(_mm_shuffle_epi32(source.ivec, _MM_SHUFFLE(3, 3, 3, 3)));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vdupq_laneq_s32(source.ivec, 3));
-#else
-		return Vec3<int>::AssignToAll(source.a());
-#endif
-
-	case PixelBlendFactor::INVSRCALPHA:
-#if defined(_M_SSE)
-		return Vec3<int>(_mm_sub_epi32(_mm_set1_epi32(255), _mm_shuffle_epi32(source.ivec, _MM_SHUFFLE(3, 3, 3, 3))));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vsubq_s32(vdupq_n_s32(255), vdupq_laneq_s32(source.ivec, 3)));
-#else
-		return Vec3<int>::AssignToAll(255 - source.a());
-#endif
-
-	case PixelBlendFactor::DSTALPHA:
-		return Vec3<int>::AssignToAll(dst.a());
-
-	case PixelBlendFactor::INVDSTALPHA:
-		return Vec3<int>::AssignToAll(255 - dst.a());
-
-	case PixelBlendFactor::DOUBLESRCALPHA:
-		return Vec3<int>::AssignToAll(2 * source.a());
-
-	case PixelBlendFactor::DOUBLEINVSRCALPHA:
-		return Vec3<int>::AssignToAll(255 - std::min(2 * source.a(), 255));
-
-	case PixelBlendFactor::DOUBLEDSTALPHA:
-		return Vec3<int>::AssignToAll(2 * dst.a());
-
-	case PixelBlendFactor::DOUBLEINVDSTALPHA:
-		return Vec3<int>::AssignToAll(255 - std::min(2 * dst.a(), 255));
-
-	case PixelBlendFactor::FIX:
-	default:
-		// All other dest factors (> 10) are treated as FIXA.
-		return Vec3<int>::FromRGB(fix);
-
-	case PixelBlendFactor::ZERO:
-		return Vec3<int>::AssignToAll(0);
-
-	case PixelBlendFactor::ONE:
-		return Vec3<int>::AssignToAll(255);
-	}
-}
-
-static inline Vec3<int> GetDestFactor(PixelBlendFactor factor, const Vec4<int> &source, const Vec4<int> &dst, uint32_t fix) {
-	switch (factor) {
-	case PixelBlendFactor::OTHERCOLOR:
-		return source.rgb();
-
-	case PixelBlendFactor::INVOTHERCOLOR:
-		return Vec3<int>::AssignToAll(255) - source.rgb();
-
-	case PixelBlendFactor::SRCALPHA:
-#if defined(_M_SSE)
-		return Vec3<int>(_mm_shuffle_epi32(source.ivec, _MM_SHUFFLE(3, 3, 3, 3)));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vdupq_laneq_s32(source.ivec, 3));
-#else
-		return Vec3<int>::AssignToAll(source.a());
-#endif
-
-	case PixelBlendFactor::INVSRCALPHA:
-#if defined(_M_SSE)
-		return Vec3<int>(_mm_sub_epi32(_mm_set1_epi32(255), _mm_shuffle_epi32(source.ivec, _MM_SHUFFLE(3, 3, 3, 3))));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vsubq_s32(vdupq_n_s32(255), vdupq_laneq_s32(source.ivec, 3)));
-#else
-		return Vec3<int>::AssignToAll(255 - source.a());
-#endif
-
-	case PixelBlendFactor::DSTALPHA:
-		return Vec3<int>::AssignToAll(dst.a());
-
-	case PixelBlendFactor::INVDSTALPHA:
-		return Vec3<int>::AssignToAll(255 - dst.a());
-
-	case PixelBlendFactor::DOUBLESRCALPHA:
-		return Vec3<int>::AssignToAll(2 * source.a());
-
-	case PixelBlendFactor::DOUBLEINVSRCALPHA:
-		return Vec3<int>::AssignToAll(255 - std::min(2 * source.a(), 255));
-
-	case PixelBlendFactor::DOUBLEDSTALPHA:
-		return Vec3<int>::AssignToAll(2 * dst.a());
-
-	case PixelBlendFactor::DOUBLEINVDSTALPHA:
-		return Vec3<int>::AssignToAll(255 - std::min(2 * dst.a(), 255));
-
-	case PixelBlendFactor::FIX:
-	default:
-		// All other dest factors (> 10) are treated as FIXB.
-		return Vec3<int>::FromRGB(fix);
-
-	case PixelBlendFactor::ZERO:
-		return Vec3<int>::AssignToAll(0);
-
-	case PixelBlendFactor::ONE:
-		return Vec3<int>::AssignToAll(255);
-	}
-}
-
-// Removed inline here - it was never chosen to be inlined by the compiler anyway, too complex.
-static Vec3<int> AlphaBlendingResult(const PixelFuncID &pixelID, const Vec4<int> &source, const Vec4<int> &dst) {
-	// Note: These factors cannot go below 0, but they can go above 255 when doubling.
-	Vec3<int> srcfactor = GetSourceFactor(pixelID.AlphaBlendSrc(), source, dst, pixelID.cached.alphaBlendSrc);
-	Vec3<int> dstfactor = GetDestFactor(pixelID.AlphaBlendDst(), source, dst, pixelID.cached.alphaBlendDst);
-
-	switch (pixelID.AlphaBlendEq()) {
-	case GE_BLENDMODE_MUL_AND_ADD:
-	{
-#if defined(_M_SSE)
-		// We switch to 16 bit to use mulhi, and we use 4 bits of decimal to make the 16 bit shift free.
-		const __m128i half = _mm_set1_epi16(1 << 3);
-
-		const __m128i srgb = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(source.ivec, source.ivec), 4), half);
-		const __m128i sf = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(srcfactor.ivec, srcfactor.ivec), 4), half);
-		const __m128i s = _mm_mulhi_epi16(srgb, sf);
-
-		const __m128i drgb = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(dst.ivec, dst.ivec), 4), half);
-		const __m128i df = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(dstfactor.ivec, dstfactor.ivec), 4), half);
-		const __m128i d = _mm_mulhi_epi16(drgb, df);
-
-		return Vec3<int>(_mm_unpacklo_epi16(_mm_adds_epi16(s, d), _mm_setzero_si128()));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		const int32x4_t half = vdupq_n_s32(1);
-
-		const int32x4_t srgb = vaddq_s32(vshlq_n_s32(source.ivec, 1), half);
-		const int32x4_t sf = vaddq_s32(vshlq_n_s32(srcfactor.ivec, 1), half);
-		const int32x4_t s = vshrq_n_s32(vmulq_s32(srgb, sf), 10);
-
-		const int32x4_t drgb = vaddq_s32(vshlq_n_s32(dst.ivec, 1), half);
-		const int32x4_t df = vaddq_s32(vshlq_n_s32(dstfactor.ivec, 1), half);
-		const int32x4_t d = vshrq_n_s32(vmulq_s32(drgb, df), 10);
-
-		return Vec3<int>(vaddq_s32(s, d));
-#else
-		static constexpr Vec3<int> half = Vec3<int>::AssignToAll(1);
-		Vec3<int> lhs = ((source.rgb() * 2 + half) * (srcfactor * 2 + half)) / 1024;
-		Vec3<int> rhs = ((dst.rgb() * 2 + half) * (dstfactor * 2 + half)) / 1024;
-		return lhs + rhs;
-#endif
-	}
-
-	case GE_BLENDMODE_MUL_AND_SUBTRACT:
-	{
-#if defined(_M_SSE)
-		const __m128i half = _mm_set1_epi16(1 << 3);
-
-		const __m128i srgb = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(source.ivec, source.ivec), 4), half);
-		const __m128i sf = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(srcfactor.ivec, srcfactor.ivec), 4), half);
-		const __m128i s = _mm_mulhi_epi16(srgb, sf);
-
-		const __m128i drgb = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(dst.ivec, dst.ivec), 4), half);
-		const __m128i df = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(dstfactor.ivec, dstfactor.ivec), 4), half);
-		const __m128i d = _mm_mulhi_epi16(drgb, df);
-
-		return Vec3<int>(_mm_unpacklo_epi16(_mm_max_epi16(_mm_subs_epi16(s, d), _mm_setzero_si128()), _mm_setzero_si128()));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		const int32x4_t half = vdupq_n_s32(1);
-
-		const int32x4_t srgb = vaddq_s32(vshlq_n_s32(source.ivec, 1), half);
-		const int32x4_t sf = vaddq_s32(vshlq_n_s32(srcfactor.ivec, 1), half);
-		const int32x4_t s = vshrq_n_s32(vmulq_s32(srgb, sf), 10);
-
-		const int32x4_t drgb = vaddq_s32(vshlq_n_s32(dst.ivec, 1), half);
-		const int32x4_t df = vaddq_s32(vshlq_n_s32(dstfactor.ivec, 1), half);
-		const int32x4_t d = vshrq_n_s32(vmulq_s32(drgb, df), 10);
-
-		return Vec3<int>(vqsubq_s32(s, d));
-#else
-		static constexpr Vec3<int> half = Vec3<int>::AssignToAll(1);
-		Vec3<int> lhs = ((source.rgb() * 2 + half) * (srcfactor * 2 + half)) / 1024;
-		Vec3<int> rhs = ((dst.rgb() * 2 + half) * (dstfactor * 2 + half)) / 1024;
-		return lhs - rhs;
-#endif
-	}
-
-	case GE_BLENDMODE_MUL_AND_SUBTRACT_REVERSE:
-	{
-#if defined(_M_SSE)
-		const __m128i half = _mm_set1_epi16(1 << 3);
-
-		const __m128i srgb = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(source.ivec, source.ivec), 4), half);
-		const __m128i sf = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(srcfactor.ivec, srcfactor.ivec), 4), half);
-		const __m128i s = _mm_mulhi_epi16(srgb, sf);
-
-		const __m128i drgb = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(dst.ivec, dst.ivec), 4), half);
-		const __m128i df = _mm_add_epi16(_mm_slli_epi16(_mm_packs_epi32(dstfactor.ivec, dstfactor.ivec), 4), half);
-		const __m128i d = _mm_mulhi_epi16(drgb, df);
-
-		return Vec3<int>(_mm_unpacklo_epi16(_mm_max_epi16(_mm_subs_epi16(d, s), _mm_setzero_si128()), _mm_setzero_si128()));
-#elif PPSSPP_ARCH(ARM64_NEON)
-		const int32x4_t half = vdupq_n_s32(1);
-
-		const int32x4_t srgb = vaddq_s32(vshlq_n_s32(source.ivec, 1), half);
-		const int32x4_t sf = vaddq_s32(vshlq_n_s32(srcfactor.ivec, 1), half);
-		const int32x4_t s = vshrq_n_s32(vmulq_s32(srgb, sf), 10);
-
-		const int32x4_t drgb = vaddq_s32(vshlq_n_s32(dst.ivec, 1), half);
-		const int32x4_t df = vaddq_s32(vshlq_n_s32(dstfactor.ivec, 1), half);
-		const int32x4_t d = vshrq_n_s32(vmulq_s32(drgb, df), 10);
-
-		return Vec3<int>(vqsubq_s32(d, s));
-#else
-		static constexpr Vec3<int> half = Vec3<int>::AssignToAll(1);
-		Vec3<int> lhs = ((source.rgb() * 2 + half) * (srcfactor * 2 + half)) / 1024;
-		Vec3<int> rhs = ((dst.rgb() * 2 + half) * (dstfactor * 2 + half)) / 1024;
-		return rhs - lhs;
-#endif
-	}
-
-	case GE_BLENDMODE_MIN:
-#if PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vminq_s32(source.ivec, dst.ivec));
-#else
-		return Vec3<int>(std::min(source.r(), dst.r()),
-			std::min(source.g(), dst.g()),
-			std::min(source.b(), dst.b()));
-#endif
-
-	case GE_BLENDMODE_MAX:
-#if PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vmaxq_s32(source.ivec, dst.ivec));
-#else
-		return Vec3<int>(std::max(source.r(), dst.r()),
-			std::max(source.g(), dst.g()),
-			std::max(source.b(), dst.b()));
-#endif
-
-	case GE_BLENDMODE_ABSDIFF:
-#if PPSSPP_ARCH(ARM64_NEON)
-		return Vec3<int>(vabdq_s32(source.ivec, dst.ivec));
-#else
-		return Vec3<int>(::abs(source.r() - dst.r()),
-			::abs(source.g() - dst.g()),
-			::abs(source.b() - dst.b()));
-#endif
-
-	default:
-		return source.rgb();
-	}
-}
-
 template <bool clearMode, GEBufferFormat fbFormat>
 void SOFTRAST_CALL DrawSinglePixel(int x, int y, int z, int fog, Vec4IntArg color_in, const PixelFuncID &pixelID) {
 	Vec4<int> prim_color = Vec4<int>(color_in).Clamp(0, 255);
 	// Depth range test - applied in clear mode, if not through mode.
-	if (pixelID.applyDepthRange && !pixelID.earlyZChecks)
+	if (pixelID.applyDepthRange)
 		if (z < pixelID.cached.minz || z > pixelID.cached.maxz)
 			return;
 
@@ -676,9 +411,7 @@ void SOFTRAST_CALL DrawSinglePixel(int x, int y, int z, int fog, Vec4IntArg colo
 	// Fog is applied prior to color test.
 	if (pixelID.applyFog && !clearMode) {
 		Vec3<int> fogColor = Vec3<int>::FromRGB(pixelID.cached.fogColor);
-		// This is very similar to the BLEND texfunc, and simply always rounds up.
-		static constexpr Vec3<int> roundup = Vec3<int>::AssignToAll(255);
-		fogColor = (prim_color.rgb() * fog + fogColor * (255 - fog) + roundup) / 256;
+		fogColor = (prim_color.rgb() * fog + fogColor * (255 - fog)) / 255;
 		prim_color.r() = fogColor.r();
 		prim_color.g() = fogColor.g();
 		prim_color.b() = fogColor.b();
@@ -703,14 +436,14 @@ void SOFTRAST_CALL DrawSinglePixel(int x, int y, int z, int fog, Vec4IntArg colo
 		}
 
 		// Also apply depth at the same time.  If disabled, same as passing.
-		if (!pixelID.earlyZChecks && pixelID.DepthTestFunc() != GE_COMP_ALWAYS && !DepthTestPassed(pixelID.DepthTestFunc(), x, y, pixelID.cached.depthbufStride, z)) {
+		if (pixelID.DepthTestFunc() != GE_COMP_ALWAYS && !DepthTestPassed(pixelID.DepthTestFunc(), x, y, pixelID.cached.depthbufStride, z)) {
 			stencil = ApplyStencilOp(fbFormat, stencilReplace, pixelID.ZFail(), stencil);
 			SetPixelStencil(fbFormat, pixelID.cached.framebufStride, targetWriteMask, x, y, stencil);
 			return;
 		}
 
 		stencil = ApplyStencilOp(fbFormat, stencilReplace, pixelID.ZPass(), stencil);
-	} else if (!pixelID.earlyZChecks) {
+	} else {
 		if (pixelID.DepthTestFunc() != GE_COMP_ALWAYS && !DepthTestPassed(pixelID.DepthTestFunc(), x, y, pixelID.cached.depthbufStride, z)) {
 			return;
 		}
@@ -740,7 +473,7 @@ void SOFTRAST_CALL DrawSinglePixel(int x, int y, int z, int fog, Vec4IntArg colo
 			prim_color += Vec4<int>::AssignToAll(pixelID.cached.ditherMatrix[(y & 3) * 4 + (x & 3)]);
 		}
 
-#if defined(_M_SSE) || PPSSPP_ARCH(ARM64_NEON)
+#if defined(_M_SSE)
 		new_color = Vec3<int>(prim_color.ivec).ToRGB();
 		new_color |= stencil << 24;
 #else
@@ -764,8 +497,8 @@ void SOFTRAST_CALL DrawSinglePixel(int x, int y, int z, int fog, Vec4IntArg colo
 	SetPixelColor(fbFormat, pixelID.cached.framebufStride, x, y, new_color, old_color, targetWriteMask);
 }
 
-SingleFunc GetSingleFunc(const PixelFuncID &id, BinManager *binner) {
-	SingleFunc jitted = jitCache->GetSingle(id, binner);
+SingleFunc GetSingleFunc(const PixelFuncID &id) {
+	SingleFunc jitted = jitCache->GetSingle(id);
 	if (jitted) {
 		return jitted;
 	}
@@ -800,23 +533,19 @@ SingleFunc PixelJitCache::GenericSingle(const PixelFuncID &id) {
 	return nullptr;
 }
 
-thread_local PixelJitCache::LastCache PixelJitCache::lastSingle_;
-int PixelJitCache::clearGen_ = 0;
-
 // 256k should be plenty of space for plenty of variations.
-PixelJitCache::PixelJitCache() : CodeBlock(1024 * 64 * 4), cache_(64) {
-	lastSingle_.gen = -1;
-	clearGen_++;
+PixelJitCache::PixelJitCache() : CodeBlock(1024 * 64 * 4) {
 }
 
 void PixelJitCache::Clear() {
-	clearGen_++;
 	CodeBlock::Clear();
-	cache_.Clear();
+	cache_.clear();
 	addresses_.clear();
 
 	constBlendHalf_11_4s_ = nullptr;
 	constBlendInvert_11_4s_ = nullptr;
+	const255_16s_ = nullptr;
+	constBy255i_ = nullptr;
 }
 
 std::string PixelJitCache::DescribeCodePtr(const u8 *ptr) {
@@ -838,73 +567,28 @@ std::string PixelJitCache::DescribeCodePtr(const u8 *ptr) {
 	return CodeBlock::DescribeCodePtr(ptr);
 }
 
-void PixelJitCache::Flush() {
-	std::unique_lock<std::mutex> guard(jitCacheLock);
-	for (const auto &queued : compileQueue_) {
-		// Might've been compiled after enqueue, but before now.
-		size_t queuedKey = std::hash<PixelFuncID>()(queued);
-		if (!cache_.ContainsKey(queuedKey))
-			Compile(queued);
-	}
-	compileQueue_.clear();
-}
+SingleFunc PixelJitCache::GetSingle(const PixelFuncID &id) {
+	std::lock_guard<std::mutex> guard(jitCacheLock);
 
-SingleFunc PixelJitCache::GetSingle(const PixelFuncID &id, BinManager *binner) {
-	if (!g_Config.bSoftwareRenderingJit)
-		return nullptr;
-
-	const size_t key = std::hash<PixelFuncID>()(id);
-	if (lastSingle_.Match(key, clearGen_))
-		return lastSingle_.func;
-
-	std::unique_lock<std::mutex> guard(jitCacheLock);
-	SingleFunc singleFunc;
-	if (cache_.Get(key, &singleFunc)) {
-		lastSingle_.Set(key, singleFunc, clearGen_);
-		return singleFunc;
+	auto it = cache_.find(id);
+	if (it != cache_.end()) {
+		return it->second;
 	}
 
-	if (!binner) {
-		// Can't compile, let's try to do it later when there's an opportunity.
-		compileQueue_.insert(id);
-		return nullptr;
-	}
-
-	guard.unlock();
-	binner->Flush("compile");
-	guard.lock();
-
-	for (const auto &queued : compileQueue_) {
-		// Might've been compiled after enqueue, but before now.
-		size_t queuedKey = std::hash<PixelFuncID>()(queued);
-		if (!cache_.ContainsKey(queuedKey))
-			Compile(queued);
-	}
-	compileQueue_.clear();
-
-	// Might've been in the queue.
-	if (!cache_.ContainsKey(key))
-		Compile(id);
-
-	if (cache_.Get(key, &singleFunc)) {
-		lastSingle_.Set(key, singleFunc, clearGen_);
-		return singleFunc;
-	} else {
-		return nullptr;
-	}
-}
-
-void PixelJitCache::Compile(const PixelFuncID &id) {
 	// x64 is typically 200-500 bytes, but let's be safe.
 	if (GetSpaceLeft() < 65536) {
 		Clear();
 	}
 
 #if PPSSPP_ARCH(AMD64) && !PPSSPP_PLATFORM(UWP)
-	addresses_[id] = GetCodePointer();
-	SingleFunc func = CompileSingle(id);
-	cache_.Insert(std::hash<PixelFuncID>()(id), func);
+	if (g_Config.bSoftwareRenderingJit) {
+		addresses_[id] = GetCodePointer();
+		SingleFunc func = CompileSingle(id);
+		cache_[id] = func;
+		return func;
+	}
 #endif
+	return nullptr;
 }
 
 void ComputePixelBlendState(PixelBlendState &state, const PixelFuncID &id) {
@@ -985,13 +669,11 @@ void ComputePixelBlendState(PixelBlendState &state, const PixelFuncID &id) {
 			state.srcColorAsFactor = true;
 			break;
 
-		case PixelBlendFactor::ZERO:
-			state.readsDstPixel = state.dstColorAsFactor || state.usesDstAlpha;
-			break;
-
 		default:
 			break;
 		}
+
+		state.dstColorAsFactor = state.dstColorAsFactor || state.usesDstAlpha;
 	}
 }
 

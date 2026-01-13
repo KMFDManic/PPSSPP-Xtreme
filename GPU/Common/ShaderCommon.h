@@ -18,8 +18,6 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
-#include <string>
 
 namespace Draw {
 	class DrawContext;
@@ -31,7 +29,7 @@ enum DebugShaderType {
 	SHADER_TYPE_GEOMETRY = 2,
 	SHADER_TYPE_VERTEXLOADER = 3,  // Not really a shader, but might as well re-use this mechanism
 	SHADER_TYPE_PIPELINE = 4,  // Vulkan and DX12 combines a bunch of state into pipeline objects. Might as well make them inspectable.
-	SHADER_TYPE_TEXTURE = 5,
+	SHADER_TYPE_DEPAL = 5,
 	SHADER_TYPE_SAMPLER = 6,  // Not really a shader either. Need to rename this enum...
 };
 
@@ -89,37 +87,25 @@ enum : uint64_t {
 	DIRTY_DEPAL = 1ULL << 35,
 	DIRTY_COLORWRITEMASK = 1ULL << 36,
 
-	DIRTY_MIPBIAS = 1ULL << 37,
-	DIRTY_LIGHT_CONTROL = 1ULL << 38,
-	DIRTY_TEX_ALPHA_MUL = 1ULL << 39,
-
-	// Bits 40-42 are free for new uniforms. Then we're really out and need to start merging.
-	// Don't forget to update DIRTY_ALL_UNIFORMS when you start using them.
+	// space for 4 more uniform dirty flags. Remember to update DIRTY_ALL_UNIFORMS.
 
 	DIRTY_BONE_UNIFORMS = 0xFF000000ULL,
 
-	DIRTY_ALL_UNIFORMS = 0x0FFFFFFFFFFULL,
+	DIRTY_ALL_UNIFORMS = 0x1FFFFFFFFFULL,
+	DIRTY_ALL_LIGHTS = DIRTY_LIGHT0 | DIRTY_LIGHT1 | DIRTY_LIGHT2 | DIRTY_LIGHT3,
 
-	// Other dirty elements that aren't uniforms
-	DIRTY_CULL_PLANES = 1ULL << 43,
-	DIRTY_FRAMEBUF = 1ULL << 44,
-	DIRTY_TEXTURE_IMAGE = 1ULL << 45,  // Means that the definition of the texture image has changed (address, stride etc), and we need to look up again.
-	DIRTY_TEXTURE_PARAMS = 1ULL << 46,
+	// Other dirty elements that aren't uniforms!
+	DIRTY_FRAMEBUF = 1ULL << 40,
+	DIRTY_TEXTURE_IMAGE = 1ULL << 41,  // Means that the definition of the texture image has changed (address, stride etc), and we need to look up again.
+	DIRTY_TEXTURE_PARAMS = 1ULL << 42,
 
 	// Render State
-	DIRTY_BLEND_STATE = 1ULL << 47,
-	DIRTY_DEPTHSTENCIL_STATE = 1ULL << 48,
-	DIRTY_RASTER_STATE = 1ULL << 49,
-	DIRTY_VIEWPORTSCISSOR_STATE = 1ULL << 50,
-	DIRTY_VERTEXSHADER_STATE = 1ULL << 51,
-	DIRTY_FRAGMENTSHADER_STATE = 1ULL << 52,
-	DIRTY_GEOMETRYSHADER_STATE = 1ULL << 53,
-
-	// Note that the top 8 bits (54-63) cannot be dirtied through the commonCommandTable due to packing of other flags.
-
-	// Everything that's not uniforms. Use this after using thin3d.
-	// TODO: Should we also add DIRTY_FRAMEBUF here? It kinda generally takes care of itself.
-	DIRTY_ALL_RENDER_STATE = DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE | DIRTY_TEXTURE_IMAGE | DIRTY_TEXTURE_PARAMS,
+	DIRTY_BLEND_STATE = 1ULL << 43,
+	DIRTY_DEPTHSTENCIL_STATE = 1ULL << 44,
+	DIRTY_RASTER_STATE = 1ULL << 45,
+	DIRTY_VIEWPORTSCISSOR_STATE = 1ULL << 46,
+	DIRTY_VERTEXSHADER_STATE = 1ULL << 47,
+	DIRTY_FRAGMENTSHADER_STATE = 1ULL << 48,
 
 	DIRTY_ALL = 0xFFFFFFFFFFFFFFFF
 };
@@ -129,14 +115,7 @@ public:
 	ShaderManagerCommon(Draw::DrawContext *draw) : draw_(draw) {}
 	virtual ~ShaderManagerCommon() {}
 
-	virtual void ClearShaders() = 0;
 	virtual void DirtyLastShader() = 0;
-
-	virtual void DeviceLost() = 0;
-	virtual void DeviceRestore(Draw::DrawContext *draw) = 0;   // must set draw_ to draw
-
-	virtual std::vector<std::string> DebugGetShaderIDs(DebugShaderType type) = 0;
-	virtual std::string DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType) = 0;
 
 protected:
 	Draw::DrawContext *draw_ = nullptr;
@@ -173,3 +152,6 @@ enum {
 
 	ATTR_COUNT,
 };
+
+struct TBuiltInResource;
+void init_resources(TBuiltInResource &Resources);

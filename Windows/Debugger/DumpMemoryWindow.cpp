@@ -3,10 +3,9 @@
 #include <mutex>
 #include "Common/Data/Encoding/Utf8.h"
 #include "Core/Core.h"
-#include "Core/System.h"
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/MemMap.h"
-#include "Core/MIPS/MIPSDebugInterface.h"
+#include "Core/MIPS/JitCommon/JitBlockCache.h"
 #include "Windows/Debugger/DumpMemoryWindow.h"
 #include "Windows/resource.h"
 #include "Windows/W32Util/ShellUtil.h"
@@ -83,7 +82,7 @@ INT_PTR CALLBACK DumpMemoryWindow::dlgFunc(HWND hwnd, UINT iMsg, WPARAM wParam, 
 				bool priorDumpWasStepping = Core_IsStepping();
 				if (!priorDumpWasStepping && PSP_IsInited()) {
 					// If emulator isn't paused force paused state, but wait before locking.
-					Core_Break(BreakReason::MemoryAccess, bp->start);
+					Core_EnableStepping(true, "memory.access", bp->start);
 					Core_WaitInactive();
 				}
 
@@ -118,7 +117,7 @@ INT_PTR CALLBACK DumpMemoryWindow::dlgFunc(HWND hwnd, UINT iMsg, WPARAM wParam, 
 				fclose(output);
 				if (!priorDumpWasStepping) {
 					// If emulator wasn't paused before memory dump resume emulation automatically.
-					Core_Resume();
+					Core_EnableStepping(false);
 				}
 
 				MessageBoxA(hwnd, "Done.", "Information", MB_OK);
@@ -150,20 +149,20 @@ bool DumpMemoryWindow::fetchDialogData(HWND hwnd)
 
 	// parse start address
 	GetWindowTextA(GetDlgItem(hwnd,IDC_DUMP_STARTADDRESS),str,256);
-	if (initExpression(cpu, str,exp) == false
-		|| parseExpression(cpu, exp,start) == false)
+	if (cpu->initExpression(str,exp) == false
+		|| cpu->parseExpression(exp,start) == false)
 	{
-		snprintf(errorMessage, sizeof(errorMessage), "Invalid address expression \"%s\".",str);
+		sprintf(errorMessage,"Invalid address expression \"%s\".",str);
 		MessageBoxA(hwnd,errorMessage,"Error",MB_OK);
 		return false;
 	}
 	
 	// parse size
 	GetWindowTextA(GetDlgItem(hwnd,IDC_DUMP_SIZE),str,256);
-	if (initExpression(cpu, str,exp) == false
-		|| parseExpression(cpu, exp,size) == false)
+	if (cpu->initExpression(str,exp) == false
+		|| cpu->parseExpression(exp,size) == false)
 	{
-		snprintf(errorMessage, sizeof(errorMessage), "Invalid size expression \"%s\".",str);
+		sprintf(errorMessage,"Invalid size expression \"%s\".",str);
 		MessageBoxA(hwnd,errorMessage,"Error",MB_OK);
 		return false;
 	}
@@ -199,12 +198,12 @@ bool DumpMemoryWindow::fetchDialogData(HWND hwnd)
 
 	if (invalidAddress)
 	{
-		snprintf(errorMessage, sizeof(errorMessage), "Invalid address 0x%08X.",start);
+		sprintf(errorMessage,"Invalid address 0x%08X.",start);
 		MessageBoxA(hwnd,errorMessage,"Error",MB_OK);
 		return false;
 	} else if (invalidSize)
 	{
-		snprintf(errorMessage, sizeof(errorMessage), "Invalid end address 0x%08X.",start+size);
+		sprintf(errorMessage,"Invalid end address 0x%08X.",start+size);
 		MessageBoxA(hwnd,errorMessage,"Error",MB_OK);
 		return false;
 	}
@@ -230,10 +229,11 @@ void DumpMemoryWindow::changeMode(HWND hwnd, Mode newMode)
 		if (filenameChosen_ == false)
 			SetWindowTextA(GetDlgItem(hwnd,IDC_DUMP_FILENAME),"Custom.dump");
 	} else {
-		u32 start = 0, size = 0;
-		const char *defaultFileName = "";
+		u32 start, size;
+		const char* defaultFileName;
 
-		switch (selectedMode) {
+		switch (selectedMode)
+		{
 		case MODE_RAM:
 			start = PSP_GetUserMemoryBase();
 			size = PSP_GetUserMemoryEnd()-start;
@@ -249,15 +249,13 @@ void DumpMemoryWindow::changeMode(HWND hwnd, Mode newMode)
 			size = PSP_GetScratchpadMemoryEnd()-start;
 			defaultFileName = "Scratchpad.dump";
 			break;
-		case MODE_CUSTOM:
-			break;
 		}
 		
-		snprintf(buffer, sizeof(buffer), "0x%08X", start);
+		sprintf(buffer,"0x%08X",start);
 		SetWindowTextA(GetDlgItem(hwnd,IDC_DUMP_STARTADDRESS),buffer);
 		EnableWindow(GetDlgItem(hwnd,IDC_DUMP_STARTADDRESS),FALSE);
 
-		snprintf(buffer, sizeof(buffer), "0x%08X", size);
+		sprintf(buffer,"0x%08X",size);
 		SetWindowTextA(GetDlgItem(hwnd,IDC_DUMP_SIZE),buffer);
 		EnableWindow(GetDlgItem(hwnd,IDC_DUMP_SIZE),FALSE);
 		

@@ -22,7 +22,7 @@
 #include <set>
 
 // Compatibility flags are controlled by assets/compat.ini.
-// Alternatively, if PSP/System/compat.ini exists, it is merged on top, to enable editing
+// Alternatively, if PSP/SYSTEM/compat.ini exists, it is merged on top, to enable editing
 // the file on Android for tests.
 //
 // This file is not meant to be user-editable, although is kept as a separate ini
@@ -53,11 +53,11 @@ struct CompatFlags {
 	bool ClearToRAM;
 	bool Force04154000Download;
 	bool DrawSyncEatCycles;
-	bool DrawSyncInstant;
 	bool FakeMipmapChange;
 	bool RequireBufferedRendering;
 	bool RequireBlockTransfer;
 	bool RequireDefaultCPUClock;
+	bool DisableReadbacks;
 	bool DisableAccurateDepth;
 	bool MGS2AcidHack;
 	bool SonicRivalsHack;
@@ -67,7 +67,7 @@ struct CompatFlags {
 	bool ForceUMDDelay;
 	bool ForceMax60FPS;
 	bool GoWFramerateHack60;
-	bool FramerateHack30;
+	bool GoWFramerateHack30;
 	bool JitInvalidationHack;
 	bool HideISOFiles;
 	bool MoreAccurateVMMUL;
@@ -76,57 +76,16 @@ struct CompatFlags {
 	bool ReportSmallMemstick;
 	bool MemstickFixedFree;
 	bool DateLimited;
+	bool ReinterpretFramebuffers;
 	bool ShaderColorBitmask;
 	bool DisableFirstFrameReadback;
+	bool DisableRangeCulling;
 	bool MpegAvcWarmUp;
 	bool BlueToAlpha;
 	bool CenteredLines;
 	bool MaliDepthStencilBugWorkaround;
 	bool ZZT3SelectHack;
 	bool AllowLargeFBTextureOffsets;
-	bool AtracLoopHack;
-	bool DeswizzleDepth;
-	bool SplitFramebufferMargin;
-	bool ForceLowerResolutionForEffectsOn;
-	bool ForceLowerResolutionForEffectsOff;
-	bool AllowDownloadCLUT;
-	bool NearestFilteringOnFramebufferCreate;
-	bool SecondaryTextureCache;
-	bool EnglishOrJapaneseOnly;
-	bool OldAdrenoPixelDepthRoundingGL;
-	bool ForceCircleButtonConfirm;
-	bool DisallowFramebufferAtOffset;
-	bool RockmanDash2SoundFix;
-	bool ReadbackDepth;
-	bool BlockTransferDepth;
-	bool DaxterRotatedAnalogStick;
-	bool ForceMaxDepthResolution;
-	bool SOCOMClut8Replacement;
-	bool Fontltn12Hack;
-	bool LoadCLUTFromCurrentFrameOnly;
-	bool ForceUMDReadSpeed;
-	bool KernelGetSystemTimeLowEatMoreCycles;
-	bool TacticsOgreEliminateDebugReadback;
-	bool FramebufferAllowLargeVerticalOffset;
-	bool DisableMemcpySlicing;
-	bool ForceEnableGPUReadback;
-	bool UseFFMPEGFindStreamInfo;
-	bool SoftwareRasterDepth;
-	bool DisableHLESceFont;
-	bool ForceHLEPsmf;
-	bool SaveStatesNotRecommended;
-	bool IgnoreEnqueue;
-	bool MsgDialogAutoStatus;
-};
-
-struct VRCompat {
-	bool ForceMono;
-	bool ForceFlatScreen;
-	bool IdentityViewHack;
-	int MirroringVariant;
-	bool ProjectionHack;
-	bool Skyplane;
-	float UnitsPerMeter;
 };
 
 class IniFile;
@@ -140,24 +99,13 @@ public:
 	// Flags enforced read-only through const. Only way to change them is to load assets/compat.ini.
 	const CompatFlags &flags() const { return flags_; }
 
-	const VRCompat &vrCompat() const { return vrCompat_; }
-
 	void Load(const std::string &gameID);
-
-	const std::string &GetActiveFlagsString() const {
-		return activeList_;
-	}
 
 private:
 	void Clear();
 	void CheckSettings(IniFile &iniFile, const std::string &gameID);
-	void CheckVRSettings(IniFile &iniFile, const std::string &gameID);
 	void CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, bool *flag);
-	void CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, float *value);
-	void CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, int *value);
 
 	CompatFlags flags_{};
-	VRCompat vrCompat_{};
 	std::set<std::string> ignored_;
-	std::string activeList_;
 };

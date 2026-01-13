@@ -60,18 +60,12 @@ void convert_frame(int inw, int inh, unsigned char *inData, AVPixelFormat inForm
 
 void __cameraDummyImage(int width, int height, unsigned char** outData, int* outLen) {
 #ifdef USE_FFMPEG
-	unsigned char *rgbData = (unsigned char *)malloc(3 * width * height);
-	if (!rgbData) {
-		*outData = nullptr;
-		return;
-	}
-	// Generate a solid RED surface for camera detection (e.g., Invizimals)
-	// RGB: (255, 0, 0) = Red
+	unsigned char* rgbData = (unsigned char*)malloc(3 * width * height);
 	for (int y = 0; y < height; y++) {
 		for (int x = 0; x < width; x++) {
-			rgbData[3 * (y * width + x) + 0] = 255;  // Red channel: full intensity
-			rgbData[3 * (y * width + x) + 1] = 0;    // Green channel: off
-			rgbData[3 * (y * width + x) + 2] = 0;    // Blue channel: off
+			rgbData[3 * (y * width + x) + 0] = x*255/width;
+			rgbData[3 * (y * width + x) + 1] = x*255/width;
+			rgbData[3 * (y * width + x) + 2] = y*255/height;
 		}
 	}
 
@@ -146,7 +140,7 @@ bool MyViewfinder::present(const QVideoFrame &frame) {
 
 int __qt_startCapture(int width, int height) {
 	if (qt_camera != nullptr) {
-		ERROR_LOG(Log::HLE, "camera already started");
+		ERROR_LOG(HLE, "camera already started");
 		return -1;
 	}
 
@@ -157,7 +151,7 @@ int __qt_startCapture(int width, int height) {
 	if (availableCameras.size() < 1) {
 		delete qt_camera;
 		qt_camera = nullptr;
-		ERROR_LOG(Log::HLE, "no camera found");
+		ERROR_LOG(HLE, "no camera found");
 		return -1;
 	}
 	for (const QCameraInfo &cameraInfo : availableCameras) {
@@ -168,7 +162,7 @@ int __qt_startCapture(int width, int height) {
 	if (qt_camera == nullptr) {
 		qt_camera = new QCamera();
 		if (qt_camera == nullptr) {
-			ERROR_LOG(Log::HLE, "cannot open camera");
+			ERROR_LOG(HLE, "cannot open camera");
 			return -1;
 		}
 	}
@@ -215,12 +209,12 @@ std::vector<std::string> __v4l_getDeviceList() {
 		}
 		int fd = -1;
 		if((fd = open(path, O_RDONLY)) < 0) {
-			ERROR_LOG(Log::HLE, "Cannot open '%s'; errno=%d(%s)", path, errno, strerror(errno));
+			ERROR_LOG(HLE, "Cannot open '%s'; errno=%d(%s)", path, errno, strerror(errno));
 			continue;
 		}
 		struct v4l2_capability video_cap;
 		if(ioctl(fd, VIDIOC_QUERYCAP, &video_cap) < 0) {
-			ERROR_LOG(Log::HLE, "VIDIOC_QUERYCAP");
+			ERROR_LOG(HLE, "VIDIOC_QUERYCAP");
 			goto cont;
 		} else {
 			char device[256];
@@ -245,7 +239,7 @@ void *v4l_loop(void *data) {
 		buf.memory = V4L2_MEMORY_MMAP;
 
 		if (ioctl(v4l_fd, VIDIOC_DQBUF, &buf) == -1) {
-			ERROR_LOG(Log::HLE, "VIDIOC_DQBUF; errno=%d(%s)", errno, strerror(errno));
+			ERROR_LOG(HLE, "VIDIOC_DQBUF; errno=%d(%s)", errno, strerror(errno));
 			switch (errno) {
 			case EAGAIN:
 				continue;
@@ -281,12 +275,12 @@ void *v4l_loop(void *data) {
 		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 		buf.memory = V4L2_MEMORY_MMAP;
 		if (ioctl(v4l_fd, VIDIOC_QBUF, &buf) == -1) {
-			ERROR_LOG(Log::HLE, "VIDIOC_QBUF");
+			ERROR_LOG(HLE, "VIDIOC_QBUF");
 			return nullptr;
 		}
 	}
-#endif //USE_FFMPEG
 	return nullptr;
+#endif //USE_FFMPEG
 }
 
 int __v4l_startCapture(int ideal_width, int ideal_height) {
@@ -303,22 +297,22 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 	snprintf(dev_name, sizeof(dev_name), "/dev/video%d", dev_index);
 
 	if ((v4l_fd = open(dev_name, O_RDWR)) == -1) {
-		ERROR_LOG(Log::HLE, "Cannot open '%s'; errno=%d(%s)", dev_name, errno, strerror(errno));
+		ERROR_LOG(HLE, "Cannot open '%s'; errno=%d(%s)", dev_name, errno, strerror(errno));
 		return -1;
 	}
 
 	struct v4l2_capability cap;
 	memset(&cap, 0, sizeof(cap));
 	if (ioctl(v4l_fd, VIDIOC_QUERYCAP, &cap) == -1) {
-		ERROR_LOG(Log::HLE, "VIDIOC_QUERYCAP");
+		ERROR_LOG(HLE, "VIDIOC_QUERYCAP");
 		return -1;
 	}
 	if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-		ERROR_LOG(Log::HLE, "V4L2_CAP_VIDEO_CAPTURE");
+		ERROR_LOG(HLE, "V4L2_CAP_VIDEO_CAPTURE");
 		return -1;
 	}
 	if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
-		ERROR_LOG(Log::HLE, "V4L2_CAP_STREAMING");
+		ERROR_LOG(HLE, "V4L2_CAP_STREAMING");
 		return -1;
 	}
 
@@ -333,19 +327,19 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 	desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	while (ioctl(v4l_fd, VIDIOC_ENUM_FMT, &desc) == 0) {
 		desc.index++;
-		INFO_LOG(Log::HLE, "V4L2: pixel format supported: %s", desc.description);
+		INFO_LOG(HLE, "V4L2: pixel format supported: %s", desc.description);
 		if (fmt.fmt.pix.pixelformat != 0) {
 			continue;
 		} else if (desc.pixelformat == V4L2_PIX_FMT_YUYV
 				|| desc.pixelformat == V4L2_PIX_FMT_JPEG
 				|| desc.pixelformat == V4L2_PIX_FMT_MJPEG) {
-			INFO_LOG(Log::HLE, "V4L2: %s selected", desc.description);
+			INFO_LOG(HLE, "V4L2: %s selected", desc.description);
 			fmt.fmt.pix.pixelformat = desc.pixelformat;
 			v4l_format              = desc.pixelformat;
 		}
 	}
 	if (fmt.fmt.pix.pixelformat == 0) {
-		ERROR_LOG(Log::HLE, "V4L2: No supported format found");
+		ERROR_LOG(HLE, "V4L2: No supported format found");
 		return -1;
 	}
 
@@ -358,7 +352,7 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 	while (ioctl(v4l_fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0) {
 		frmsize.index++;
 		if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
-			INFO_LOG(Log::HLE, "V4L2: frame size supported: %dx%d", frmsize.discrete.width, frmsize.discrete.height);
+			INFO_LOG(HLE, "V4L2: frame size supported: %dx%d", frmsize.discrete.width, frmsize.discrete.height);
 			bool matchesIdeal = frmsize.discrete.width >= ideal_width && frmsize.discrete.height >= ideal_height;
 			bool zeroPix = fmt.fmt.pix.width == 0 && fmt.fmt.pix.height == 0;
 			bool pixLarger = frmsize.discrete.width < fmt.fmt.pix.width && frmsize.discrete.height < fmt.fmt.pix.height;
@@ -373,16 +367,16 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 		fmt.fmt.pix.width  = ideal_width;
 		fmt.fmt.pix.height = ideal_height;
 	}
-	INFO_LOG(Log::HLE, "V4L2: asking for   %dx%d", fmt.fmt.pix.width, fmt.fmt.pix.height);
+	INFO_LOG(HLE, "V4L2: asking for   %dx%d", fmt.fmt.pix.width, fmt.fmt.pix.height);
 	if (ioctl(v4l_fd, VIDIOC_S_FMT, &fmt) == -1) {
-		ERROR_LOG(Log::HLE, "VIDIOC_S_FMT");
+		ERROR_LOG(HLE, "VIDIOC_S_FMT");
 		return -1;
 	}
 	v4l_hw_width  = fmt.fmt.pix.width;
 	v4l_hw_height = fmt.fmt.pix.height;
-	INFO_LOG(Log::HLE, "V4L2: will receive %dx%d", v4l_hw_width, v4l_hw_height);
+	INFO_LOG(HLE, "V4L2: will receive %dx%d", v4l_hw_width, v4l_hw_height);
 	v4l_height_fixed_aspect = v4l_hw_width * ideal_height / ideal_width;
-	INFO_LOG(Log::HLE, "V4L2: will use     %dx%d", v4l_hw_width, v4l_height_fixed_aspect);
+	INFO_LOG(HLE, "V4L2: will use     %dx%d", v4l_hw_width, v4l_height_fixed_aspect);
 
 	struct v4l2_requestbuffers req;
 	memset(&req, 0, sizeof(req));
@@ -390,11 +384,11 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 	req.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	req.memory = V4L2_MEMORY_MMAP;
 	if (ioctl(v4l_fd, VIDIOC_REQBUFS, &req) == -1) {
-		ERROR_LOG(Log::HLE, "VIDIOC_REQBUFS");
+		ERROR_LOG(HLE, "VIDIOC_REQBUFS");
 		return -1;
 	}
 	v4l_buffer_count = req.count;
-	INFO_LOG(Log::HLE, "V4L2: buffer count: %d", v4l_buffer_count);
+	INFO_LOG(HLE, "V4L2: buffer count: %d", v4l_buffer_count);
 	v4l_buffers = (v4l_buf_t*) calloc(v4l_buffer_count, sizeof(v4l_buf_t));
 
 	for (int buf_id = 0; buf_id < v4l_buffer_count; buf_id++) {
@@ -404,7 +398,7 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 		buf.memory = V4L2_MEMORY_MMAP;
 		buf.index  = buf_id;
 		if (ioctl(v4l_fd, VIDIOC_QUERYBUF, &buf) == -1) {
-			ERROR_LOG(Log::HLE, "VIDIOC_QUERYBUF");
+			ERROR_LOG(HLE, "VIDIOC_QUERYBUF");
 			return -1;
 		}
 
@@ -415,7 +409,7 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 				MAP_SHARED,
 				v4l_fd, buf.m.offset);
 		if (v4l_buffers[buf_id].start == MAP_FAILED) {
-			ERROR_LOG(Log::HLE, "MAP_FAILED");
+			ERROR_LOG(HLE, "MAP_FAILED");
 			return -1;
 		}
 
@@ -424,14 +418,14 @@ int __v4l_startCapture(int ideal_width, int ideal_height) {
 		buf.memory = V4L2_MEMORY_MMAP;
 		buf.index  = buf_id;
 		if (ioctl(v4l_fd, VIDIOC_QBUF, &buf) == -1) {
-			ERROR_LOG(Log::HLE, "VIDIOC_QBUF");
+			ERROR_LOG(HLE, "VIDIOC_QBUF");
 			return -1;
 		}
 	}
 
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	if (ioctl(v4l_fd, VIDIOC_STREAMON, &type) == -1) {
-		ERROR_LOG(Log::HLE, "VIDIOC_STREAMON");
+		ERROR_LOG(HLE, "VIDIOC_STREAMON");
 		return -1;
 	}
 
@@ -448,19 +442,19 @@ int __v4l_stopCapture() {
 	}
 
 	if (ioctl(v4l_fd, VIDIOC_STREAMOFF, &type) == -1) {
-		ERROR_LOG(Log::HLE, "VIDIOC_STREAMOFF");
+		ERROR_LOG(HLE, "VIDIOC_STREAMOFF");
 		goto exit;
 	}
 
 	for (int buf_id = 0; buf_id < v4l_buffer_count; buf_id++) {
 		if (munmap(v4l_buffers[buf_id].start, v4l_buffers[buf_id].length) == -1) {
-			ERROR_LOG(Log::HLE, "munmap");
+			ERROR_LOG(HLE, "munmap");
 			goto exit;
 		}
 	}
 
 	if (close(v4l_fd) == -1) {
-		ERROR_LOG(Log::HLE, "close");
+		ERROR_LOG(HLE, "close");
 		goto exit;
 	}
 

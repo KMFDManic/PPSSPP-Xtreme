@@ -17,13 +17,13 @@
 
 #include <algorithm>
 #include <mutex>
-#include "Common/Log/LogManager.h"
+#include "Common/LogManager.h"
 #include "Core/Debugger/WebSocket/LogBroadcaster.h"
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
 
-class DebuggerLogListener {
+class DebuggerLogListener : public LogListener {
 public:
-	void Log(const LogMessage &msg) {
+	void Log(const LogMessage &msg) override {
 		std::lock_guard<std::mutex> guard(lock_);
 		messages_[nextMessage_] = msg;
 		nextMessage_++;
@@ -73,20 +73,15 @@ private:
 	int read_ = 0;
 };
 
-static void BroadcastCallback(const LogMessage &message, void *userdata) {
-	DebuggerLogListener *listener = (DebuggerLogListener *)userdata;
-	listener->Log(message);
-}
-
 LogBroadcaster::LogBroadcaster() {
 	listener_ = new DebuggerLogListener();
-	g_logManager.SetExternalLogCallback(&BroadcastCallback, (void *)listener_);
-	g_logManager.EnableOutput(LogOutput::ExternalCallback);
+	if (LogManager::GetInstance())
+		LogManager::GetInstance()->AddListener(listener_);
 }
 
 LogBroadcaster::~LogBroadcaster() {
-	g_logManager.DisableOutput(LogOutput::ExternalCallback);
-	g_logManager.SetExternalLogCallback(nullptr, nullptr);
+	if (LogManager::GetInstance())
+		LogManager::GetInstance()->RemoveListener(listener_);
 	delete listener_;
 }
 
@@ -100,7 +95,7 @@ struct DebuggerLogEvent {
 		j.writeString("timestamp", l.timestamp);
 		j.writeString("header", l.header);
 		j.writeString("message", l.msg);
-		j.writeInt("level", (int)l.level);
+		j.writeInt("level", l.level);
 		j.writeString("channel", l.log);
 		j.end();
 		return j.str();

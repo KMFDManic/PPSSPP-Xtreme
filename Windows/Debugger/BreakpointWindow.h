@@ -3,14 +3,12 @@
 #include "Common/CommonWindows.h"
 #include "Common/CommonTypes.h"
 #include "Core/Debugger/DebugInterface.h"
-#include "Core/MIPS/MIPSDebugInterface.h"
+#include "Core/Debugger/Breakpoints.h"
 
-struct BreakPoint;
-struct MemCheck;
-
-class BreakpointWindow {
+class BreakpointWindow
+{
 	HWND parentHwnd;
-	MIPSDebugInterface *cpu;
+	DebugInterface* cpu;
 
 	bool memory;
 	bool read;
@@ -24,14 +22,12 @@ class BreakpointWindow {
 	std::string logFormat;
 	PostfixExpression compiledCondition;
 
+	static BreakpointWindow* bp;
 	bool fetchDialogData(HWND hwnd);
 	bool GetCheckState(HWND hwnd, int dlgItem);
 
-	static INT_PTR CALLBACK StaticDlgFunc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
-	INT_PTR DlgFunc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
-
 public:
-	BreakpointWindow(HWND parent, MIPSDebugInterface* cpu): cpu(cpu)
+	BreakpointWindow(HWND parent, DebugInterface* cpu): cpu(cpu)
 	{
 		parentHwnd = parent;
 		memory = true;
@@ -42,11 +38,13 @@ public:
 		size = 1;
 	};
 
+
+	static INT_PTR CALLBACK dlgFunc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam);
 	bool exec();
 	bool isMemoryBreakpoint() { return memory; };
 
 	void addBreakpoint();
-	void loadFromMemcheck(const MemCheck &memcheck);
-	void loadFromBreakpoint(const BreakPoint &bp);
+	void loadFromMemcheck(MemCheck& memcheck);
+	void loadFromBreakpoint(BreakPoint& memcheck);
 	void initBreakpoint(u32 address);
 };

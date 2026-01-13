@@ -27,8 +27,9 @@ void DoList(PointerWrap &p, std::list<T> &x, T &default_val) {
 	Do(p, list_size);
 	x.resize(list_size, default_val);
 
-	for (T &elem : x)
-		Do(p, elem);
+	typename std::list<T>::iterator itr, end;
+	for (itr = x.begin(), end = x.end(); itr != end; ++itr)
+		Do(p, *itr);
 }
 
 template<class T>
@@ -74,7 +75,7 @@ void DoLinkedList(PointerWrap &p, LinkedListItem<T> *&list_start, LinkedListItem
 			}
 		} else {
 			if (shouldExist != 0) {
-				WARN_LOG(Log::SaveState, "Savestate failure: incorrect item marker %d", shouldExist);
+				WARN_LOG(SAVESTATE, "Savestate failure: incorrect item marker %d", shouldExist);
 				p.SetError(p.ERROR_FAILURE);
 			}
 			if (p.mode == PointerWrap::MODE_READ) {
@@ -96,14 +97,5 @@ void DoLinkedList(PointerWrap &p, LinkedListItem<T> *&list_start, LinkedListItem
 		}
 		prev = list_cur;
 		list_cur = list_cur->next;
-	}
-}
-
-inline void DoIgnoreUnusedLinkedList(PointerWrap &p) {
-	u8 shouldExist = 0;
-	Do(p, shouldExist);
-	if (shouldExist) {
-		// We don't support this linked list and haven't used it forever.
-		p.SetError(p.ERROR_FAILURE);
 	}
 }

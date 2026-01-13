@@ -2,25 +2,24 @@
 
 #if PPSSPP_PLATFORM(WINDOWS)
 #define WIN32_LEAN_AND_MEAN
-#include "Common/CommonWindows.h"
+#include <Windows.h>
 #include <direct.h>
 #if PPSSPP_PLATFORM(UWP)
 #include <fileapifromapp.h>
-#include <UWP/UWPHelpers/StorageManager.h>
 #endif
 #else
 #include <strings.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <errno.h>
 #endif
-
 #include <cstring>
 #include <string>
 #include <set>
+#include <algorithm>
 #include <cstdio>
 #include <sys/stat.h>
-#include <cctype>
-#include <algorithm>  // remove_if
+#include <ctype.h>
 
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/StringUtils.h"
@@ -28,8 +27,6 @@
 #include "Common/File/DirListing.h"
 #include "Common/File/FileUtil.h"
 #include "Common/File/AndroidStorage.h"
-#include "Common/TimeUtil.h"
-#include "Common/Log.h"
 
 #if !defined(__linux__) && !defined(_WIN32) && !defined(__QNX__)
 #define stat64 stat
@@ -41,14 +38,6 @@
 #define ftello ftell
 #define fileno
 #endif // HAVE_LIBNX
-
-// NOTE: There's another one in FileUtil.cpp.
-#ifdef _WIN32
-constexpr bool SIMULATE_SLOW_IO = false;
-#else
-constexpr bool SIMULATE_SLOW_IO = false;
-#endif
-constexpr bool LOG_IO = false;
 
 namespace File {
 
@@ -62,13 +51,6 @@ static uint64_t FiletimeToStatTime(FILETIME ft) {
 #endif
 
 bool GetFileInfo(const Path &path, FileInfo * fileInfo) {
-	if (LOG_IO) {
-		INFO_LOG(Log::IO, "GetFileInfo %s", path.ToVisualString().c_str());
-	}
-	if (SIMULATE_SLOW_IO) {
-		sleep_ms(300, "slow-io-sim");
-	}
-
 	switch (path.Type()) {
 	case PathType::NATIVE:
 		break;  // OK
@@ -137,17 +119,6 @@ bool GetFileInfo(const Path &path, FileInfo * fileInfo) {
 	return true;
 }
 
-bool GetModifTimeT(const Path &filename, time_t *return_time) {
-	FileInfo info;
-	if (GetFileInfo(filename, &info)) {
-		*return_time = info.mtime;
-		return true;
-	} else {
-		*return_time = 0;
-		return false;
-	}
-}
-
 bool GetModifTime(const Path &filename, tm & return_time) {
 	memset(&return_time, 0, sizeof(return_time));
 	FileInfo info;
@@ -171,30 +142,25 @@ bool FileInfo::operator <(const FileInfo & other) const {
 		return false;
 }
 
-std::vector<File::FileInfo> ApplyFilter(std::vector<File::FileInfo> files, const char *extensionFilter, std::string_view prefix) {
+std::vector<File::FileInfo> ApplyFilter(std::vector<File::FileInfo> files, const char *filter) {
 	std::set<std::string> filters;
-	if (extensionFilter) {
+	if (filter) {
 		std::string tmp;
-		while (*extensionFilter) {
-			if (*extensionFilter == ':') {
-				filters.emplace("." + tmp);
+		while (*filter) {
+			if (*filter == ':') {
+				filters.insert("." + tmp);
 				tmp.clear();
 			} else {
-				tmp.push_back(*extensionFilter);
+				tmp.push_back(*filter);
 			}
-			extensionFilter++;
+			filter++;
 		}
 		if (!tmp.empty())
-			filters.emplace("." + tmp);
+			filters.insert("." + tmp);
 	}
 
 	auto pred = [&](const File::FileInfo &info) {
-		// WARNING: Keep in mind that if we return true here, the files is REMOVED from the list.
-		// It's not retain_if.
-		if (!startsWith(info.name, prefix)) {
-			return true;
-		}
-		if (info.isDirectory || !extensionFilter)
+		if (info.isDirectory || !filter)
 			return false;
 		std::string ext = info.fullName.GetFileExtension();
 		return filters.find(ext) == filters.end();
@@ -203,23 +169,12 @@ std::vector<File::FileInfo> ApplyFilter(std::vector<File::FileInfo> files, const
 	return files;
 }
 
-bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const char *filter, int flags, std::string_view prefix) {
-	if (LOG_IO) {
-		INFO_LOG(Log::IO, "GetFilesInDir '%s' (ext %s, prefix %.*s)", directory.ToVisualString().c_str(), filter, (int)prefix.size(), prefix.data());
-	}
-	if (SIMULATE_SLOW_IO) {
-		sleep_ms(300, "slow-io-sim");
-	}
-
+bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const char *filter, int flags) {
 	if (directory.Type() == PathType::CONTENT_URI) {
-		bool exists = false;
-		// TODO: Move prefix filtering over to the Java side for more speed.
-		std::vector<File::FileInfo> fileList = Android_ListContentUri(directory.ToString(), std::string(prefix), &exists);
-		int beforeFilter = (int)fileList.size();
-		*files = ApplyFilter(fileList, filter, prefix);
+		std::vector<File::FileInfo> fileList = Android_ListContentUri(directory.ToString());
+		*files = ApplyFilter(fileList, filter);
 		std::sort(files->begin(), files->end());
-		DEBUG_LOG(Log::IO, "GetFilesInDir: Found %d entries (%d before filter)", (int)files->size(), beforeFilter);
-		return exists;
+		return true;
 	}
 
 	std::set<std::string> filters;
@@ -227,7 +182,7 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 		std::string tmp;
 		while (*filter) {
 			if (*filter == ':') {
-				filters.insert(tmp);
+				filters.insert(std::move(tmp));
 				tmp.clear();
 			} else {
 				tmp.push_back(*filter);
@@ -235,13 +190,12 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 			filter++;
 		}
 		if (!tmp.empty())
-			filters.insert(tmp);
+			filters.insert(std::move(tmp));
 	}
 
 #if PPSSPP_PLATFORM(WINDOWS)
 	if (directory.IsRoot()) {
 		// Special path that means root of file system.
-		// This does not respect prefix filtering.
 		std::vector<std::string> drives = File::GetWindowsDrives();
 		for (auto drive = drives.begin(); drive != drives.end(); ++drive) {
 			if (*drive == "A:/" || *drive == "B:/")
@@ -259,22 +213,13 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 	}
 	// Find the first file in the directory.
 	WIN32_FIND_DATA ffd;
-	std::wstring wpath = directory.ToWString();
-	wpath += L"\\*";
 #if PPSSPP_PLATFORM(UWP)
-	HANDLE hFind = FindFirstFileExFromAppW(wpath.c_str(), FindExInfoStandard, &ffd, FindExSearchNameMatch, NULL, 0);
+	HANDLE hFind = FindFirstFileExFromAppW((directory.ToWString() + L"\\*").c_str(), FindExInfoStandard, &ffd, FindExSearchNameMatch, NULL, 0);
 #else
-	HANDLE hFind = FindFirstFileEx(wpath.c_str(), FindExInfoStandard, &ffd, FindExSearchNameMatch, NULL, 0);
+	HANDLE hFind = FindFirstFileEx((directory.ToWString() + L"\\*").c_str(), FindExInfoStandard, &ffd, FindExSearchNameMatch, NULL, 0);
 #endif
 	if (hFind == INVALID_HANDLE_VALUE) {
-#if PPSSPP_PLATFORM(UWP)
-		// This step just to avoid empty results by adding fake folders
-		// it will help also to navigate back between selected folder
-		// we must ignore this function for any request other than UI navigation
-		if (GetFakeFolders(directory, files, filter, filters))
-			return true;
-#endif
-		return false;
+		return 0;
 	}
 	do {
 		const std::string virtualName = ConvertWStringToUTF8(ffd.cFileName);
@@ -285,14 +230,6 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 		if (!(flags & GETFILES_GETHIDDEN)) {
 			if ((ffd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0)
 				continue;
-		}
-
-		if (!startsWith(virtualName, prefix)) {
-			continue;
-		}
-
-		if (LOG_IO) {
-			// INFO_LOG(Log::IO, "GetFilesInDir item %s", virtualName.c_str());
 		}
 
 		FileInfo info;
@@ -329,7 +266,7 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 	struct dirent *result = NULL;
 	DIR *dirp = opendir(directory.c_str());
 	if (!dirp)
-		return false;
+		return 0;
 	while ((result = readdir(dirp))) {
 		const std::string virtualName(result->d_name);
 		// check for "." and ".."
@@ -340,10 +277,6 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 		if (!(flags & GETFILES_GETHIDDEN)) {
 			if (virtualName[0] == '.')
 				continue;
-		}
-
-		if (!startsWith(virtualName, prefix)) {
-			continue;
 		}
 
 		// Let's just reuse GetFileInfo. We're calling stat anyway to get isDirectory information.
@@ -368,15 +301,13 @@ bool GetFilesInDir(const Path &directory, std::vector<FileInfo> *files, const ch
 	closedir(dirp);
 #endif
 	std::sort(files->begin(), files->end());
-	if (LOG_IO) {
-		INFO_LOG(Log::IO, "GetFilesInDir: Found %d files", (int)files->size());
-	}
 	return true;
 }
 
 #if PPSSPP_PLATFORM(WINDOWS)
 // Returns a vector with the device names
-std::vector<std::string> GetWindowsDrives() {
+std::vector<std::string> GetWindowsDrives()
+{
 	std::vector<std::string> drives;
 
 #if PPSSPP_PLATFORM(UWP)
@@ -385,7 +316,7 @@ std::vector<std::string> GetWindowsDrives() {
 	{
 		if (logicaldrives & (1 << i))
 		{
-			CHAR driveName[] = { (CHAR)(TEXT('A') + i), TEXT(':'), TEXT('\\'), TEXT('\0') };
+			CHAR driveName[] = { TEXT('A') + i, TEXT(':'), TEXT('\\'), TEXT('\0') };
 			std::string str(driveName);
 			drives.push_back(driveName);
 		}
@@ -394,13 +325,16 @@ std::vector<std::string> GetWindowsDrives() {
 #else
 	const DWORD buffsize = GetLogicalDriveStrings(0, NULL);
 	std::vector<wchar_t> buff(buffsize);
-	if (GetLogicalDriveStrings(buffsize, buff.data()) == buffsize - 1) {
+	if (GetLogicalDriveStrings(buffsize, buff.data()) == buffsize - 1)
+	{
 		auto drive = buff.data();
-		while (*drive) {
+		while (*drive)
+		{
 			std::string str(ConvertWStringToUTF8(drive));
 			str.pop_back();	// we don't want the final backslash
 			str += "/";
 			drives.push_back(str);
+
 			// advance to next drive
 			while (*drive++) {}
 		}

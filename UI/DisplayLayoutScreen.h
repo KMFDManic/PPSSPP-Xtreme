@@ -17,60 +17,37 @@
 
 #pragma once
 
-#include <deque>
-
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
-#include "Common/UI/PopupScreens.h"
-#include "GPU/Common/PostShader.h"
-#include "UI/MiscScreens.h"
+#include "MiscScreens.h"
 
-namespace UI {
-class ChoiceStrip;
-}
+class DragDropDisplay;
 
-class DisplayLayoutScreen : public UIBaseDialogScreen {
+class DisplayLayoutScreen : public UIDialogScreenWithBackground {
 public:
-	DisplayLayoutScreen(const Path &filename);
-	void CreateViews() override;
-	void dialogFinished(const Screen *dialog, DialogResult result) override;
-	void onFinish(DialogResult reason) override;
-
-	void resized() override {
-		RecreateViews();
-	}
-
-	bool wantBrightBackground() const override { return true; }
-
-	const char *tag() const override { return "DisplayLayout"; }
+	DisplayLayoutScreen();
+	virtual void CreateViews() override;
+	virtual bool touch(const TouchInput &touch) override;
+	virtual void dialogFinished(const Screen *dialog, DialogResult result) override;
+	virtual void onFinish(DialogResult reason) override;
+	virtual void resized() override;
+	std::string tag() const override { return "display layout screen"; }
 	
 protected:
-	void OnPostProcShaderChange(UI::EventParams &e);
-
-	void sendMessage(UIMessage message, const char *value) override;
-	void DrawBackground(UIContext &dc) override;
+	virtual UI::EventReturn OnCenter(UI::EventParams &e);
+	virtual UI::EventReturn OnZoomTypeChange(UI::EventParams &e);
 
 private:
+	DragDropDisplay *displayRepresentation_ = nullptr;
 	UI::ChoiceStrip *mode_ = nullptr;
-	UI::Choice *postProcChoice_ = nullptr;
-	std::string shaderNames_[256];
-	std::deque<bool> settingsVisible_;  // vector<bool> is an insane bitpacked specialization! Not to be used with checkboxes!
-};
-
-class PostProcScreen : public UI::ListPopupScreen {
-public:
-	PostProcScreen(std::string_view title, int id, bool showStereoShaders)
-		: ListPopupScreen(title), id_(id), showStereoShaders_(showStereoShaders) { }
-
-	void CreateViews() override;
-
-	const char *tag() const override { return "PostProc"; }
-
-private:
-	void OnCompleted(DialogResult result) override;
-	bool ShowButtons() const override { return true; }
-	std::vector<ShaderInfo> shaders_;
-	int id_;
-	bool showStereoShaders_;
-	std::vector<int> indexTranslation_;
+	bool dragging_ = false;
+	bool bRotated_ = false;
+	bool stickToEdgeX_ = false;
+	bool stickToEdgeY_ = false;
+	// Touch down state for drag to resize etc
+	float startY_ = 0.0f;
+	float startScale_ = 1.0f;
+	int offsetTouchX_ = 0;
+	int offsetTouchY_ = 0;
+	
 };

@@ -10,16 +10,14 @@
 	<string>Your camera may be used to emulate Go!Cam, a camera accessory</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Your microphone may be used to emulate Go!Cam/Talkman, a microphone accessory</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Your local network needs to be accessed by PPSSPP for network multiplayer support.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Access to your photos is needed to allow setting a background image.</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>PPSSPP</string>
 	<key>CFBundleExecutable</key>
 	<string>PPSSPP</string>
 	<key>CFBundleIdentifier</key>
-	<string>org.ppsspp.ppsspp-free</string>
+	<string>org.ppsspp.ppsspp</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -32,42 +30,42 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>1.0</string>
-	<key>CFBundleIcons</key>
-	<dict>
-	  <key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleIconName</key>
-			<string>AppIcon</string>
-		</dict>
-	</dict>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
-	<true/>
+	<false/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<string>arm64</string>
+		<string>armv7</string>
 	</array>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.games</string>
-	<key>GCSupportsGameMode</key>
+	<key>UIStatusBarHidden</key>
 	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>CFBundleIconFiles</key>
+	<array>
+		<string>assets/Icon-72.png</string>
+		<string>assets/Icon-72@2x.png</string>
+		<string>assets/Icon.png</string>
+		<string>assets/Icon@2x.png</string>
 	</array>
 	<key>UILaunchImageFile</key>
 	<string>Default.png</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>Launch Screen</string>
 	<key>CFBundleDocumentTypes</key>
@@ -204,20 +202,5 @@
 			</dict>
 		</dict>
 	</array>
-	<key>UIApplicationSceneManifest</key>
-	<dict>
-		<key>UISceneConfigurations</key>
-		<dict>
-			<key>UIWindowSceneSessionRoleApplication</key>
-			<array>
-				<dict>
-					<key>UISceneConfigurationName</key>
-					<string>Default Configuration</string>
-					<key>UISceneDelegateClassName</key>
-					<string>SceneDelegate</string>
-				</dict>
-			</array>
-		</dict>
-	</dict>
 </dict>
 </plist>

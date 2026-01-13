@@ -15,9 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "Common/StringUtils.h"
-
 #include "Core/Core.h"
+#include "Core/System.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSDis.h"
@@ -91,7 +90,7 @@ using namespace MIPSComp;
 // %s/&Jit::\(.\{-}\),/JITFUNC(\1),/g
 
 // regregreg instructions
-static const MIPSInstruction tableImmediate[64] = // xxxxxx ..... ..... ................
+const MIPSInstruction tableImmediate[64] = // xxxxxx ..... ..... ................
 {
 	//0
 	ENCODING(Spec),
@@ -149,7 +148,7 @@ static const MIPSInstruction tableImmediate[64] = // xxxxxx ..... ..... ........
 	INSTR("swr", JITFUNC(Comp_ITypeMem), Dis_ITypeMem, Int_ITypeMem, IN_IMM16|IN_RS_ADDR|IN_RT|OUT_MEM|MEMTYPE_WORD),
 	INSTR("cache", JITFUNC(Comp_Cache), Dis_Cache, Int_Cache, IN_MEM|IN_IMM16|IN_RS_ADDR),
 	//48
-	INSTR("ll", JITFUNC(Comp_StoreSync), Dis_ITypeMem, Int_StoreSync, IN_MEM|IN_IMM16|IN_RS_ADDR|OUT_RT|OUT_OTHER|MEMTYPE_WORD),
+	INSTR("ll", JITFUNC(Comp_Generic), Dis_Generic, Int_StoreSync, IN_MEM|IN_IMM16|IN_RS_ADDR|OUT_RT|OUT_OTHER|MEMTYPE_WORD),
 	INSTR("lwc1", JITFUNC(Comp_FPULS), Dis_FPULS, Int_FPULS, IN_MEM|IN_IMM16|IN_RS_ADDR|OUT_FT|MEMTYPE_FLOAT|IS_FPU),
 	INSTR("lv.s", JITFUNC(Comp_SV), Dis_SV, Int_SV, IN_MEM|IN_IMM16|IN_RS_ADDR|OUT_OTHER|IS_VFPU|VFPU_NO_PREFIX|MEMTYPE_FLOAT),
 	INVALID,
@@ -158,7 +157,7 @@ static const MIPSInstruction tableImmediate[64] = // xxxxxx ..... ..... ........
 	INSTR("lv.q", JITFUNC(Comp_SVQ), Dis_SVQ, Int_SVQ, IN_MEM|IN_IMM16|IN_RS_ADDR|OUT_OTHER|IS_VFPU|VFPU_NO_PREFIX|MEMTYPE_VQUAD), //copU
 	ENCODING(VFPU5),
 	//56
-	INSTR("sc", JITFUNC(Comp_StoreSync), Dis_ITypeMem, Int_StoreSync, IN_IMM16|IN_RS_ADDR|IN_OTHER|IN_RT|OUT_RT|OUT_MEM|MEMTYPE_WORD),
+	INSTR("sc", JITFUNC(Comp_Generic), Dis_Generic, Int_StoreSync, IN_IMM16|IN_RS_ADDR|IN_OTHER|IN_RT|OUT_RT|OUT_MEM|MEMTYPE_WORD),
 	INSTR("swc1", JITFUNC(Comp_FPULS), Dis_FPULS, Int_FPULS, IN_IMM16|IN_RS_ADDR|IN_FT|OUT_MEM|MEMTYPE_FLOAT|IS_FPU), //copU
 	INSTR("sv.s", JITFUNC(Comp_SV), Dis_SV, Int_SV, IN_IMM16|IN_RS_ADDR|IN_OTHER|OUT_MEM|IS_VFPU|VFPU_NO_PREFIX|MEMTYPE_FLOAT),
 	INVALID,
@@ -170,7 +169,7 @@ static const MIPSInstruction tableImmediate[64] = // xxxxxx ..... ..... ........
 	INSTR("vflush", JITFUNC(Comp_DoNothing), Dis_Vflush, Int_Vflush, IS_VFPU|VFPU_NO_PREFIX),
 };
 
-static const MIPSInstruction tableSpecial[64] = // 000000 ..... ..... ..... ..... xxxxxx
+const MIPSInstruction tableSpecial[64] = // 000000 ..... ..... ..... ..... xxxxxx
 {
 	INSTR("sll",   JITFUNC(Comp_ShiftType), Dis_ShiftType, Int_ShiftType, OUT_RD|IN_RT|IN_SA),
 	INVALID,  // copu
@@ -187,7 +186,7 @@ static const MIPSInstruction tableSpecial[64] = // 000000 ..... ..... ..... ....
 	INSTR("jalr",  JITFUNC(Comp_JumpReg), Dis_JumpRegType, Int_JumpRegType, IS_JUMP|IN_RS|OUT_RD|DELAYSLOT),
 	INSTR("movz",  JITFUNC(Comp_RType3), Dis_RType3, Int_RType3, OUT_RD|IN_RS|IN_RT|IS_CONDMOVE|CONDTYPE_EQ),
 	INSTR("movn",  JITFUNC(Comp_RType3), Dis_RType3, Int_RType3, OUT_RD|IN_RS|IN_RT|IS_CONDMOVE|CONDTYPE_NE),
-	INSTR("syscall", JITFUNC(Comp_Syscall), Dis_Syscall, Int_Syscall, IN_MEM|IN_OTHER|OUT_MEM|OUT_OTHER|IS_SYSCALL),
+	INSTR("syscall", JITFUNC(Comp_Syscall), Dis_Syscall, Int_Syscall, IN_MEM|IN_OTHER|OUT_MEM|OUT_OTHER),
 	INSTR("break", JITFUNC(Comp_Break), Dis_Generic, Int_Break, 0),
 	INVALID,
 	INSTR("sync",  JITFUNC(Comp_DoNothing), Dis_Generic, Int_Sync, 0),
@@ -247,7 +246,7 @@ static const MIPSInstruction tableSpecial[64] = // 000000 ..... ..... ..... ....
 };
 
 // Theoretically should not hit these.
-static const MIPSInstruction tableSpecial2[64] = // 011100 ..... ..... ..... ..... xxxxxx
+const MIPSInstruction tableSpecial2[64] = // 011100 ..... ..... ..... ..... xxxxxx
 {
 	INSTR("halt", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
 	INVALID, INVALID, INVALID, INVALID, INVALID, INVALID, INVALID,
@@ -267,7 +266,7 @@ static const MIPSInstruction tableSpecial2[64] = // 011100 ..... ..... ..... ...
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableSpecial3[64] = // 011111 ..... ..... ..... ..... xxxxxx
+const MIPSInstruction tableSpecial3[64] = // 011111 ..... ..... ..... ..... xxxxxx
 {
 	INSTR("ext", JITFUNC(Comp_Special3), Dis_Special3, Int_Special3, IN_RS|OUT_RT),
 	INVALID,
@@ -297,7 +296,7 @@ static const MIPSInstruction tableSpecial3[64] = // 011111 ..... ..... ..... ...
 	INVALID, INVALID, INVALID, INVALID,
 };
 
-static const MIPSInstruction tableRegImm[32] = // 000001 ..... xxxxx ................
+const MIPSInstruction tableRegImm[32] = // 000001 ..... xxxxx ................
 {
 	INSTR("bltz",  JITFUNC(Comp_RelBranchRI), Dis_RelBranch, Int_RelBranchRI, IS_CONDBRANCH|IN_IMM16|IN_RS|DELAYSLOT|CONDTYPE_LTZ),
 	INSTR("bgez",  JITFUNC(Comp_RelBranchRI), Dis_RelBranch, Int_RelBranchRI, IS_CONDBRANCH|IN_IMM16|IN_RS|DELAYSLOT|CONDTYPE_GEZ),
@@ -330,7 +329,7 @@ static const MIPSInstruction tableRegImm[32] = // 000001 ..... xxxxx ...........
 	INSTR("synci", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
 };
 
-static const MIPSInstruction tableCop2[32] = // 010010 xxxxx ..... ................
+const MIPSInstruction tableCop2[32] = // 010010 xxxxx ..... ................
 {
 	INSTR("mfc2", JITFUNC(Comp_Generic), Dis_Generic, 0, OUT_RT),
 	INVALID,
@@ -339,7 +338,7 @@ static const MIPSInstruction tableCop2[32] = // 010010 xxxxx ..... .............
 	INSTR("mtc2", JITFUNC(Comp_Generic), Dis_Generic, 0, IN_RT),
 	INVALID,
 	INSTR("ctc2", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
-	INSTR("mtv", JITFUNC(Comp_Mftv), Dis_Mftv, Int_Mftv, IN_RT|OUT_VFPU_CC|OUT_OTHER|IS_VFPU|OUT_VFPU_PREFIX),
+	INSTR("mtv", JITFUNC(Comp_Mftv), Dis_Mftv, Int_Mftv, IN_RT|OUT_VFPU_CC|OUT_OTHER|IS_VFPU),
 	//8
 	ENCODING(Cop2BC2),
 	INSTR("??", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
@@ -354,7 +353,7 @@ static const MIPSInstruction tableCop2[32] = // 010010 xxxxx ..... .............
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableCop2BC2[4] = // 010010 01000 ...xx ................
+const MIPSInstruction tableCop2BC2[4] = // 010010 01000 ...xx ................
 {
 	INSTR("bvf", JITFUNC(Comp_VBranch), Dis_VBranch, Int_VBranch, IS_CONDBRANCH|IN_IMM16|IN_VFPU_CC|DELAYSLOT|IS_VFPU),
 	INSTR("bvt", JITFUNC(Comp_VBranch), Dis_VBranch, Int_VBranch, IS_CONDBRANCH|IN_IMM16|IN_VFPU_CC|DELAYSLOT|IS_VFPU),
@@ -362,7 +361,7 @@ static const MIPSInstruction tableCop2BC2[4] = // 010010 01000 ...xx ...........
 	INSTR("bvtl", JITFUNC(Comp_VBranch), Dis_VBranch, Int_VBranch, IS_CONDBRANCH|IN_IMM16|IN_VFPU_CC|DELAYSLOT|LIKELY|IS_VFPU),
 };
 
-static const MIPSInstruction tableCop0[32] = // 010000 xxxxx ..... ................
+const MIPSInstruction tableCop0[32] = // 010000 xxxxx ..... ................
 {
 	INSTR("mfc0", JITFUNC(Comp_Generic), Dis_Generic, 0, OUT_RT),  // unused
 	INVALID,
@@ -388,7 +387,7 @@ static const MIPSInstruction tableCop0[32] = // 010000 xxxxx ..... .............
 };
 
 // we won't encounter these since we only do user mode emulation
-static const MIPSInstruction tableCop0CO[64] = // 010000 1.... ..... ..... ..... xxxxxx
+const MIPSInstruction tableCop0CO[64] = // 010000 1.... ..... ..... ..... xxxxxx
 {
 	INVALID,
 	INSTR("tlbr", JITFUNC(Comp_Generic), Dis_Generic, 0, 0),
@@ -416,7 +415,7 @@ static const MIPSInstruction tableCop0CO[64] = // 010000 1.... ..... ..... .....
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableCop1[32] = // 010001 xxxxx ..... ..... ...........
+const MIPSInstruction tableCop1[32] = // 010001 xxxxx ..... ..... ...........
 {
 	INSTR("mfc1", JITFUNC(Comp_mxc1), Dis_mxc1, Int_mxc1, IN_FS|OUT_RT|IS_FPU),
 	INVALID,
@@ -435,7 +434,7 @@ static const MIPSInstruction tableCop1[32] = // 010001 xxxxx ..... ..... .......
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableCop1BC[32] = // 010001 01000 xxxxx ................
+const MIPSInstruction tableCop1BC[32] = // 010001 01000 xxxxx ................
 {
 	INSTR("bc1f",  JITFUNC(Comp_FPUBranch), Dis_FPUBranch, Int_FPUBranch, IS_CONDBRANCH|IN_IMM16|IN_FPUFLAG|DELAYSLOT|CONDTYPE_FPUFALSE|IS_FPU),
 	INSTR("bc1t",  JITFUNC(Comp_FPUBranch), Dis_FPUBranch, Int_FPUBranch, IS_CONDBRANCH|IN_IMM16|IN_FPUFLAG|DELAYSLOT|CONDTYPE_FPUTRUE|IS_FPU),
@@ -448,7 +447,7 @@ static const MIPSInstruction tableCop1BC[32] = // 010001 01000 xxxxx ...........
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableCop1S[64] = // 010001 10000 ..... ..... ..... xxxxxx
+const MIPSInstruction tableCop1S[64] = // 010001 10000 ..... ..... ..... xxxxxx
 {
 	INSTR("add.s",  JITFUNC(Comp_FPU3op), Dis_FPU3op, Int_FPU3op, OUT_FD|IN_FS|IN_FT|IS_FPU),
 	INSTR("sub.s",  JITFUNC(Comp_FPU3op), Dis_FPU3op, Int_FPU3op, OUT_FD|IN_FS|IN_FT|IS_FPU),
@@ -496,7 +495,7 @@ static const MIPSInstruction tableCop1S[64] = // 010001 10000 ..... ..... ..... 
 	INSTR("c.ngt", JITFUNC(Comp_FPUComp), Dis_FPUComp, Int_FPUComp, IN_FS|IN_FT|OUT_FPUFLAG|IS_FPU),
 };
 
-static const MIPSInstruction tableCop1W[64] = // 010001 10100 ..... ..... ..... xxxxxx
+const MIPSInstruction tableCop1W[64] = // 010001 10100 ..... ..... ..... xxxxxx
 {
 	INVALID_X_8,
 	//8
@@ -520,7 +519,7 @@ static const MIPSInstruction tableCop1W[64] = // 010001 10100 ..... ..... ..... 
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableVFPU0[8] = // 011000 xxx ....... . ....... . .......
+const MIPSInstruction tableVFPU0[8] = // 011000 xxx ....... . ....... . .......
 {
 	INSTR("vadd", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, MIPSInfo(IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX, 2)),
 	INSTR("vsub", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, MIPSInfo(IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX, 2)),
@@ -531,7 +530,7 @@ static const MIPSInstruction tableVFPU0[8] = // 011000 xxx ....... . ....... . .
 	INSTR("vdiv", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 };
 
-static const MIPSInstruction tableVFPU1[8] = // 011001 xxx ....... . ....... . .......
+const MIPSInstruction tableVFPU1[8] = // 011001 xxx ....... . ....... . .......
 {
 	INSTR("vmul", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vdot", JITFUNC(Comp_VDot), Dis_VectorDot, Int_VDot, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -543,7 +542,7 @@ static const MIPSInstruction tableVFPU1[8] = // 011001 xxx ....... . ....... . .
 	INVALID,
 };
 
-static const MIPSInstruction tableVFPU3[8] = // 011011 xxx ....... . ....... . .......
+const MIPSInstruction tableVFPU3[8] = // 011011 xxx ....... . ....... . .......
 {
 	INSTR("vcmp", JITFUNC(Comp_Vcmp), Dis_Vcmp, Int_Vcmp, IN_OTHER|OUT_VFPU_CC|IS_VFPU|OUT_EAT_PREFIX),
 	INVALID,
@@ -555,7 +554,7 @@ static const MIPSInstruction tableVFPU3[8] = // 011011 xxx ....... . ....... . .
 	INSTR("vslt", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_Vslt, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 };
 
-static const MIPSInstruction tableVFPU4Jump[32] = // 110100 xxxxx ..... . ....... . .......
+const MIPSInstruction tableVFPU4Jump[32] = // 110100 xxxxx ..... . ....... . .......
 {
 	ENCODING(VFPU4),
 	ENCODING(VFPU7),
@@ -587,7 +586,7 @@ static const MIPSInstruction tableVFPU4Jump[32] = // 110100 xxxxx ..... . ......
 	INSTR("vwbn", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 };
 
-static const MIPSInstruction tableVFPU7[32] = // 110100 00001 xxxxx . ....... . .......
+const MIPSInstruction tableVFPU7[32] = // 110100 00001 xxxxx . ....... . .......
 {
 	INSTR("vrnds", JITFUNC(Comp_Generic), Dis_Vrnds, Int_Vrnds, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vrndi", JITFUNC(Comp_Generic), Dis_VrndX, Int_VrndX, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -622,7 +621,7 @@ static const MIPSInstruction tableVFPU7[32] = // 110100 00001 xxxxx . ....... . 
 
 // 110100 00000 10100 0000000000000000
 // 110100 00000 10111 0000000000000000
-static const MIPSInstruction tableVFPU4[32] = // 110100 00000 xxxxx . ....... . .......
+const MIPSInstruction tableVFPU4[32] = // 110100 00000 xxxxx . ....... . .......
 {
 	INSTR("vmov", JITFUNC(Comp_VV2Op), Dis_VectorSet2, Int_VV2Op, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vabs", JITFUNC(Comp_VV2Op), Dis_VectorSet2, Int_VV2Op, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -652,7 +651,7 @@ static const MIPSInstruction tableVFPU4[32] = // 110100 00000 xxxxx . ....... . 
 	INVALID, INVALID, INVALID,
 };
 
-static const MIPSInstruction tableVFPU5[8] = // 110111 xxx ....... ................
+MIPSInstruction tableVFPU5[8] = // 110111 xxx ....... ................
 {
 	INSTR("vpfxs", JITFUNC(Comp_VPFX), Dis_VPFXST, Int_VPFX, IN_IMM16|OUT_OTHER|IS_VFPU),
 	INSTR("vpfxs", JITFUNC(Comp_VPFX), Dis_VPFXST, Int_VPFX, IN_IMM16|OUT_OTHER|IS_VFPU),
@@ -664,7 +663,7 @@ static const MIPSInstruction tableVFPU5[8] = // 110111 xxx ....... .............
 	INSTR("vfim.s", JITFUNC(Comp_Vfim), Dis_Viim, Int_Viim, IN_IMM16|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 };
 
-static const MIPSInstruction tableVFPU6[32] = // 111100 xxxxx ..... . ....... . .......
+const MIPSInstruction tableVFPU6[32] = // 111100 xxxxx ..... . ....... . .......
 {
 	//0
 	INSTR("vmmul", JITFUNC(Comp_Vmmul), Dis_MatrixMult, Int_Vmmul, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -709,7 +708,7 @@ static const MIPSInstruction tableVFPU6[32] = // 111100 xxxxx ..... . ....... . 
 };
 
 // TODO: Should this only be when bit 20 is 0?
-static const MIPSInstruction tableVFPUMatrixSet1[16] = // 111100 11100 .xxxx . ....... . .......  (rm x is 16)
+const MIPSInstruction tableVFPUMatrixSet1[16] = // 111100 11100 .xxxx . ....... . .......  (rm x is 16)
 {
 	INSTR("vmmov", JITFUNC(Comp_Vmmov), Dis_MatrixSet2, Int_Vmmov, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INVALID,
@@ -724,7 +723,7 @@ static const MIPSInstruction tableVFPUMatrixSet1[16] = // 111100 11100 .xxxx . .
 	INVALID_X_8,
 };
 
-static const MIPSInstruction tableVFPU9[32] = // 110100 00010 xxxxx . ....... . .......
+const MIPSInstruction tableVFPU9[32] = // 110100 00010 xxxxx . ....... . .......
 {
 	INSTR("vsrt1", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt1, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vsrt2", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt2, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -748,7 +747,7 @@ static const MIPSInstruction tableVFPU9[32] = // 110100 00010 xxxxx . ....... . 
 
 	//16
 	INSTR("vmfvc", JITFUNC(Comp_Vmfvc), Dis_Vmfvc, Int_Vmfvc, IN_OTHER|IN_VFPU_CC|OUT_OTHER|IS_VFPU),
-	INSTR("vmtvc", JITFUNC(Comp_Vmtvc), Dis_Vmtvc, Int_Vmtvc, IN_OTHER|OUT_VFPU_CC|OUT_OTHER|IS_VFPU|OUT_VFPU_PREFIX),
+	INSTR("vmtvc", JITFUNC(Comp_Vmtvc), Dis_Vmtvc, Int_Vmtvc, IN_OTHER|OUT_VFPU_CC|OUT_OTHER|IS_VFPU),
 	INVALID,
 	INVALID,
 
@@ -764,7 +763,7 @@ static const MIPSInstruction tableVFPU9[32] = // 110100 00010 xxxxx . ....... . 
 	INVALID, INVALID, INVALID, INVALID,
 };
 
-static const MIPSInstruction tableALLEGREX0[32] =  // 011111 ..... ..... ..... xxxxx 100000 - or ending with 011000?
+const MIPSInstruction tableALLEGREX0[32] =  // 011111 ..... ..... ..... xxxxx 100000 - or ending with 011000?
 {
 	INVALID,
 	INVALID,
@@ -795,7 +794,8 @@ static const MIPSInstruction tableALLEGREX0[32] =  // 011111 ..... ..... ..... x
 	INVALID,
 };
 
-static const MIPSInstruction tableEMU[4] = {
+
+const MIPSInstruction tableEMU[4] = {
 	INSTR("RUNBLOCK", JITFUNC(Comp_RunBlock), Dis_Emuhack, Int_Emuhack, 0xFFFFFFFF),
 	INSTR("RetKrnl", 0, Dis_Emuhack, Int_Emuhack, 0),
 	INSTR("CallRepl", JITFUNC(Comp_ReplacementFunc), Dis_Emuhack, Int_Emuhack, 0),
@@ -810,7 +810,7 @@ struct EncodingBitsInfo {
 	u32 mask;
 };
 
-static const EncodingBitsInfo encodingBits[NumEncodings] = {
+const EncodingBitsInfo encodingBits[NumEncodings] = {
 	EncodingBitsInfo(26, 6), //IMME
 	EncodingBitsInfo(0,  6), //Special
 	EncodingBitsInfo(0,  6), //special2
@@ -840,7 +840,7 @@ static const EncodingBitsInfo encodingBits[NumEncodings] = {
 	EncodingBitsInfo(0,  0), //Rese
 };
 
-static const MIPSInstruction *mipsTables[NumEncodings] = {
+const MIPSInstruction *mipsTables[NumEncodings] = {
 	tableImmediate,
 	tableSpecial,
 	tableSpecial2,
@@ -886,7 +886,7 @@ const MIPSInstruction *MIPSGetInstruction(MIPSOpcode op) {
 	const MIPSInstruction *instr = &tableImmediate[op.encoding >> 26];
 	while (instr->altEncoding != Instruc) {
 		if (instr->altEncoding == Inval) {
-			//ERROR_LOG(Log::CPU, "Invalid instruction %08x in table %i, entry %i", op, (int)encoding, subop);
+			//ERROR_LOG(CPU, "Invalid instruction %08x in table %i, entry %i", op, (int)encoding, subop);
 			return 0; //invalid instruction
 		}
 		encoding = instr->altEncoding;
@@ -908,24 +908,23 @@ void MIPSCompileOp(MIPSOpcode op, MIPSComp::MIPSFrontendInterface *jit) {
 		if (instr->compile) {
 			(jit->*(instr->compile))(op);
 		} else {
-			ERROR_LOG_REPORT(Log::CPU,"MIPSCompileOp %08x failed",op.encoding);
+			ERROR_LOG_REPORT(CPU,"MIPSCompileOp %08x failed",op.encoding);
 		}
 		if (info & OUT_EAT_PREFIX)
 			jit->EatPrefix();
 	} else {
-		// Used to _REPORT this, but I'm confident we have all instructions now, any caught here
-		// are due to games crashing, due to cheats or bugs.
-		ERROR_LOG(Log::CPU, "MIPSCompileOp: Invalid instruction %08x", op.encoding);
+		ERROR_LOG_REPORT(CPU, "MIPSCompileOp: Invalid instruction %08x", op.encoding);
 	}
 }
 
-void MIPSDisAsm(MIPSOpcode op, u32 pc, char *out, size_t outSize, bool tabsToSpaces) {
+void MIPSDisAsm(MIPSOpcode op, u32 pc, char *out, bool tabsToSpaces) {
 	if (op == 0) {
-		truncate_cpy(out, outSize, "nop");
+		sprintf(out,"nop");
 	} else {
+		disPC = pc;
 		const MIPSInstruction *instr = MIPSGetInstruction(op);
 		if (instr && instr->disasm) {
-			instr->disasm(op, pc, out, outSize);
+			instr->disasm(op, out);
 			if (tabsToSpaces) {
 				while (*out) {
 					if (*out == '\t')
@@ -934,33 +933,23 @@ void MIPSDisAsm(MIPSOpcode op, u32 pc, char *out, size_t outSize, bool tabsToSpa
 				}
 			}
 		} else {
-			truncate_cpy(out, outSize, "no instruction :(");
+			strcpy(out, "no instruction :(");
 		}
 	}
 }
 
-static inline void Interpret(const MIPSInstruction *instr, MIPSOpcode op) {
+void MIPSInterpret(MIPSOpcode op) {
+	const MIPSInstruction *instr = MIPSGetInstruction(op);
 	if (instr && instr->interpret) {
 		instr->interpret(op);
 	} else {
-		ERROR_LOG_REPORT(Log::CPU, "Unknown instruction %08x at %08x", op.encoding, currentMIPS->pc);
+		ERROR_LOG_REPORT(CPU, "Unknown instruction %08x at %08x", op.encoding, currentMIPS->pc);
 		// Try to disassemble it
 		char disasm[256];
-		MIPSDisAsm(op, currentMIPS->pc, disasm, sizeof(disasm));
-		_dbg_assert_msg_(0, "%s", disasm);
+		MIPSDisAsm(op, currentMIPS->pc, disasm);
+		_dbg_assert_msg_( 0, "%s", disasm);
 		currentMIPS->pc += 4;
 	}
-}
-
-inline int GetInstructionCycleEstimate(const MIPSInstruction *instr) {
-	if (instr)
-		return instr->flags.cycles;
-	return 1;
-}
-
-void MIPSInterpret(MIPSOpcode op) {
-	const MIPSInstruction *instr = MIPSGetInstruction(op);
-	Interpret(instr, op);
 }
 
 #define _RS   ((op>>21) & 0x1F)
@@ -968,95 +957,60 @@ void MIPSInterpret(MIPSOpcode op) {
 #define _RD   ((op>>11) & 0x1F)
 #define R(i)   (curMips->r[i])
 
-static inline void RunUntilFast() {
+
+int MIPSInterpret_RunUntil(u64 globalTicks)
+{
 	MIPSState *curMips = currentMIPS;
-	// NEVER stop in a delay slot!
-	while (curMips->downcount >= 0 && coreState == CORE_RUNNING_CPU) {
-		do {
-			// Replacements and similar are processed here, intentionally.
-			MIPSOpcode op = MIPSOpcode(Memory::Read_U32(curMips->pc));
-
-			bool wasInDelaySlot = curMips->inDelaySlot;
-			const MIPSInstruction *instr = MIPSGetInstruction(op);
-			Interpret(instr, op);
-			curMips->downcount -= GetInstructionCycleEstimate(instr);
-
-			// The reason we have to check this is the delay slot hack in Int_Syscall.
-			if (curMips->inDelaySlot && wasInDelaySlot) {
-				curMips->pc = curMips->nextPC;
-				curMips->inDelaySlot = false;
-			}
-		} while (curMips->inDelaySlot);
-	}
-}
-
-static void RunUntilWithChecks(u64 globalTicks) {
-	MIPSState *curMips = currentMIPS;
-	// NEVER stop in a delay slot!
-	bool hasBPs = g_breakpoints.HasBreakPoints();
-	bool hasMCs = g_breakpoints.HasMemChecks();
-	while (curMips->downcount >= 0 && coreState == CORE_RUNNING_CPU) {
-		do {
-			// Replacements and similar are processed here, intentionally.
-			MIPSOpcode op = MIPSOpcode(Memory::Read_U32(curMips->pc));
-			const MIPSInstruction *instr = MIPSGetInstruction(op);
-
-			// Check for breakpoint
-			if (hasBPs && g_breakpoints.IsAddressBreakPoint(curMips->pc) && g_breakpoints.CheckSkipFirst() != curMips->pc) {
-				auto cond = g_breakpoints.GetBreakPointCondition(currentMIPS->pc);
-				if (!cond || cond->Evaluate()) {
-					Core_Break(BreakReason::CpuBreakpoint, curMips->pc);
-					if (g_breakpoints.IsTempBreakPoint(curMips->pc))
-						g_breakpoints.RemoveBreakPoint(curMips->pc);
-					break;
-				}
-			}
-			if (hasMCs && (instr->flags & (IN_MEM | OUT_MEM)) != 0 && g_breakpoints.CheckSkipFirst() != curMips->pc && instr->interpret != &Int_Syscall) {
-				// This is common for all IN_MEM/OUT_MEM funcs.
-				int offset = (instr->flags & IS_VFPU) != 0 ? SignExtend16ToS32(op & 0xFFFC) : SignExtend16ToS32(op);
-				u32 addr = (R(_RS) + offset) & 0xFFFFFFFC;
-				int sz = MIPSGetMemoryAccessSize(op);
-
-				if ((instr->flags & IN_MEM) != 0)
-					g_breakpoints.ExecMemCheck(addr, false, sz, curMips->pc, "interpret");
-				if ((instr->flags & OUT_MEM) != 0)
-					g_breakpoints.ExecMemCheck(addr, true, sz, curMips->pc, "interpret");
-
-				// If it tripped, bail without running.
-				if (coreState == CORE_STEPPING_CPU)
-					break;
-			}
-
-			bool wasInDelaySlot = curMips->inDelaySlot;
-			Interpret(instr, op);
-			curMips->downcount -= GetInstructionCycleEstimate(instr);
-
-			// The reason we have to check this is the delay slot hack in Int_Syscall.
-			if (curMips->inDelaySlot && wasInDelaySlot) {
-				curMips->pc = curMips->nextPC;
-				curMips->inDelaySlot = false;
-			}
-		} while (curMips->inDelaySlot);
-
-		if (CoreTiming::GetTicks() > globalTicks)
-			return;
-	}
-}
-
-int MIPSInterpret_RunUntil(u64 globalTicks) {
-	MIPSState *curMips = currentMIPS;
-	while (coreState == CORE_RUNNING_CPU) {
+	while (coreState == CORE_RUNNING)
+	{
 		CoreTiming::Advance();
 
-		uint64_t ticksLeft = globalTicks - CoreTiming::GetTicks();
-		if (g_breakpoints.HasBreakPoints() || g_breakpoints.HasMemChecks() || ticksLeft <= curMips->downcount)
-			RunUntilWithChecks(globalTicks);
-		else
-			RunUntilFast();
+		// NEVER stop in a delay slot!
+		while (curMips->downcount >= 0 && coreState == CORE_RUNNING)
+		{
+			// int cycles = 0;
+			{
+				again:
+				MIPSOpcode op = MIPSOpcode(Memory::Read_U32(curMips->pc));
+				//MIPSOpcode op = Memory::Read_Opcode_JIT(mipsr4k.pc);
 
-		if (CoreTiming::GetTicks() > globalTicks) {
-			// DEBUG_LOG(Log::CPU, "Hit the max ticks, bailing 1 : %llu, %llu", globalTicks, CoreTiming::GetTicks());
-			return 1;
+		//2: check for breakpoint (VERY SLOW)
+#if defined(_DEBUG)
+				if (CBreakPoints::IsAddressBreakPoint(curMips->pc))
+				{
+					auto cond = CBreakPoints::GetBreakPointCondition(currentMIPS->pc);
+					if (!cond || cond->Evaluate())
+					{
+						Core_EnableStepping(true, "cpu.breakpoint", curMips->pc);
+						if (CBreakPoints::IsTempBreakPoint(curMips->pc))
+							CBreakPoints::RemoveBreakPoint(curMips->pc);
+						break;
+					}
+				}
+#endif
+
+				bool wasInDelaySlot = curMips->inDelaySlot;
+				MIPSInterpret(op);
+				curMips->downcount -= MIPSGetInstructionCycleEstimate(op);
+
+				if (curMips->inDelaySlot)
+				{
+					// The reason we have to check this is the delay slot hack in Int_Syscall.
+					if (wasInDelaySlot)
+					{
+						curMips->pc = curMips->nextPC;
+						curMips->inDelaySlot = false;
+						continue;
+					}
+					goto again;
+				}
+			}
+
+			if (CoreTiming::GetTicks() > globalTicks)
+			{
+				// DEBUG_LOG(CPU, "Hit the max ticks, bailing 1 : %llu, %llu", globalTicks, CoreTiming::GetTicks());
+				return 1;
+			}
 		}
 	}
 
@@ -1065,7 +1019,7 @@ int MIPSInterpret_RunUntil(u64 globalTicks) {
 
 const char *MIPSGetName(MIPSOpcode op)
 {
-	static const char * const noname = "unk";
+	static const char *noname = "unk";
 	const MIPSInstruction *instr = MIPSGetInstruction(op);
 	if (!instr)
 		return noname;
@@ -1095,33 +1049,12 @@ MIPSInterpretFunc MIPSGetInterpretFunc(MIPSOpcode op)
 // TODO: Do something that makes sense here.
 int MIPSGetInstructionCycleEstimate(MIPSOpcode op)
 {
-	const MIPSInstruction *instr = MIPSGetInstruction(op);
-	return GetInstructionCycleEstimate(instr);
-}
-
-int MIPSGetMemoryAccessSize(MIPSOpcode op) {
 	MIPSInfo info = MIPSGetInfo(op);
-	if ((info & (IN_MEM | OUT_MEM)) == 0) {
-		return 0;
-	}
-
-	switch (info & MEMTYPE_MASK) {
-	case MEMTYPE_BYTE:
-		return 1;
-	case MEMTYPE_HWORD:
-		return 2;
-	case MEMTYPE_WORD:
-	case MEMTYPE_FLOAT:
-		return 4;
-	case MEMTYPE_VQUAD:
-		return 16;
-	}
-
-	return 0;
+	return info.cycles;
 }
 
-std::string MIPSDisasmAt(u32 compilerPC) {
-	char temp[512];
-	MIPSDisAsm(Memory::Read_Instruction(compilerPC), 0, temp, sizeof(temp));
+const char *MIPSDisasmAt(u32 compilerPC) {
+	static char temp[256];
+	MIPSDisAsm(Memory::Read_Instruction(compilerPC), 0, temp);
 	return temp;
 }

@@ -40,7 +40,7 @@ void DisassembleFake(const u8 *data, int size) {
 namespace MIPSComp
 {
 
-FakeJit::FakeJit(MIPSState *mipsState) : blocks(mipsState, this), mips_(mipsState), js()
+FakeJit::FakeJit(MIPSState *mipsState) : blocks(mipsState, this), mips_(mipsState)
 { 
 	logBlocks = 0;
 	dontLogBlocks = 0;
@@ -55,16 +55,14 @@ void FakeJit::DoState(PointerWrap &p) {
 	Do(p, js.startDefaultPrefix);
 	if (s >= 2) {
 		Do(p, js.hasSetRounding);
-		if (p.mode == PointerWrap::MODE_READ) {
-			js.lastSetRounding = 0;
-		}
+		js.lastSetRounding = 0;
 	} else {
 		js.hasSetRounding = 1;
 	}
 
 	// The debugger sets this so that "go" on a breakpoint will actually... go.
 	// But if they load a state, we can end up hitting it by mistake, since it's based on PC and ticks.
-	g_breakpoints.SetSkipFirst(0);
+	CBreakPoints::SetSkipFirst(0);
 }
 
 // This is here so the savestate matches between jit and non-jit.
@@ -100,19 +98,18 @@ void FakeJit::ClearCache()
 	//GenerateFixedCode();
 }
 
-void FakeJit::InvalidateCacheAt(u32 em_address, int length) {
-	if (blocks.RangeMayHaveEmuHacks(em_address, em_address + length)) {
-		blocks.InvalidateICache(em_address, length);
-	}
+void FakeJit::InvalidateCacheAt(u32 em_address, int length)
+{
+	blocks.InvalidateICache(em_address, length);
 }
 
 void FakeJit::EatInstruction(MIPSOpcode op) {
 	MIPSInfo info = MIPSGetInfo(op);
 	if (info & DELAYSLOT) {
-		ERROR_LOG_REPORT_ONCE(ateDelaySlot, Log::JIT, "Ate a branch op.");
+		ERROR_LOG_REPORT_ONCE(ateDelaySlot, JIT, "Ate a branch op.");
 	}
 	if (js.inDelaySlot) {
-		ERROR_LOG_REPORT_ONCE(ateInDelaySlot, Log::JIT, "Ate an instruction inside a delay slot.");
+		ERROR_LOG_REPORT_ONCE(ateInDelaySlot, JIT, "Ate an instruction inside a delay slot.");
 	}
 
 	js.numInstructions++;
@@ -128,13 +125,14 @@ void FakeJit::CompileDelaySlot(int flags)
 void FakeJit::Compile(u32 em_address) {
 }
 
-void FakeJit::RunLoopUntil(u64 globalticks) {
-	MIPSInterpret_RunUntil(globalticks);
+void FakeJit::RunLoopUntil(u64 globalticks)
+{
+	((void (*)())enterCode)();
 }
 
-const u8 *FakeJit::DoJit(u32 em_address, JitBlock *b) {
-	_assert_(false);
-	return nullptr;
+const u8 *FakeJit::DoJit(u32 em_address, JitBlock *b)
+{
+	return b->normalEntry;
 }
 
 void FakeJit::AddContinuedBlock(u32 dest)
@@ -150,7 +148,11 @@ bool FakeJit::DescribeCodePtr(const u8 *ptr, std::string &name)
 void FakeJit::Comp_RunBlock(MIPSOpcode op)
 {
 	// This shouldn't be necessary, the dispatcher should catch us before we get here.
-	ERROR_LOG(Log::JIT, "Comp_RunBlock should never be reached!");
+	ERROR_LOG(JIT, "Comp_RunBlock should never be reached!");
+}
+
+bool FakeJit::ReplaceJalTo(u32 dest) {
+	return true;
 }
 
 void FakeJit::Comp_ReplacementFunc(MIPSOpcode op)

@@ -17,7 +17,8 @@
 
 #pragma once
 
-#include "Core/MIPS/MIPS.h"
+#include "../MIPS.h"
+#include "../MIPSAnalyst.h"
 #include "ArmEmitter.h"
 
 namespace ArmJitConstants {
@@ -50,10 +51,6 @@ enum {
 };
 
 }
-
-namespace MIPSAnalyst {
-struct AnalysisResults;
-};
 
 // R1 to R6: mapped MIPS regs
 // R8 = flags (maybe we could do better here?)

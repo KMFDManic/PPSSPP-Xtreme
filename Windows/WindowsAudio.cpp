@@ -1,7 +1,19 @@
 #include "Common/OSVersion.h"
 #include "WindowsAudio.h"
-#include "WASAPIContext.h"
+#include "DSoundStream.h"
+#include "WASAPIStream.h"
 
-AudioBackend *System_CreateAudioBackend() {
-	return new WASAPIContext();
+WindowsAudioBackend *CreateAudioBackend(AudioBackendType type) {
+	if (IsVistaOrHigher()) {
+		switch (type) {
+		case AUDIO_BACKEND_WASAPI:
+		case AUDIO_BACKEND_AUTO:
+			return new WASAPIAudioBackend();
+		case AUDIO_BACKEND_DSOUND:
+		default:
+			return new DSoundAudioBackend();
+		}
+	} else {
+		return new DSoundAudioBackend();
+	}
 }

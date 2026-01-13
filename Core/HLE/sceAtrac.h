@@ -17,9 +17,7 @@
 
 #pragma once
 
-#include "Core/HLE/sceAudiocodec.h"
-#include "Core/Util/AtracTrack.h"
-#include "Core/HLE/AtracCtx.h"
+#include "sceAudiocodec.h"
 
 class PointerWrap;
 
@@ -27,23 +25,69 @@ void Register_sceAtrac3plus();
 void __AtracInit();
 void __AtracDoState(PointerWrap &p);
 void __AtracShutdown();
-int __AtracMaxContexts();
 
-void __AtracNotifyLoadModule(int version, u32 crc, u32 bssAddr, int bssSize);
-void __AtracNotifyUnloadModule();
+enum AtracStatus : u8 {
+	ATRAC_STATUS_NO_DATA = 1,
+	ATRAC_STATUS_ALL_DATA_LOADED = 2,
+	ATRAC_STATUS_HALFWAY_BUFFER = 3,
+	ATRAC_STATUS_STREAMED_WITHOUT_LOOP = 4,
+	ATRAC_STATUS_STREAMED_LOOP_FROM_END = 5,
+	// This means there's additional audio after the loop.
+	// i.e. ~~before loop~~ [ ~~this part loops~~ ] ~~after loop~~
+	// The "fork in the road" means a second buffer is needed for the second path.
+	ATRAC_STATUS_STREAMED_LOOP_WITH_TRAILER = 6,
+	ATRAC_STATUS_LOW_LEVEL = 8,
+	ATRAC_STATUS_FOR_SCESAS = 16,
 
-constexpr int PSP_MAX_ATRAC_IDS = 6;
+	ATRAC_STATUS_STREAMED_MASK = 4,
+};
 
-class AtracBase;
+#if COMMON_LITTLE_ENDIAN
+typedef AtracStatus AtracStatus_le;
+#else
+typedef swap_struct_t<AtracStatus, swap_32_t<AtracStatus> > AtracStatus_le;
+#endif
 
-// For debugger use ONLY.
-const AtracBase *__AtracGetCtx(int i, u32 *type);
+typedef struct
+{
+    u32_le decodePos; // 0
+    u32_le endSample; // 4
+    u32_le loopStart; // 8
+    u32_le loopEnd; // 12
+    s32_le samplesPerChan; // 16
+    char numFrame; // 20
+    // 2: all the stream data on the buffer
+    // 6: looping -> second buffer needed
+    AtracStatus_le state; // 21
+    char unk22;
+    char numChan; // 23
+    u16_le sampleSize; // 24
+    u16_le codec; // 26
+    u32_le dataOff; // 28
+    u32_le curOff; // 32
+    u32_le dataEnd; // 36
+    s32_le loopNum; // 40
+    u32_le streamDataByte; // 44
+    u32_le unk48;
+    u32_le unk52;
+    u32_le buffer; // 56
+    u32_le secondBuffer; // 60
+    u32_le bufferByte; // 64
+    u32_le secondBufferByte; // 68
+    // make sure the size is 128
+	u8 unk[56];
+} SceAtracIdInfo;
 
-// External interface used by sceSas, see ATRAC_STATUS_FOR_SCESAS.
-u32 AtracSasAddStreamData(int atracID, u32 bufPtr, u32 bytesToAdd);
-void AtracSasDecodeData(int atracID, u8* outbuf, int *SamplesNum, int *finish);
-int AtracSasBindContextAndGetID(u32 contextAddr);
+typedef struct
+{
+	// size 128
+    SceAudiocodecCodec codec;
+	// size 128
+    SceAtracIdInfo info;
+} SceAtracId;
 
-// To provide checkboxes in the debugger UI.
-// This setting is not saved.
-bool *__AtracMuteFlag(int atracID);
+// provide some decoder interface
+
+u32 _AtracAddStreamData(int atracID, u32 bufPtr, u32 bytesToAdd);
+u32 _AtracDecodeData(int atracID, u8* outbuf, u32 outbufPtr, u32 *SamplesNum, u32* finish, int *remains);
+int _AtracGetIDByContext(u32 contextAddr);

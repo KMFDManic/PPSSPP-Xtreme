@@ -21,30 +21,27 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/File/Path.h"
-#include "Common/StringUtils.h"
 #include "Core/Loaders.h"
 
-#if defined(_WIN32) && !defined(HAVE_LIBRETRO_VFS)
+#ifdef _WIN32
 typedef void *HANDLE;
 #endif
 
 class LocalFileLoader : public FileLoader {
 public:
 	LocalFileLoader(const Path &filename);
-	~LocalFileLoader();
+	virtual ~LocalFileLoader();
 
-	bool Exists() override;
-	bool IsDirectory() override;
-	s64 FileSize() override;
-	Path GetPath() const override {
+	virtual bool Exists() override;
+	virtual bool IsDirectory() override;
+	virtual s64 FileSize() override;
+	virtual Path GetPath() const override {
 		return filename_;
 	}
-	size_t ReadAt(s64 absolutePos, size_t bytes, size_t count, void *data, Flags flags = Flags::NONE) override;
+	virtual size_t ReadAt(s64 absolutePos, size_t bytes, size_t count, void *data, Flags flags = Flags::NONE) override;
 
 private:
-#ifdef HAVE_LIBRETRO_VFS
-	FILE *file_;
-#elif !defined(_WIN32)
+#ifndef _WIN32
 	void DetectSizeFd();
 	int fd_ = -1;
 #else

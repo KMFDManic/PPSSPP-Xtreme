@@ -25,6 +25,7 @@
 #include "Common/CommonTypes.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
+#include "Core/Host.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
@@ -34,6 +35,7 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/HLETables.h"
 #include "Core/HLE/ReplaceTables.h"
+#include "Core/System.h"
 
 #define R(i) (currentMIPS->r[i])
 #define F(i) (currentMIPS->f[i])
@@ -41,7 +43,6 @@
 #define FsI(i) (currentMIPS->fs[i])
 #define PC (currentMIPS->pc)
 
-#define _SIMM16_SHL2 ((u32)(s32)(s16)(op & 0xFFFF) << 2)
 #define _RS   ((op>>21) & 0x1F)
 #define _RT   ((op>>16) & 0x1F)
 #define _RD   ((op>>11) & 0x1F)
@@ -56,7 +57,8 @@
 
 static inline void DelayBranchTo(u32 where)
 {
-	if (!Memory::IsValidAddress(where) || (where & 3) != 0) {
+	if (!Memory::IsValidAddress(where)) {
+		// TODO: What about misaligned?
 		Core_ExecException(where, PC, ExecExceptionType::JUMP);
 	}
 	PC += 4;
@@ -64,15 +66,10 @@ static inline void DelayBranchTo(u32 where)
 	mipsr4k.inDelaySlot = true;
 }
 
-static inline void SkipLikely() {
-	MIPSInfo delaySlot = MIPSGetInfo(Memory::Read_Instruction(PC + 4, true));
-	// Don't actually skip if it is a jump (seen in Brooktown High.)
-	if (delaySlot & IS_JUMP) {
-		PC += 4;
-	} else {
-		PC += 8;
-		--mipsr4k.downcount;
-	}
+static inline void SkipLikely()
+{
+	PC += 8;
+	--mipsr4k.downcount;
 }
 
 int MIPS_SingleStep()
@@ -94,13 +91,10 @@ namespace MIPSInt
 {
 	void Int_Cache(MIPSOpcode op)
 	{
-		int imm = SignExtend16ToS32(op);
+		int imm = (s16)(op & 0xFFFF);
 		int rs = _RS;
-		uint32_t addr = R(rs) + imm;
+		int addr = R(rs) + imm;
 		int func = (op >> 16) & 0x1F;
-
-		// Let's only report this once per run to be safe from impacting perf.
-		static bool loggedAlignment = false;
 
 		// It appears that a cache line is 0x40 (64) bytes, loops in games
 		// issue the cache instruction at that interval.
@@ -114,20 +108,7 @@ namespace MIPSInt
 			// Invalidate the instruction cache at this address.
 			// We assume the CPU won't be reset during this, so no locking.
 			if (MIPSComp::jit) {
-				// Let's over invalidate to be super safe.
-				uint32_t alignedAddr = addr & ~0x3F;
-				int size = 0x40 + (addr & 0x3F);
-				MIPSComp::jit->InvalidateCacheAt(alignedAddr, size);
-				// Using a bool to avoid locking/etc. in case it's slow.
-				if (!loggedAlignment && (addr & 0x3F) != 0) {
-					// These are seen exclusively in Lego games, and are really no big deal. Reporting removed.
-					WARN_LOG(Log::JIT, "Unaligned icache invalidation of %08x (%08x + %d) at PC=%08x", addr, R(rs), imm, PC);
-					loggedAlignment = true;
-				}
-				if (alignedAddr <= PC + 4 && alignedAddr + size >= PC - 4) {
-					// This is probably rare so we don't use a static bool.
-					WARN_LOG_REPORT_ONCE(icacheInvalidatePC, Log::JIT, "Invalidating address near PC: %08x (%08x + %d) at PC=%08x", addr, R(rs), imm, PC);
-				}
+				MIPSComp::jit->InvalidateCacheAt(addr, 0x40);
 			}
 			break;
 
@@ -145,7 +126,7 @@ namespace MIPSInt
 			break;
 
 		default:
-			DEBUG_LOG(Log::CPU, "cache instruction affecting %08x : function %i", addr, func);
+			DEBUG_LOG(CPU, "cache instruction affecting %08x : function %i", addr, func);
 		}
 
 		PC += 4;
@@ -154,7 +135,7 @@ namespace MIPSInt
 	void Int_Syscall(MIPSOpcode op)
 	{
 		// Need to pre-move PC, as CallSyscall may result in a rescheduling!
-		// To do this neater, we'll need a little generated kernel loop that syscall can jump to and then RFI from
+		// To do this neater, we'll need a little generated kernel loop that syscall can jump to and then RFI from 
 		// but I don't see a need to bother.
 		if (mipsr4k.inDelaySlot)
 		{
@@ -170,25 +151,25 @@ namespace MIPSInt
 
 	void Int_Sync(MIPSOpcode op)
 	{
-		//DEBUG_LOG(Log::CPU, "sync");
+		//DEBUG_LOG(CPU, "sync");
 		PC += 4;
 	}
 
 	void Int_Break(MIPSOpcode op)
 	{
 		Reporting::ReportMessage("BREAK instruction hit");
-		Core_BreakException(PC);
+		Core_Break();
 		PC += 4;
 	}
 
 	void Int_RelBranch(MIPSOpcode op)
 	{
-		int imm = _SIMM16_SHL2;
+		int imm = (signed short)(op&0xFFFF)<<2;
 		int rs = _RS;
 		int rt = _RT;
 		u32 addr = PC + imm + 4;
 
-		switch (op >> 26)
+		switch (op >> 26) 
 		{
 		case 4:  if (R(rt) == R(rs))  DelayBranchTo(addr); else PC += 4; break; //beq
 		case 5:  if (R(rt) != R(rs))  DelayBranchTo(addr); else PC += 4; break; //bne
@@ -208,7 +189,7 @@ namespace MIPSInt
 
 	void Int_RelBranchRI(MIPSOpcode op)
 	{
-		int imm = _SIMM16_SHL2;
+		int imm = (signed short)(op&0xFFFF)<<2;
 		int rs = _RS;
 		u32 addr = PC + imm + 4;
 
@@ -231,7 +212,7 @@ namespace MIPSInt
 
 	void Int_VBranch(MIPSOpcode op)
 	{
-		int imm = _SIMM16_SHL2;
+		int imm = (signed short)(op&0xFFFF)<<2;
 		u32 addr = PC + imm + 4;
 
 		// x, y, z, w, any, all, (invalid), (invalid)
@@ -249,7 +230,7 @@ namespace MIPSInt
 
 	void Int_FPUBranch(MIPSOpcode op)
 	{
-		int imm = _SIMM16_SHL2;
+		int imm = (signed short)(op&0xFFFF)<<2;
 		u32 addr = PC + imm + 4;
 		switch((op>>16)&0x1f)
 		{
@@ -262,25 +243,21 @@ namespace MIPSInt
 			break;
 		}
 	}
-
+	
 	void Int_JumpType(MIPSOpcode op)
 	{
 		if (mipsr4k.inDelaySlot)
-			ERROR_LOG(Log::CPU, "Jump in delay slot :(");
+			_dbg_assert_msg_(false,"Jump in delay slot :(");
 
 		u32 off = ((op & 0x03FFFFFF) << 2);
 		u32 addr = (currentMIPS->pc & 0xF0000000) | off;
 
-		switch (op>>26)
+		switch (op>>26) 
 		{
-		case 2: //j
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
-			break;
+		case 2: DelayBranchTo(addr); break; //j
 		case 3: //jal
-			R(MIPS_REG_RA) = PC + 8;
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
+			R(31) = PC + 8;
+			DelayBranchTo(addr);
 			break;
 		default:
 			_dbg_assert_msg_(false,"Trying to interpret instruction that can't be interpreted");
@@ -292,25 +269,25 @@ namespace MIPSInt
 	{
 		if (mipsr4k.inDelaySlot)
 		{
-			// There's one of these in Star Soldier at 0881808c, which seems benign.
-			ERROR_LOG(Log::CPU, "Jump in delay slot :(");
+			// There's one of these in Star Soldier at 0881808c, which seems benign - it should probably be ignored.
+			if (op == 0x03e00008)
+				return;
+			ERROR_LOG(CPU, "Jump in delay slot :(");
+			_dbg_assert_msg_(false,"Jump in delay slot :(");
 		}
 
 		int rs = _RS;
 		int rd = _RD;
 		u32 addr = R(rs);
-		switch (op & 0x3f)
+		switch (op & 0x3f) 
 		{
 		case 8: //jr
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
+			DelayBranchTo(addr);
 			break;
 		case 9: //jalr
 			if (rd != 0)
 				R(rd) = PC + 8;
-			// Update rd, but otherwise do not take the branch if we're branching.
-			if (!mipsr4k.inDelaySlot)
-				DelayBranchTo(addr);
+			DelayBranchTo(addr);
 			break;
 		}
 	}
@@ -329,7 +306,7 @@ namespace MIPSInt
 			return; //nop
 		}
 
-		switch (op>>26)
+		switch (op>>26) 
 		{
 		case 8:	R(rt) = R(rs) + simm; break; //addi
 		case 9:	R(rt) = R(rs) + simm; break;	//addiu
@@ -392,7 +369,7 @@ namespace MIPSInt
 			return;
 		}
 
-		switch (op & 63)
+		switch (op & 63) 
 		{
 		case 10: if (R(rt) == 0) R(rd) = R(rs); break; //movz
 		case 11: if (R(rt) != 0) R(rd) = R(rs); break; //movn
@@ -429,7 +406,7 @@ namespace MIPSInt
 			return;
 		}
 
-		switch (op >> 26)
+		switch (op >> 26) 
 		{
 		case 32: R(rt) = SignExtend8ToU32(Memory::Read_U8(addr)); break; //lb
 		case 33: R(rt) = SignExtend16ToU32(Memory::Read_U16(addr)); break; //lh
@@ -523,7 +500,7 @@ namespace MIPSInt
 				} else if (fs == 0) {
 					R(rt) = MIPSState::FCR0_VALUE;
 				} else {
-					WARN_LOG_REPORT(Log::CPU, "ReadFCR: Unexpected reg %d", fs);
+					WARN_LOG_REPORT(CPU, "ReadFCR: Unexpected reg %d", fs);
 					R(rt) = 0;
 				}
 				break;
@@ -545,12 +522,12 @@ namespace MIPSInt
 						MIPSComp::jit->UpdateFCR31();
 					}
 				} else {
-					WARN_LOG_REPORT(Log::CPU, "WriteFCR: Unexpected reg %d (value %08x)", fs, value);
+					WARN_LOG_REPORT(CPU, "WriteFCR: Unexpected reg %d (value %08x)", fs, value);
 				}
-				DEBUG_LOG(Log::CPU, "FCR%i written to, value %08x", fs, value);
+				DEBUG_LOG(CPU, "FCR%i written to, value %08x", fs, value);
 				break;
 			}
-
+		
 		default:
 			_dbg_assert_msg_(false,"Trying to interpret instruction that can't be interpreted");
 			break;
@@ -591,7 +568,7 @@ namespace MIPSInt
 		int rs = _RS;
 		int rd = _RD;
 
-		switch (op & 63)
+		switch (op & 63) 
 		{
 		case 24: //mult
 			{
@@ -703,16 +680,16 @@ namespace MIPSInt
 			PC += 4;
 			return;
 		}
-
+		
 		switch (op & 0x3f)
 		{
 		case 0: R(rd) = R(rt) << sa;					 break; //sll
-		case 2:
+		case 2: 
 			if (_RS == 0) //srl
 			{
 				R(rd) = R(rt) >> sa;
-				break;
-			}
+				break; 
+			} 
 			else if (_RS == 1) //rotr
 			{
 				R(rd) = __rotr(R(rt), sa);
@@ -727,7 +704,7 @@ namespace MIPSInt
 			if (_FD == 0) //srlv
 			{
 				R(rd) = R(rt) >> (R(rs)&0x1F);
-				break;
+				break; 
 			}
 			else if (_FD == 1) // rotrv
 			{
@@ -820,19 +797,16 @@ namespace MIPSInt
 		switch (op & 0x3F)
 		{
 		case 36:  // mfic
-			// move from interrupt controller, not implemented
-			// See related report https://report.ppsspp.org/logs/kind/316 for possible locations.
-			// Also see https://forums.ps2dev.org/viewtopic.php?p=32700#p32700 .
-			// TODO: Should we actually implement this?
 			if (!reported) {
-				WARN_LOG(Log::CPU, "MFIC Disable/Enable Interrupt CPU instruction");
+				Reporting::ReportMessage("MFIC instruction hit (%08x) at %08x", op.encoding, currentMIPS->pc);
+				WARN_LOG(CPU,"MFIC Disable/Enable Interrupt CPU instruction");
 				reported = 1;
 			}
 			break;
 		case 38:  // mtic
-			// move to interrupt controller, not implemented
 			if (!reported) {
-				WARN_LOG(Log::CPU, "MTIC Disable/Enable Interrupt CPU instruction");
+				Reporting::ReportMessage("MTIC instruction hit (%08x) at %08x", op.encoding, currentMIPS->pc);
+				WARN_LOG(CPU,"MTIC Disable/Enable Interrupt CPU instruction");
 				reported = 1;
 			}
 			break;
@@ -1023,10 +997,9 @@ namespace MIPSInt
 		switch (op & 1)
 		{
 		case 0:
-			// unlikely to be legitimately used
 			if (!reported) {
 				Reporting::ReportMessage("INTERRUPT instruction hit (%08x) at %08x", op.encoding, currentMIPS->pc);
-				WARN_LOG(Log::CPU, "Disable/Enable Interrupt CPU instruction");
+				WARN_LOG(CPU,"Disable/Enable Interrupt CPU instruction");
 				reported = 1;
 			}
 			break;
@@ -1037,33 +1010,28 @@ namespace MIPSInt
 	void Int_Emuhack(MIPSOpcode op)
 	{
 		if (((op >> 24) & 3) != EMUOP_CALL_REPLACEMENT) {
-			_dbg_assert_msg_(false, "Trying to interpret emuhack instruction that can't be interpreted");
+			_dbg_assert_msg_(false,"Trying to interpret emuhack instruction that can't be interpreted");
 		}
-
-		_assert_((PC & 3) == 0);
-
 		// It's a replacement func!
 		int index = op.encoding & 0xFFFFFF;
 		const ReplacementTableEntry *entry = GetReplacementFunc(index);
 		if (entry && entry->replaceFunc && (entry->flags & REPFLAG_DISABLED) == 0) {
-			int cycles = entry->replaceFunc();
+			entry->replaceFunc();
 
 			if (entry->flags & (REPFLAG_HOOKENTER | REPFLAG_HOOKEXIT)) {
 				// Interpret the original instruction under the hook.
 				MIPSInterpret(Memory::Read_Instruction(PC, true));
-			} else if (cycles < 0) {
-				// Leave PC unchanged, call the replacement again (assumes args are modified.)
-				currentMIPS->downcount += cycles;
 			} else {
 				PC = currentMIPS->r[MIPS_REG_RA];
-				currentMIPS->downcount -= cycles;
 			}
 		} else {
 			if (!entry || !entry->replaceFunc) {
-				ERROR_LOG(Log::CPU, "Bad replacement function index %i", index);
+				ERROR_LOG(CPU, "Bad replacement function index %i", index);
 			}
 			// Interpret the original instruction under it.
 			MIPSInterpret(Memory::Read_Instruction(PC, true));
 		}
 	}
+
+
 }

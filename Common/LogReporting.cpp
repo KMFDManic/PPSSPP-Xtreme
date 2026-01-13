@@ -35,7 +35,7 @@ bool ShouldLogNTimes(const char *identifier, int count) {
 	std::lock_guard<std::mutex> lock(logNTimesLock);
 	auto iter = logNTimes.find(identifier);
 	if (iter == logNTimes.end()) {
-		logNTimes.emplace(identifier, 1);
+		logNTimes.insert(std::pair<const char*, int>(identifier, 1));
 		return true;
 	} else {
 		if (iter->second >= count) {
@@ -59,7 +59,7 @@ void SetupCallbacks(AllowedCallback allowed, MessageCallback message) {
 
 void ReportMessage(const char *message, ...) {
 	if (!allowedCallback || !messageCallback) {
-		ERROR_LOG(Log::System, "Reporting not initialized, skipping: %s", message);
+		ERROR_LOG(SYSTEM, "Reporting not initialized, skipping: %s", message);
 		return;
 	}
 
@@ -67,7 +67,7 @@ void ReportMessage(const char *message, ...) {
 		return;
 
 	const int MESSAGE_BUFFER_SIZE = 65536;
-	char *temp = new char [MESSAGE_BUFFER_SIZE];
+	char temp[MESSAGE_BUFFER_SIZE];
 
 	va_list args;
 	va_start(args, message);
@@ -76,13 +76,11 @@ void ReportMessage(const char *message, ...) {
 	va_end(args);
 
 	messageCallback(message, temp);
-
-	delete[] temp;
 }
 
 void ReportMessageFormatted(const char *message, const char *formatted) {
 	if (!allowedCallback || !messageCallback) {
-		ERROR_LOG(Log::System, "Reporting not initialized, skipping: %s", message);
+		ERROR_LOG(SYSTEM, "Reporting not initialized, skipping: %s", message);
 		return;
 	}
 
@@ -91,4 +89,4 @@ void ReportMessageFormatted(const char *message, const char *formatted) {
 	messageCallback(message, formatted);
 }
 
-}  // namespace
+}

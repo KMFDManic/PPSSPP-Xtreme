@@ -23,66 +23,105 @@
 #include <vector>
 
 #include "Common/UI/UIScreen.h"
-#include "Common/UI/PopupScreens.h"
 #include "Common/File/DirListing.h"
 #include "Common/File/Path.h"
-#include "UI/BaseScreens.h"
-#include "UI/SimpleDialogScreen.h"
 
 struct ShaderInfo;
 struct TextureShaderInfo;
 
+extern Path boot_filename;
+void UIBackgroundInit(UIContext &dc);
+void UIBackgroundShutdown();
+
 inline void NoOpVoidBool(bool) {}
 
-class BackgroundScreen : public UIScreen {
+class UIScreenWithBackground : public UIScreen {
 public:
-	ScreenRenderFlags render(ScreenRenderMode mode) override;
-	void sendMessage(UIMessage message, const char *value) override;
+	UIScreenWithBackground() : UIScreen() {}
+protected:
+	void DrawBackground(UIContext &dc) override;
+	void sendMessage(const char *message, const char *value) override;
+};
 
-private:
-	void CreateViews() override {}
-	const char *tag() const override { return "bg"; }
-
+class UIScreenWithGameBackground : public UIScreenWithBackground {
+public:
+	UIScreenWithGameBackground(const std::string &gamePath)
+		: UIScreenWithBackground(), gamePath_(gamePath) {}
+	void DrawBackground(UIContext &dc) override;
+	void sendMessage(const char *message, const char *value) override;
+protected:
 	Path gamePath_;
 };
 
-class PromptScreen : public UIBaseDialogScreen {
+class UIDialogScreenWithBackground : public UIDialogScreen {
 public:
-	PromptScreen(const Path &gamePath, std::string_view message, std::string_view yesButtonText, std::string_view noButtonText,
+	UIDialogScreenWithBackground() : UIDialogScreen() {}
+protected:
+	void DrawBackground(UIContext &dc) override;
+	void sendMessage(const char *message, const char *value) override;
+
+	void AddStandardBack(UI::ViewGroup *parent);
+};
+
+class UIDialogScreenWithGameBackground : public UIDialogScreenWithBackground {
+public:
+	UIDialogScreenWithGameBackground(const Path &gamePath)
+		: UIDialogScreenWithBackground(), gamePath_(gamePath) {}
+	void DrawBackground(UIContext &dc) override;
+	void sendMessage(const char *message, const char *value) override;
+protected:
+	Path gamePath_;
+};
+
+class PromptScreen : public UIDialogScreenWithBackground {
+public:
+	PromptScreen(std::string message, std::string yesButtonText, std::string noButtonText,
 		std::function<void(bool)> callback = &NoOpVoidBool);
 
 	void CreateViews() override;
 
 	void TriggerFinish(DialogResult result) override;
 
-	const char *tag() const override { return "Prompt"; }
-
 private:
+	UI::EventReturn OnYes(UI::EventParams &e);
+	UI::EventReturn OnNo(UI::EventParams &e);
+
 	std::string message_;
 	std::string yesButtonText_;
 	std::string noButtonText_;
 	std::function<void(bool)> callback_;
 };
 
-class NewLanguageScreen : public UI::ListPopupScreen {
+class NewLanguageScreen : public ListPopupScreen {
 public:
-	NewLanguageScreen(std::string_view title);
-
-	const char *tag() const override { return "NewLanguage"; }
+	NewLanguageScreen(const std::string &title);
 
 private:
 	void OnCompleted(DialogResult result) override;
 	bool ShowButtons() const override { return true; }
+	std::map<std::string, std::pair<std::string, int>> langValuesMapping;
+	std::map<std::string, std::string> titleCodeMapping;
 	std::vector<File::FileInfo> langs_;
 };
 
-class TextureShaderScreen : public UI::ListPopupScreen {
+class PostProcScreen : public ListPopupScreen {
 public:
-	TextureShaderScreen(std::string_view title);
+	PostProcScreen(const std::string &title, int id);
 
 	void CreateViews() override;
 
-	const char *tag() const override { return "TextureShader"; }
+private:
+	void OnCompleted(DialogResult result) override;
+	bool ShowButtons() const override { return true; }
+	std::vector<ShaderInfo> shaders_;
+	int id_;
+};
+
+class TextureShaderScreen : public ListPopupScreen {
+public:
+	TextureShaderScreen(const std::string &title);
+
+	void CreateViews() override;
 
 private:
 	void OnCompleted(DialogResult result) override;
@@ -101,13 +140,11 @@ public:
 	LogoScreen(AfterLogoScreen afterLogoScreen = AfterLogoScreen::DEFAULT);
 
 	bool key(const KeyInput &key) override;
-	void touch(const TouchInput &touch) override;
+	bool touch(const TouchInput &touch) override;
 	void update() override;
-	void DrawForeground(UIContext &ui) override;
-	void sendMessage(UIMessage message, const char *value) override;
+	void render() override;
+	void sendMessage(const char *message, const char *value) override;
 	void CreateViews() override {}
-
-	const char *tag() const override { return "Logo"; }
 
 private:
 	void Next();
@@ -117,14 +154,43 @@ private:
 	AfterLogoScreen afterLogoScreen_;
 };
 
-class CreditsScreen : public UISimpleBaseDialogScreen {
+class CreditsScreen : public UIDialogScreenWithBackground {
 public:
-	CreditsScreen() : UISimpleBaseDialogScreen(Path(), SimpleDialogFlags::Default) {}
+	CreditsScreen();
 	void update() override;
+	void render() override;
 
-protected:
-	std::string_view GetTitle() const override;
+	void CreateViews() override;
 
-	void CreateDialogViews(UI::ViewGroup *parent) override;
-	const char *tag() const override { return "Credits"; }
+private:
+	UI::EventReturn OnOK(UI::EventParams &e);
+
+	UI::EventReturn OnSupport(UI::EventParams &e);
+	UI::EventReturn OnPPSSPPOrg(UI::EventParams &e);
+	UI::EventReturn OnPrivacy(UI::EventParams &e);
+	UI::EventReturn OnForums(UI::EventParams &e);
+	UI::EventReturn OnDiscord(UI::EventParams &e);
+	UI::EventReturn OnShare(UI::EventParams &e);
+	UI::EventReturn OnTwitter(UI::EventParams &e);
+
+	double startTime_ = 0.0;
+};
+
+class SettingInfoMessage : public UI::LinearLayout {
+public:
+	SettingInfoMessage(int align, UI::AnchorLayoutParams *lp);
+
+	void SetBottomCutoff(float y) {
+		cutOffY_ = y;
+	}
+	void Show(const std::string &text, UI::View *refView = nullptr);
+
+	void Draw(UIContext &dc);
+	std::string GetText() const;
+
+private:
+	UI::TextView *text_ = nullptr;
+	double timeShown_ = 0.0;
+	float cutOffY_;
+	bool showing_ = false;
 };

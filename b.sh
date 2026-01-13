@@ -21,10 +21,6 @@ do
 			;;
 		--fat) CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64 ${CMAKE_ARGS}"
 			;;
-		--x64) CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES=x86_64 ${CMAKE_ARGS}"
-			;;
-		--arm64) CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES=arm64 ${CMAKE_ARGS}"
-			;;
 		--no-png) CMAKE_ARGS="-DUSE_SYSTEM_LIBPNG=OFF ${CMAKE_ARGS}"
 			;;
 		--no-sdl2) CMAKE_ARGS="-DUSE_SYSTEM_LIBSDL2=OFF ${CMAKE_ARGS}"
@@ -51,14 +47,8 @@ do
 		--debug)
 			CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Debug ${CMAKE_ARGS}"
 			;;
-		--reldebug)
-			CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo ${CMAKE_ARGS}"
-			;;
 		--headless) echo "Headless mode enabled"
 			CMAKE_ARGS="-DHEADLESS=ON ${CMAKE_ARGS}"
-			;;
-		--atlas-tool) echo "Atlas tool enabled"
-			CMAKE_ARGS="-DATLAS_TOOL=ON ${CMAKE_ARGS}"
 			;;
 		--libretro) echo "Build Libretro core"
 			CMAKE_ARGS="-DLIBRETRO=ON ${CMAKE_ARGS}"
@@ -79,21 +69,6 @@ do
 		--sanitize) echo "Enabling address-sanitizer if available"
 			CMAKE_ARGS="-DUSE_ASAN=ON ${CMAKE_ARGS}"
 			;;
-		--sanitizeub) echo "Enabling ub-sanitizer if available"
-			CMAKE_ARGS="-DUSE_UBSAN=ON ${CMAKE_ARGS}"
-			;;
-		--gold) echo "Gold build enabled"
-			CMAKE_ARGS="-DGOLD=ON ${CMAKE_ARGS}"
-			;;
-		--alderlake) echo "Alderlake opt"
-			CMAKE_ARGS="-DCMAKE_C_FLAGS=\"-march=alderlake\" -DCMAKE_CPP_FLAGS=\"-march=alderlake\""
-			;;
-		--no_mmap) echo "Disable mmap"
-			CMAKE_ARGS="-DUSE_NO_MMAP=ON ${CMAKE_ARGS}"
-			;;
-   		--gles) echo "Using GLES/EGL"
-                	CMAKE_ARGS="-DUSING_GLES2=ON -DUSING_EGL=ON ${CMAKE_ARGS}"
-                	;;
 		*) MAKE_OPT="$1 ${MAKE_OPT}"
 			;;
 	esac
@@ -117,8 +92,6 @@ fi
 
 # Strict errors. Any non-zero return exits this script
 set -e
-
-echo Building with $CORES_COUNT threads
 
 mkdir -p ${BUILD_DIR}
 pushd ${BUILD_DIR}

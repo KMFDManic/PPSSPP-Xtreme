@@ -15,10 +15,12 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#ifdef __MINGW32__
+#include <unistd.h>
+#endif
 #include <ctime>
 
 #include "Common/System/System.h"
-#include "Common/System/Request.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Core/HLE/HLE.h"
@@ -33,12 +35,7 @@ enum GpsStatus {
 	GPS_STATE_ON = 3,
 };
 
-constexpr int AUTO_UPDATE_GPSTIME = 10;
-
 GpsStatus gpsStatus = GPS_STATE_OFF;
-GpsData gpsData;
-SatData satData;
-time_t lastGPSTime;
 
 void __UsbGpsInit() {
 	gpsStatus = GPS_STATE_OFF;
@@ -50,15 +47,11 @@ void __UsbGpsDoState(PointerWrap &p) {
 		return;
 
 	Do(p, gpsStatus);
-	if (gpsStatus == GPS_STATE_ON) {
-		GPS::init();
-		System_GPSCommand("open");
-	}
 }
 
 void __UsbGpsShutdown() {
     gpsStatus = GPS_STATE_OFF;
-    System_GPSCommand("close");
+    System_SendMessage("gps_command", "close");
 };
 
 static int sceUsbGpsGetInitDataLocation(u32 addr) {
@@ -66,44 +59,33 @@ static int sceUsbGpsGetInitDataLocation(u32 addr) {
 }
 
 static int sceUsbGpsGetState(u32 stateAddr) {
-	if (Memory::IsValidRange(stateAddr, 4)) {
-		Memory::WriteUnchecked_U32(gpsStatus, stateAddr);
+	if (Memory::IsValidAddress(stateAddr)) {
+		Memory::Write_U32(gpsStatus, stateAddr);
 	}
 	return 0;
 }
 
 static int sceUsbGpsOpen() {
+	ERROR_LOG(HLE, "UNIMPL sceUsbGpsOpen");
 	GPS::init();
 	gpsStatus = GPS_STATE_ON;
-	System_GPSCommand("open");
+	System_SendMessage("gps_command", "open");
 	return 0;
 }
 
 static int sceUsbGpsClose() {
+	ERROR_LOG(HLE, "UNIMPL sceUsbGpsClose");
 	gpsStatus = GPS_STATE_OFF;
-	System_GPSCommand("close");
+	System_SendMessage("gps_command", "close");
 	return 0;
 }
 
 static int sceUsbGpsGetData(u32 gpsDataAddr, u32 satDataAddr) {
-	time_t currentTime;
-	time(&currentTime);
-	if (difftime(currentTime, lastGPSTime) > AUTO_UPDATE_GPSTIME)
-	{
-		/* Simulate fresh updates to satisfy MAPLUS 1/2 apps
-		 * when real GPS data isn't available */
-		GPS::setGpsTime(&currentTime);
+	if (Memory::IsValidRange(gpsDataAddr, sizeof(GpsData))) {
+		Memory::WriteStruct(gpsDataAddr, GPS::getGpsData());
 	}
-
-	auto gpsData = PSPPointer<GpsData>::Create(gpsDataAddr);
-	if (gpsData.IsValid()) {
-		*gpsData = *GPS::getGpsData();
-		gpsData.NotifyWrite("UsbGpsGetData");
-	}
-	auto satData = PSPPointer<SatData>::Create(satDataAddr);
-	if (satData.IsValid()) {
-		*satData = *GPS::getSatData();
-		gpsData.NotifyWrite("UsbGpsGetData");
+	if (Memory::IsValidRange(satDataAddr, sizeof(SatData))) {
+		Memory::WriteStruct(satDataAddr, GPS::getSatData());
 	}
 	return 0;
 }
@@ -127,8 +109,11 @@ const HLEFunction sceUsbGps[] =
 
 void Register_sceUsbGps()
 {
-	RegisterHLEModule("sceUsbGps", ARRAY_SIZE(sceUsbGps), sceUsbGps);
+	RegisterModule("sceUsbGps", ARRAY_SIZE(sceUsbGps), sceUsbGps);
 }
+
+GpsData gpsData;
+SatData satData;
 
 void GPS::init() {
 	time_t currentTime;
@@ -141,15 +126,14 @@ void GPS::init() {
 	gpsData.altitude  = 19.0f;
 	gpsData.speed     = 3.0f;
 	gpsData.bearing   = 35.0f;
-	gpsData.garbage2  = 513;
 
-	satData.satellites_in_view = 12;
+	satData.satellites_in_view = 6;
 	for (unsigned char i = 0; i < satData.satellites_in_view; i++) {
 		satData.satInfo[i].id = i + 1; // 1 .. 32
-		satData.satInfo[i].elevation = 20;
-		satData.satInfo[i].azimuth = i * (360/satData.satellites_in_view);
-		satData.satInfo[i].snr = 45;
-		satData.satInfo[i].good = !!(i % 3);
+		satData.satInfo[i].elevation = i * 10;
+		satData.satInfo[i].azimuth = i * 50;
+		satData.satInfo[i].snr = 0;
+		satData.satInfo[i].good = 1;
 	}
 }
 
@@ -166,7 +150,6 @@ void GPS::setGpsTime(time_t *time) {
 }
 
 void GPS::setGpsData(long long gpsTime, float hdop, float latitude, float longitude, float altitude, float speed, float bearing) {
-	lastGPSTime = gpsTime;
 	setGpsTime((time_t*)&gpsTime);
 
 	gpsData.hdop      = hdop;

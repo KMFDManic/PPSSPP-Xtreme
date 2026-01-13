@@ -1,6 +1,7 @@
-TODO: This documentation is outdated and needs updating.
+Plan:
 
-This is a build of PPSSPP that does not have graphics, it just starts up the system without a display, prints all debug output (as configured) to the console using printf(), and exits when the emulated binary exits.
+
+This is intended to be a port that does not have graphics, it just starts up the system without a display, prints all debug output (as configured) to the console using printf(), and exits when the emulated binary exits.
 
 Usage:
 

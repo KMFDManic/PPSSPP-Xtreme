@@ -9,8 +9,6 @@
 //
 // Zero dependencies apart from stdlib (if you remove the vhjson usage.)
 
-#pragma once
-
 #include <string>
 #include <vector>
 #include <sstream>

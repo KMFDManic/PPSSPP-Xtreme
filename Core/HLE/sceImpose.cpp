@@ -24,7 +24,6 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/Config.h"
 #include "Core/MemMap.h"
-#include "Core/System.h"
 
 const int PSP_UMD_POPUP_DISABLE = 0;
 const int PSP_UMD_POPUP_ENABLE = 1;
@@ -38,19 +37,16 @@ static u32 buttonValue = PSP_SYSTEMPARAM_BUTTON_CIRCLE;
 static u32 umdPopup = PSP_UMD_POPUP_DISABLE;
 static u32 backlightOffTime;
 
-void __ImposeInit() {
-	language = GetPSPLanguage();
-	if (PSP_CoreParameter().compat.flags().EnglishOrJapaneseOnly) {
-		if (language != PSP_SYSTEMPARAM_LANGUAGE_ENGLISH && language != PSP_SYSTEMPARAM_LANGUAGE_JAPANESE) {
-			language = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
-		}
-	}
-	buttonValue = PSP_CoreParameter().compat.flags().ForceCircleButtonConfirm ? PSP_SYSTEMPARAM_BUTTON_CIRCLE : g_Config.iButtonPreference;
+void __ImposeInit()
+{
+	language = g_Config.iLanguage;
+	buttonValue = g_Config.iButtonPreference;
 	umdPopup = PSP_UMD_POPUP_DISABLE;
 	backlightOffTime = 0;
 }
 
-void __ImposeDoState(PointerWrap &p) {
+void __ImposeDoState(PointerWrap &p)
+{
 	auto s = p.Section("sceImpose", 1);
 	if (!s)
 		return;
@@ -63,51 +59,58 @@ void __ImposeDoState(PointerWrap &p) {
 
 static u32 sceImposeGetBatteryIconStatus(u32 chargingPtr, u32 iconStatusPtr)
 {
+	DEBUG_LOG(SCEUTILITY, "sceImposeGetBatteryIconStatus(%08x, %08x)", chargingPtr, iconStatusPtr);
 	if (Memory::IsValidAddress(chargingPtr))
-		Memory::WriteUnchecked_U32(PSP_IMPOSE_BATTICON_NONE, chargingPtr);
+		Memory::Write_U32(PSP_IMPOSE_BATTICON_NONE, chargingPtr);
 	if (Memory::IsValidAddress(iconStatusPtr))
-		Memory::WriteUnchecked_U32(3, iconStatusPtr);
-	return hleLogDebug(Log::sceUtility, 0);
+		Memory::Write_U32(3, iconStatusPtr);
+	return 0;
 }
 
-static u32 sceImposeSetLanguageMode(u32 languageVal, u32 buttonVal) {
+static u32 sceImposeSetLanguageMode(u32 languageVal, u32 buttonVal)
+{
+	DEBUG_LOG(SCEUTILITY, "sceImposeSetLanguageMode(%08x, %08x)", languageVal, buttonVal);
 	language = languageVal;
 	buttonValue = buttonVal;
-	if (language != GetPSPLanguage()) {
-		return hleLogWarning(Log::sceUtility, 0, "ignoring requested language");
-	}
-	return hleLogDebug(Log::sceUtility, 0);
+	return 0;
 }
 
-static u32 sceImposeGetLanguageMode(u32 languagePtr, u32 btnPtr) {
+static u32 sceImposeGetLanguageMode(u32 languagePtr, u32 btnPtr)
+{
+	DEBUG_LOG(SCEUTILITY, "sceImposeGetLanguageMode(%08x, %08x)", languagePtr, btnPtr);
 	if (Memory::IsValidAddress(languagePtr))
-		Memory::WriteUnchecked_U32(language, languagePtr);
+		Memory::Write_U32(language, languagePtr);
 	if (Memory::IsValidAddress(btnPtr))
-		Memory::WriteUnchecked_U32(buttonValue, btnPtr);
-	return hleLogDebug(Log::sceUtility, 0);
+		Memory::Write_U32(buttonValue, btnPtr);
+	return 0;
 }
 
 static u32 sceImposeSetUMDPopup(int mode) {
+	DEBUG_LOG(SCEUTILITY, "sceImposeSetUMDPopup(%i)", mode);
 	umdPopup = mode;
-	return hleLogDebug(Log::sceUtility, 0);
+	return 0;
 }
 
 static u32 sceImposeGetUMDPopup() {
-	return hleLogDebug(Log::sceUtility, umdPopup);
+	DEBUG_LOG(SCEUTILITY, "sceImposeGetUMDPopup()");
+	return umdPopup;
 }
 
 static u32 sceImposeSetBacklightOffTime(int time) {
+	DEBUG_LOG(SCEUTILITY, "sceImposeSetBacklightOffTime(%i)", time);
 	backlightOffTime = time;
-	return hleLogDebug(Log::sceUtility, 0);
+	return 0;
 }
 
 static u32 sceImposeGetBacklightOffTime() {
-	return hleLogDebug(Log::sceUtility, backlightOffTime);
+	DEBUG_LOG(SCEUTILITY, "sceImposeGetBacklightOffTime()");
+	return backlightOffTime;
 }
 
 //OSD stuff? home button?
-const HLEFunction sceImpose[] = {
-	{0X36AA6E91, &WrapU_UU<sceImposeSetLanguageMode>,      "sceImposeSetLanguageMode",      'i', "ii"},
+const HLEFunction sceImpose[] =
+{
+	{0X36AA6E91, &WrapU_UU<sceImposeSetLanguageMode>,      "sceImposeSetLanguageMode",      'x', "xx"},  // Seen
 	{0X381BD9E7, nullptr,                                  "sceImposeHomeButton",           '?', ""  },
 	{0X0F341BE4, nullptr,                                  "sceImposeGetHomePopup",         '?', ""  },
 	{0X5595A71A, nullptr,                                  "sceImposeSetHomePopup",         '?', ""  },
@@ -124,6 +127,7 @@ const HLEFunction sceImpose[] = {
 	{0XFF1A2F07, nullptr,                                  "sceImpose_FF1A2F07",            '?', ""  },
 };
 
-void Register_sceImpose() {
-	RegisterHLEModule("sceImpose", ARRAY_SIZE(sceImpose), sceImpose);
+void Register_sceImpose()
+{
+	RegisterModule("sceImpose", ARRAY_SIZE(sceImpose), sceImpose);
 }

@@ -29,12 +29,10 @@ public:
 	WindowsVulkanContext() : draw_(nullptr) {}
 	bool Init(HINSTANCE hInst, HWND window, std::string *error_message) override;
 	void Shutdown() override;
+	void SwapInterval(int interval) override {}
+	void SwapBuffers() override {}
 	void Resize() override;
 	void Poll() override;
-
-	void NotifyWindowRestored() override {
-		windowRestored_ = true;
-	}
 
 	void *GetAPIContext() override;
 
@@ -43,5 +41,5 @@ private:
 	Draw::DrawContext *draw_;
 	VulkanContext *vulkan_ = nullptr;
 	VulkanRenderManager *renderManager_ = nullptr;
-	bool windowRestored_ = false;
 };
+

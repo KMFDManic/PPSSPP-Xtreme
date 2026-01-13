@@ -17,7 +17,6 @@
 
 #include <algorithm>
 #include <unordered_map>
-
 #include "Common/StringUtils.h"
 #include "Core/Debugger/WebSocket/InputSubscriber.h"
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
@@ -51,11 +50,6 @@ const std::unordered_map<std::string, uint32_t> buttonLookup = {
 	{ "forward", CTRL_FORWARD },
 	{ "back", CTRL_BACK },
 	{ "playpause", CTRL_PLAYPAUSE },
-	// Obscure unmapped keys, see issue #17464
-	{ "l2", CTRL_L2 },
-	{ "l3", CTRL_L3 },
-	{ "r2", CTRL_R2 },
-	{ "r3", CTRL_R3 },
 };
 
 struct WebSocketInputState : public DebuggerSubscriber {
@@ -95,9 +89,9 @@ const std::unordered_map<std::string, uint32_t> &WebSocketInputButtonLookup() {
 
 DebuggerSubscriber *WebSocketInputInit(DebuggerEventHandlerMap &map) {
 	auto p = new WebSocketInputState();
-	map["input.buttons.send"] = [p](DebuggerRequest &req) { p->ButtonsSend(req); };
-	map["input.buttons.press"] = [p](DebuggerRequest &req) { p->ButtonsPress(req); };
-	map["input.analog.send"] = [p](DebuggerRequest &req) { p->AnalogSend(req); };
+	map["input.buttons.send"] = std::bind(&WebSocketInputState::ButtonsSend, p, std::placeholders::_1);
+	map["input.buttons.press"] = std::bind(&WebSocketInputState::ButtonsPress, p, std::placeholders::_1);
+	map["input.analog.send"] = std::bind(&WebSocketInputState::AnalogSend, p, std::placeholders::_1);
 
 	return p;
 }
@@ -134,7 +128,7 @@ DebuggerSubscriber *WebSocketInputInit(DebuggerEventHandlerMap &map) {
 //  - back: back button on headset.
 //  - playpause: play/pause button on headset.
 //
-// Response (same event name) with no extra data.
+// Empty response.
 void WebSocketInputState::ButtonsSend(DebuggerRequest &req) {
 	const JsonNode *jsonButtons = req.data.get("buttons");
 	if (!jsonButtons) {
@@ -161,7 +155,12 @@ void WebSocketInputState::ButtonsSend(DebuggerRequest &req) {
 		}
 	}
 
-	__CtrlUpdateButtons(downFlags, upFlags);
+	if (downFlags) {
+		__CtrlButtonDown(downFlags);
+	}
+	if (upFlags) {
+		__CtrlButtonUp(upFlags);
+	}
 
 	req.Respond();
 }
@@ -172,7 +171,7 @@ void WebSocketInputState::ButtonsSend(DebuggerRequest &req) {
 //  - button: required string indicating button name (see input.buttons.send.)
 //  - duration: optional integer indicating frames to press for, defaults to 1.
 //
-// Response (same event name) with no extra data once released.
+// Empty response once released.
 void WebSocketInputState::ButtonsPress(DebuggerRequest &req) {
 	std::string button;
 	if (!req.ParamString("button", &button))
@@ -182,7 +181,7 @@ void WebSocketInputState::ButtonsPress(DebuggerRequest &req) {
 	press.duration = 1;
 	if (!req.ParamU32("duration", &press.duration, false, DebuggerParamType::OPTIONAL))
 		return;
-	if ((int)press.duration < 0)
+	if (press.duration < 0)
 		return req.Fail("Parameter 'duration' must not be negative");
 	const JsonNode *value = req.data.get("ticket");
 	press.ticket = value ? json_stringify(value) : "";
@@ -193,7 +192,7 @@ void WebSocketInputState::ButtonsPress(DebuggerRequest &req) {
 	}
 	press.button = info->second;
 
-	__CtrlUpdateButtons(press.button, 0);
+	__CtrlButtonDown(press.button);
 	pressTickets_.push_back(press);
 }
 
@@ -206,7 +205,7 @@ void WebSocketInputState::Broadcast(net::WebSocketServer *ws) {
 	for (PressInfo &press : pressTickets_) {
 		press.duration--;
 		if (press.duration == -1) {
-			__CtrlUpdateButtons(0, press.button);
+			__CtrlButtonUp(press.button);
 			ws->Send(press.Event());
 		}
 	}
@@ -228,7 +227,7 @@ static bool AnalogValue(DebuggerRequest &req, float *value, const char *name) {
 	}
 
 	double val = node->value.toNumber();
-	if (val < -1.0 || val > 1.0) {
+	if (val < 1.0 || val > 1.0) {
 		req.Fail(StringFromFormat("Parameter '%s' must be between -1.0 and 1.0", name));
 		return false;
 	}
@@ -244,7 +243,7 @@ static bool AnalogValue(DebuggerRequest &req, float *value, const char *name) {
 //  - y: required number from -1.0 to 1.0.
 //  - stick: optional string, either "left" (default) or "right".
 //
-// Response (same event name) with no extra data.
+// Empty response.
 void WebSocketInputState::AnalogSend(DebuggerRequest &req) {
 	std::string stick = "left";
 	if (!req.ParamString("stick", &stick, DebuggerParamType::OPTIONAL))
@@ -255,7 +254,6 @@ void WebSocketInputState::AnalogSend(DebuggerRequest &req) {
 	if (!AnalogValue(req, &x, "x") || !AnalogValue(req, &y, "y"))
 		return;
 
-	// TODO: Route into the control mapper's PSPKey function or similar instead.
 	__CtrlSetAnalogXY(stick == "left" ? CTRL_STICK_LEFT : CTRL_STICK_RIGHT, x, y);
 
 	req.Respond();

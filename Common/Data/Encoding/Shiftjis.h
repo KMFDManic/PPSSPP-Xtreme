@@ -20,7 +20,6 @@ struct ShiftJIS {
 				return INVALID;
 			}
 			// Intentional fall-through.
-			[[fallthrough]];
 		case 0x9:
 		case 0xE:
 			row = ((j & 0x3F) << 1) - 0x01;

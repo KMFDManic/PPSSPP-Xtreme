@@ -29,7 +29,7 @@ enum class BucketState : uint8_t {
 // we always use very small values, so it's probably better to have them in the same
 // cache-line as the corresponding key.
 // Enforces that value are pointers to make sure that combined storage makes sense.
-template <class Key, class Value>
+template <class Key, class Value, Value NullValue>
 class DenseHashMap {
 public:
 	DenseHashMap(int initialCapacity) : capacity_(initialCapacity) {
@@ -37,47 +37,26 @@ public:
 		state.resize(initialCapacity);
 	}
 
-	// Returns true if the entry was found, and writes the entry to *value.
-	// Returns false and does not write to value if no entry was found.
-	// Note that nulls can be stored.
-	bool Get(const Key &key, Value *value) const {
+	// Returns nullptr if no entry was found.
+	Value Get(const Key &key) {
 		uint32_t mask = capacity_ - 1;
 		uint32_t pos = HashKey(key) & mask;
 		// No? Let's go into search mode. Linear probing.
 		uint32_t p = pos;
 		while (true) {
-			if (state[p] == BucketState::TAKEN && KeyEquals(key, map[p].key)) {
-				*value = map[p].value;
-				return true;
-			} else if (state[p] == BucketState::FREE) {
-				return false;
-			}
+			if (state[p] == BucketState::TAKEN && KeyEquals(key, map[p].key))
+				return map[p].value;
+			else if (state[p] == BucketState::FREE)
+				return NullValue;
 			p = (p + 1) & mask;  // If the state is REMOVED, we just keep on walking. 
 			if (p == pos) {
-				// We looped around the whole map.
 				_assert_msg_(false, "DenseHashMap: Hit full on Get()");
 			}
 		}
-		return false;
+		return NullValue;
 	}
 
-	// Only works if Value can be nullptr
-	Value GetOrNull(const Key &key) const {
-		Value value;
-		if (Get(key, &value)) {
-			return value;
-		} else {
-			return (Value)nullptr;
-		}
-	}
-
-	bool ContainsKey(const Key &key) const {
-		// Slightly wasteful, though compiler might optimize it.
-		Value value;
-		return Get(key, &value);
-	}
-
-	// Asserts if we already had the key!
+	// Returns false if we already had the key! Which is a bit different.
 	bool Insert(const Key &key, Value value) {
 		// Check load factor, resize if necessary. We never shrink.
 		if (count_ > capacity_ / 2) {
@@ -90,7 +69,7 @@ public:
 			if (state[p] == BucketState::TAKEN) {
 				if (KeyEquals(key, map[p].key)) {
 					// Bad! We already got this one. Let's avoid this case.
-					_assert_msg_(false, "DenseHashMap: Duplicate key of size %d inserted", (int)sizeof(Key));
+					_assert_msg_(false, "DenseHashMap: Duplicate key inserted");
 					return false;
 				}
 				// continue looking....
@@ -135,7 +114,6 @@ public:
 		return false;
 	}
 
-	// This will never crash if you call it without locking - but, the value might not be right.
 	size_t size() const {
 		return count_;
 	}
@@ -149,16 +127,6 @@ public:
 		}
 	}
 
-	template<class T>
-	inline void IterateMut(T func) {
-		for (size_t i = 0; i < map.size(); i++) {
-			if (state[i] == BucketState::TAKEN) {
-				func(map[i].key, map[i].value);
-			}
-		}
-	}
-
-	// Note! Does NOT delete any pointed-to data (in case you stored pointers in the map).
 	void Clear() {
 		memset(state.data(), (int)BucketState::FREE, state.size());
 		count_ = 0;
@@ -212,7 +180,7 @@ private:
 
 // Like the above, uses linear probing for cache-friendliness.
 // Does not perform hashing at all so expects well-distributed keys.
-template <class Value>
+template <class Value, Value NullValue>
 class PrehashMap {
 public:
 	PrehashMap(int initialCapacity) : capacity_(initialCapacity) {
@@ -221,24 +189,22 @@ public:
 	}
 
 	// Returns nullptr if no entry was found.
-	bool Get(uint32_t hash, Value *value) {
+	Value Get(uint32_t hash) {
 		uint32_t mask = capacity_ - 1;
 		uint32_t pos = hash & mask;
 		// No? Let's go into search mode. Linear probing.
 		uint32_t p = pos;
 		while (true) {
-			if (state[p] == BucketState::TAKEN && hash == map[p].hash) {
-				*value = map[p].value;
-				return true;
-			} else if (state[p] == BucketState::FREE) {
-				return false;
-			}
+			if (state[p] == BucketState::TAKEN && hash == map[p].hash)
+				return map[p].value;
+			else if (state[p] == BucketState::FREE)
+				return NullValue;
 			p = (p + 1) & mask;  // If the state is REMOVED, we just keep on walking. 
 			if (p == pos) {
 				_assert_msg_(false, "PrehashMap: Hit full on Get()");
 			}
 		}
-		return false;
+		return NullValue;
 	}
 
 	// Returns false if we already had the key! Which is a bit different.
@@ -347,7 +313,7 @@ private:
 				Insert(old[i].hash, old[i].value);
 			}
 		}
-		INFO_LOG(Log::G3D, "Grew hashmap capacity from %d to %d", oldCapacity, capacity_);
+		INFO_LOG(G3D, "Grew hashmap capacity from %d to %d", oldCapacity, capacity_);
 		_assert_msg_(oldCount == count_, "PrehashMap: count should not change in Grow()");
 	}
 	struct Pair {

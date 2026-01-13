@@ -26,5 +26,7 @@
 void ReloadAllThemeInfo();
 
 std::vector<std::string> GetThemeInfoNames();
-void UpdateTheme();
+void UpdateTheme(UIContext *ctx);
+Atlas *GetFontAtlas();
+Atlas *GetUIAtlas();
 UI::Theme *GetTheme();

@@ -1,3 +1,5 @@
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
 #include "Windows/stdafx.h"
 #include <windowsx.h>
 #include <commctrl.h>
@@ -13,7 +15,7 @@
 #include "Debugger_MemoryDlg.h"
 #include "CtrlMemView.h"
 #include "DebuggerShared.h"
-#include "Common/Log.h"
+#include "LogManager.h"
 #include "winnt.h"
 #include <WindowsX.h>
 #include <algorithm>
@@ -54,11 +56,11 @@ LRESULT CALLBACK AddressEditProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 }
 
 
-CMemoryDlg::CMemoryDlg(HINSTANCE _hInstance, HWND _hParent, MIPSDebugInterface *_cpu) : Dialog((LPCSTR)IDD_MEMORY, _hInstance,_hParent)
+CMemoryDlg::CMemoryDlg(HINSTANCE _hInstance, HWND _hParent, DebugInterface *_cpu) : Dialog((LPCSTR)IDD_MEMORY, _hInstance,_hParent)
 {
 	cpu = _cpu;
 	wchar_t temp[256];
-	wsprintf(temp,L"Memory Viewer - R4");
+	wsprintf(temp,L"Memory Viewer - %S",cpu->GetName());
 	SetWindowText(m_hDlg,temp);
 
 	ShowWindow(m_hDlg,SW_HIDE);
@@ -115,7 +117,7 @@ void CMemoryDlg::Update(void)
 	}	
 }
 
-void CMemoryDlg::searchBoxRedraw(const std::vector<u32> &results) {
+void CMemoryDlg::searchBoxRedraw(std::vector<u32> results) {
 	wchar_t temp[256]{};
 	SendMessage(srcListHdl, WM_SETREDRAW, FALSE, 0);
 	ListBox_ResetContent(srcListHdl);
@@ -193,7 +195,7 @@ BOOL CMemoryDlg::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 			switch (HIWORD(wParam)) {
 			case BN_CLICKED:
 				GetWindowText(searchBoxHdl, temp, 255);
-				std::vector<u32> results = memView->searchString(ConvertWStringToUTF8(temp));
+				std::vector<u32> results = memView->searchString(ConvertWStringToUTF8(temp).c_str());
 				if (results.size() > 0){
 					searchBoxRedraw(results);
 				}
@@ -255,7 +257,7 @@ void CMemoryDlg::Goto(u32 addr)
 
 void CMemoryDlg::Size()
 {
-	const float fontScale = 1.0f / g_display.dpi_scale_real_y;
+	const float fontScale = 1.0f / g_dpi_scale_real_y;
 
 	GetClientRect(m_hDlg,&winRect);
 	int dlg_w = winRect.right - winRect.left;

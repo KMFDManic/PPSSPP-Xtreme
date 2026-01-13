@@ -15,11 +15,11 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <ctime>
 #include "Core/FileSystems/BlobFileSystem.h"
 
 BlobFileSystem::BlobFileSystem(IHandleAllocator *hAlloc, FileLoader *fileLoader, std::string alias)
 : alloc_(hAlloc), fileLoader_(fileLoader), alias_(alias) {
-	NOTICE_LOG(Log::FileSystem, "%s", fileLoader->GetPath().c_str());
 }
 
 BlobFileSystem::~BlobFileSystem() {
@@ -30,11 +30,9 @@ void BlobFileSystem::DoState(PointerWrap &p) {
 	// Not used in real emulation.
 }
 
-std::vector<PSPFileInfo> BlobFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> BlobFileSystem::GetDirListing(std::string path) {
 	std::vector<PSPFileInfo> listing;
 	listing.push_back(GetFileInfo(alias_));
-	if (exists)
-		*exists = true;
 	return listing;
 }
 
@@ -101,10 +99,6 @@ PSPFileInfo BlobFileSystem::GetFileInfo(std::string filename) {
 	return info;
 }
 
-PSPFileInfo BlobFileSystem::GetFileInfoByHandle(u32 handle) {
-	return GetFileInfo("");
-}
-
 bool BlobFileSystem::OwnsHandle(u32 handle) {
 	auto entry = entries_.find(handle);
 	return entry != entries_.end();
@@ -134,6 +128,6 @@ bool BlobFileSystem::RemoveFile(const std::string &filename) {
 	return false;
 }
 
-u64 BlobFileSystem::FreeDiskSpace(const std::string &path) {
+u64 BlobFileSystem::FreeSpace(const std::string &path) {
 	return 0;
 }

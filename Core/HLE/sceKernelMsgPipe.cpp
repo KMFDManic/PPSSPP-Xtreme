@@ -24,7 +24,6 @@
 #include "Core/CoreTiming.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/HLE/HLE.h"
-#include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelMsgPipe.h"
 #include "Core/HLE/sceKernelMemory.h"
@@ -126,7 +125,7 @@ struct MsgPipeWaitingThread
 	}
 };
 
-static bool __KernelMsgPipeThreadSortPriority(const MsgPipeWaitingThread &thread1, const MsgPipeWaitingThread &thread2)
+static bool __KernelMsgPipeThreadSortPriority(MsgPipeWaitingThread thread1, MsgPipeWaitingThread thread2)
 {
 	return __KernelThreadSortPriority(thread1.threadID, thread2.threadID);
 }
@@ -141,13 +140,10 @@ struct MsgPipe : public KernelObject
 	int GetIDType() const override { return SCE_KERNEL_TMID_Mpipe; }
 
 	MsgPipe() : buffer(0) {}
-	~MsgPipe() {
-		if (buffer != 0) {
-			BlockAllocator *alloc = BlockAllocatorFromAddr(buffer);
-			_assert_msg_(alloc != nullptr, "Should always have a valid allocator/address");
-			if (alloc)
-				alloc->Free(buffer);
-		}
+	~MsgPipe()
+	{
+		if (buffer != 0)
+			userMemory.Free(buffer);
 	}
 
 	u32 GetUsedSize()
@@ -386,7 +382,7 @@ static int __KernelSendMsgPipe(MsgPipe *m, u32 sendBufAddr, u32 sendSize, int wa
 	{
 		if (sendSize > (u32) m->nmp.bufSize)
 		{
-			ERROR_LOG(Log::sceKernel, "__KernelSendMsgPipe(%d): size %d too large for buffer", uid, sendSize);
+			ERROR_LOG(SCEKERNEL, "__KernelSendMsgPipe(%d): size %d too large for buffer", uid, sendSize);
 			return SCE_KERNEL_ERROR_ILLEGAL_SIZE;
 		}
 
@@ -487,7 +483,7 @@ static int __KernelReceiveMsgPipe(MsgPipe *m, u32 receiveBufAddr, u32 receiveSiz
 	{
 		if (receiveSize > (u32) m->nmp.bufSize)
 		{
-			ERROR_LOG(Log::sceKernel, "__KernelReceiveMsgPipe(%d): size %d too large for buffer", uid, receiveSize);
+			ERROR_LOG(SCEKERNEL, "__KernelReceiveMsgPipe(%d): size %d too large for buffer", uid, receiveSize);
 			return SCE_KERNEL_ERROR_ILLEGAL_SIZE;
 		}
 
@@ -542,12 +538,12 @@ static void __KernelMsgPipeBeginCallback(SceUID threadID, SceUID prevCallbackId)
 		{
 			auto result = HLEKernel::WaitBeginCallback<MsgPipeWaitingThread>(threadID, prevCallbackId, waitTimer, ko->sendWaitingThreads, ko->pausedSendWaits, timeoutPtr != 0);
 			if (result == HLEKernel::WAIT_CB_SUCCESS)
-				DEBUG_LOG(Log::sceKernel, "sceKernelSendMsgPipeCB: Suspending wait for callback");
+				DEBUG_LOG(SCEKERNEL, "sceKernelSendMsgPipeCB: Suspending wait for callback");
 			else if (result == HLEKernel::WAIT_CB_BAD_WAIT_DATA)
-				ERROR_LOG_REPORT(Log::sceKernel, "sceKernelSendMsgPipeCB: wait not found to pause for callback");
+				ERROR_LOG_REPORT(SCEKERNEL, "sceKernelSendMsgPipeCB: wait not found to pause for callback");
 		}
 		else
-			WARN_LOG_REPORT(Log::sceKernel, "sceKernelSendMsgPipeCB: beginning callback with bad wait id?");
+			WARN_LOG_REPORT(SCEKERNEL, "sceKernelSendMsgPipeCB: beginning callback with bad wait id?");
 		break;
 
 	case MSGPIPE_WAIT_VALUE_RECV:
@@ -555,16 +551,16 @@ static void __KernelMsgPipeBeginCallback(SceUID threadID, SceUID prevCallbackId)
 		{
 			auto result = HLEKernel::WaitBeginCallback<MsgPipeWaitingThread>(threadID, prevCallbackId, waitTimer, ko->receiveWaitingThreads, ko->pausedReceiveWaits, timeoutPtr != 0);
 			if (result == HLEKernel::WAIT_CB_SUCCESS)
-				DEBUG_LOG(Log::sceKernel, "sceKernelReceiveMsgPipeCB: Suspending wait for callback");
+				DEBUG_LOG(SCEKERNEL, "sceKernelReceiveMsgPipeCB: Suspending wait for callback");
 			else if (result == HLEKernel::WAIT_CB_BAD_WAIT_DATA)
-				ERROR_LOG_REPORT(Log::sceKernel, "sceKernelReceiveMsgPipeCB: wait not found to pause for callback");
+				ERROR_LOG_REPORT(SCEKERNEL, "sceKernelReceiveMsgPipeCB: wait not found to pause for callback");
 		}
 		else
-			WARN_LOG_REPORT(Log::sceKernel, "sceKernelReceiveMsgPipeCB: beginning callback with bad wait id?");
+			WARN_LOG_REPORT(SCEKERNEL, "sceKernelReceiveMsgPipeCB: beginning callback with bad wait id?");
 		break;
 
 	default:
-		ERROR_LOG_REPORT(Log::sceKernel, "__KernelMsgPipeBeginCallback: Unexpected wait value");
+		ERROR_LOG_REPORT(SCEKERNEL, "__KernelMsgPipeBeginCallback: Unexpected wait value");
 	}
 }
 
@@ -618,7 +614,7 @@ static void __KernelMsgPipeEndCallback(SceUID threadID, SceUID prevCallbackId) {
 	MsgPipe *ko = uid == 0 ? NULL : kernelObjects.Get<MsgPipe>(uid, error);
 
 	if (ko == NULL) {
-		ERROR_LOG_REPORT(Log::sceKernel, "__KernelMsgPipeEndCallback: Invalid object");
+		ERROR_LOG_REPORT(SCEKERNEL, "__KernelMsgPipeEndCallback: Invalid object");
 		return;
 	}
 
@@ -628,7 +624,7 @@ static void __KernelMsgPipeEndCallback(SceUID threadID, SceUID prevCallbackId) {
 			MsgPipeWaitingThread dummy;
 			auto result = HLEKernel::WaitEndCallback<MsgPipe, WAITTYPE_MSGPIPE, MsgPipeWaitingThread>(threadID, prevCallbackId, waitTimer, __KernelCheckResumeMsgPipeSend, dummy, ko->sendWaitingThreads, ko->pausedSendWaits);
 			if (result == HLEKernel::WAIT_CB_RESUMED_WAIT) {
-				DEBUG_LOG(Log::sceKernel, "sceKernelSendMsgPipeCB: Resuming wait from callback");
+				DEBUG_LOG(SCEKERNEL, "sceKernelSendMsgPipeCB: Resuming wait from callback");
 			} else if (result == HLEKernel::WAIT_CB_TIMED_OUT) {
 				// It was re-added to the the waiting threads list, but it timed out.  Let's remove it.
 				ko->RemoveSendWaitingThread(threadID);
@@ -641,7 +637,7 @@ static void __KernelMsgPipeEndCallback(SceUID threadID, SceUID prevCallbackId) {
 			MsgPipeWaitingThread dummy;
 			auto result = HLEKernel::WaitEndCallback<MsgPipe, WAITTYPE_MSGPIPE, MsgPipeWaitingThread>(threadID, prevCallbackId, waitTimer, __KernelCheckResumeMsgPipeReceive, dummy, ko->receiveWaitingThreads, ko->pausedReceiveWaits);
 			if (result == HLEKernel::WAIT_CB_RESUMED_WAIT) {
-				DEBUG_LOG(Log::sceKernel, "sceKernelReceiveMsgPipeCB: Resuming wait from callback");
+				DEBUG_LOG(SCEKERNEL, "sceKernelReceiveMsgPipeCB: Resuming wait from callback");
 			} else if (result == HLEKernel::WAIT_CB_TIMED_OUT) {
 				// It was re-added to the the waiting threads list, but it timed out.  Let's remove it.
 				ko->RemoveReceiveWaitingThread(threadID);
@@ -650,7 +646,7 @@ static void __KernelMsgPipeEndCallback(SceUID threadID, SceUID prevCallbackId) {
 		break;
 
 	default:
-		ERROR_LOG_REPORT(Log::sceKernel, "__KernelMsgPipeEndCallback: Unexpected wait value");
+		ERROR_LOG_REPORT(SCEKERNEL, "__KernelMsgPipeEndCallback: Unexpected wait value");
 	}
 }
 
@@ -671,26 +667,41 @@ void __KernelMsgPipeDoState(PointerWrap &p)
 	CoreTiming::RestoreRegisterEvent(waitTimer, "MsgPipeTimeout", __KernelMsgPipeTimeout);
 }
 
-int sceKernelCreateMsgPipe(const char *name, int partition, u32 attr, u32 size, u32 optionsPtr) {
+int sceKernelCreateMsgPipe(const char *name, int partition, u32 attr, u32 size, u32 optionsPtr)
+{
 	if (!name)
-		return hleLogWarning(Log::sceKernel, SCE_KERNEL_ERROR_NO_MEMORY, "invalid name");
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateMsgPipe(): invalid name", SCE_KERNEL_ERROR_NO_MEMORY);
+		return SCE_KERNEL_ERROR_NO_MEMORY;
+	}
 	if (partition < 1 || partition > 9 || partition == 7)
-		return hleLogWarning(Log::sceKernel, SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT, "invalid partition %d", partition);
-
-	BlockAllocator *allocator = BlockAllocatorFromID(partition);
-	if (allocator == nullptr)
-		return hleLogWarning(Log::sceKernel, SCE_KERNEL_ERROR_ILLEGAL_PERM, "invalid partition %d", partition);
-
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateMsgPipe(): invalid partition %d", SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT, partition);
+		return SCE_KERNEL_ERROR_ILLEGAL_ARGUMENT;
+	}
+	// We only support user right now.
+	if (partition != 2 && partition != 6)
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateMsgPipe(): invalid partition %d", SCE_KERNEL_ERROR_ILLEGAL_PERM, partition);
+		return SCE_KERNEL_ERROR_ILLEGAL_PERM;
+	}
 	if ((attr & ~SCE_KERNEL_MPA_KNOWN) >= 0x100)
-		return hleLogWarning(Log::sceKernel, SCE_KERNEL_ERROR_ILLEGAL_ATTR, "invalid attr parameter: %08x", attr);
+	{
+		WARN_LOG_REPORT(SCEKERNEL, "%08x=sceKernelCreateEventFlag(%s): invalid attr parameter: %08x", SCE_KERNEL_ERROR_ILLEGAL_ATTR, name, attr);
+		return SCE_KERNEL_ERROR_ILLEGAL_ATTR;
+	}
 
 	u32 memBlockPtr = 0;
-	if (size != 0) {
+	if (size != 0)
+	{
 		// We ignore the upalign to 256.
 		u32 allocSize = size;
-		memBlockPtr = allocator->Alloc(allocSize, (attr & SCE_KERNEL_MPA_HIGHMEM) != 0, StringFromFormat("MsgPipe/%s", name).c_str());
+		memBlockPtr = userMemory.Alloc(allocSize, (attr & SCE_KERNEL_MPA_HIGHMEM) != 0, "MsgPipe");
 		if (memBlockPtr == (u32)-1)
-			return hleLogError(Log::sceKernel, SCE_KERNEL_ERROR_NO_MEMORY, "failed to allocate %i bytes for buffer", size);
+		{
+			ERROR_LOG(SCEKERNEL, "%08x=sceKernelCreateEventFlag(%s): Failed to allocate %i bytes for buffer", SCE_KERNEL_ERROR_NO_MEMORY, name, size);
+			return SCE_KERNEL_ERROR_NO_MEMORY;
+		}
 	}
 
 	MsgPipe *m = new MsgPipe();
@@ -707,16 +718,16 @@ int sceKernelCreateMsgPipe(const char *name, int partition, u32 attr, u32 size, 
 
 	m->buffer = memBlockPtr;
 	
-	DEBUG_LOG(Log::sceKernel, "%d=sceKernelCreateMsgPipe(%s, part=%d, attr=%08x, size=%d, opt=%08x)", id, name, partition, attr, size, optionsPtr);
+	DEBUG_LOG(SCEKERNEL, "%d=sceKernelCreateMsgPipe(%s, part=%d, attr=%08x, size=%d, opt=%08x)", id, name, partition, attr, size, optionsPtr);
 
 	if (optionsPtr != 0)
 	{
 		u32 optionsSize = Memory::Read_U32(optionsPtr);
 		if (optionsSize > 4)
-			WARN_LOG_REPORT(Log::sceKernel, "sceKernelCreateMsgPipe(%s) unsupported options parameter, size = %d", name, optionsSize);
+			WARN_LOG_REPORT(SCEKERNEL, "sceKernelCreateMsgPipe(%s) unsupported options parameter, size = %d", name, optionsSize);
 	}
 
-	return hleNoLog(id);
+	return id;
 }
 
 int sceKernelDeleteMsgPipe(SceUID uid)
@@ -725,8 +736,10 @@ int sceKernelDeleteMsgPipe(SceUID uid)
 
 	u32 error;
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
-	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+	if (!m)
+	{
+		ERROR_LOG(SCEKERNEL, "sceKernelDeleteMsgPipe(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
 	hleEatCycles(3100);
@@ -738,7 +751,7 @@ int sceKernelDeleteMsgPipe(SceUID uid)
 	for (size_t i = 0; i < m->receiveWaitingThreads.size(); i++)
 		m->receiveWaitingThreads[i].Cancel(uid, SCE_KERNEL_ERROR_WAIT_DELETE);
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelDeleteMsgPipe(%i)", uid);
+	DEBUG_LOG(SCEKERNEL, "sceKernelDeleteMsgPipe(%i)", uid);
 	return kernelObjects.Destroy<MsgPipe>(uid);
 }
 
@@ -746,19 +759,19 @@ static int __KernelValidateSendMsgPipe(SceUID uid, u32 sendBufAddr, u32 sendSize
 {
 	if (sendSize & 0x80000000)
 	{
-		ERROR_LOG(Log::sceKernel, "__KernelSendMsgPipe(%d): illegal size %d", uid, sendSize);
+		ERROR_LOG(SCEKERNEL, "__KernelSendMsgPipe(%d): illegal size %d", uid, sendSize);
 		return SCE_KERNEL_ERROR_ILLEGAL_ADDR;
 	}
 
 	if (sendSize != 0 && !Memory::IsValidAddress(sendBufAddr))
 	{
-		ERROR_LOG(Log::sceKernel, "__KernelSendMsgPipe(%d): bad buffer address %08x (should crash?)", uid, sendBufAddr);
+		ERROR_LOG(SCEKERNEL, "__KernelSendMsgPipe(%d): bad buffer address %08x (should crash?)", uid, sendBufAddr);
 		return SCE_KERNEL_ERROR_ILLEGAL_ADDR;
 	}
 
 	if (waitMode != SCE_KERNEL_MPW_ASAP && waitMode != SCE_KERNEL_MPW_FULL)
 	{
-		ERROR_LOG(Log::sceKernel, "__KernelSendMsgPipe(%d): invalid wait mode %d", uid, waitMode);
+		ERROR_LOG(SCEKERNEL, "__KernelSendMsgPipe(%d): invalid wait mode %d", uid, waitMode);
 		return SCE_KERNEL_ERROR_ILLEGAL_MODE;
 	}
 
@@ -766,12 +779,12 @@ static int __KernelValidateSendMsgPipe(SceUID uid, u32 sendBufAddr, u32 sendSize
 	{
 		if (!__KernelIsDispatchEnabled())
 		{
-			WARN_LOG(Log::sceKernel, "__KernelSendMsgPipe(%d): dispatch disabled", uid);
+			WARN_LOG(SCEKERNEL, "__KernelSendMsgPipe(%d): dispatch disabled", uid);
 			return SCE_KERNEL_ERROR_CAN_NOT_WAIT;
 		}
 		if (__IsInInterrupt())
 		{
-			WARN_LOG(Log::sceKernel, "__KernelSendMsgPipe(%d): in interrupt", uid);
+			WARN_LOG(SCEKERNEL, "__KernelSendMsgPipe(%d): in interrupt", uid);
 			return SCE_KERNEL_ERROR_ILLEGAL_CONTEXT;
 		}
 	}
@@ -805,66 +818,69 @@ int sceKernelSendMsgPipe(SceUID uid, u32 sendBufAddr, u32 sendSize, u32 waitMode
 {
 	u32 error = __KernelValidateSendMsgPipe(uid, sendBufAddr, sendSize, waitMode, resultAddr);
 	if (error != 0) {
-		return hleLogError(Log::sceKernel, error);
+		return error;
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+		ERROR_LOG(SCEKERNEL, "sceKernelSendMsgPipe(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
-	int result = __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, false, false);
-	return hleLogDebug(Log::sceKernel, result);
+	DEBUG_LOG(SCEKERNEL, "sceKernelSendMsgPipe(id=%i, addr=%08x, size=%i, mode=%i, result=%08x, timeout=%08x)", uid, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr);
+	return __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, false, false);
 }
 
 int sceKernelSendMsgPipeCB(SceUID uid, u32 sendBufAddr, u32 sendSize, u32 waitMode, u32 resultAddr, u32 timeoutPtr)
 {
 	u32 error = __KernelValidateSendMsgPipe(uid, sendBufAddr, sendSize, waitMode, resultAddr);
 	if (error != 0) {
-		return hleLogError(Log::sceKernel, error);
+		return error;
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+		ERROR_LOG(SCEKERNEL, "sceKernelSendMsgPipeCB(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
+	DEBUG_LOG(SCEKERNEL, "sceKernelSendMsgPipeCB(id=%i, addr=%08x, size=%i, mode=%i, result=%08x, timeout=%08x)", uid, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr);
 	// TODO: Verify callback behavior.
 	hleCheckCurrentCallbacks();
-	int result = __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, true, false);
-	return hleLogDebug(Log::sceKernel, result);
+	return __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, true, false);
 }
 
 int sceKernelTrySendMsgPipe(SceUID uid, u32 sendBufAddr, u32 sendSize, u32 waitMode, u32 resultAddr)
 {
 	u32 error = __KernelValidateSendMsgPipe(uid, sendBufAddr, sendSize, waitMode, resultAddr, true);
 	if (error != 0) {
-		return hleLogError(Log::sceKernel, error);
+		return error;
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+		ERROR_LOG(SCEKERNEL, "sceKernelTrySendMsgPipe(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
-	int result = __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, 0, false, true);
-	return hleLogDebug(Log::sceKernel, result);
+	DEBUG_LOG(SCEKERNEL, "sceKernelTrySendMsgPipe(id=%i, addr=%08x, size=%i, mode=%i, result=%08x)", uid, sendBufAddr, sendSize, waitMode, resultAddr);
+	return __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, 0, false, true);
 }
 
 static int __KernelValidateReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 receiveSize, int waitMode, u32 resultAddr, bool tryMode = false)
 {
 	if (receiveSize & 0x80000000)
 	{
-		ERROR_LOG(Log::sceKernel, "__KernelReceiveMsgPipe(%d): illegal size %d", uid, receiveSize);
+		ERROR_LOG(SCEKERNEL, "__KernelReceiveMsgPipe(%d): illegal size %d", uid, receiveSize);
 		return SCE_KERNEL_ERROR_ILLEGAL_ADDR;
 	}
 
 	if (receiveSize != 0 && !Memory::IsValidAddress(receiveBufAddr))
 	{
-		ERROR_LOG(Log::sceKernel, "__KernelReceiveMsgPipe(%d): bad buffer address %08x (should crash?)", uid, receiveBufAddr);
+		ERROR_LOG(SCEKERNEL, "__KernelReceiveMsgPipe(%d): bad buffer address %08x (should crash?)", uid, receiveBufAddr);
 		return SCE_KERNEL_ERROR_ILLEGAL_ADDR;
 	}
 
 	if (waitMode != SCE_KERNEL_MPW_ASAP && waitMode != SCE_KERNEL_MPW_FULL)
 	{
-		ERROR_LOG(Log::sceKernel, "__KernelReceiveMsgPipe(%d): invalid wait mode %d", uid, waitMode);
+		ERROR_LOG(SCEKERNEL, "__KernelReceiveMsgPipe(%d): invalid wait mode %d", uid, waitMode);
 		return SCE_KERNEL_ERROR_ILLEGAL_MODE;
 	}
 
@@ -872,12 +888,12 @@ static int __KernelValidateReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 re
 	{
 		if (!__KernelIsDispatchEnabled())
 		{
-			WARN_LOG(Log::sceKernel, "__KernelReceiveMsgPipe(%d): dispatch disabled", uid);
+			WARN_LOG(SCEKERNEL, "__KernelReceiveMsgPipe(%d): dispatch disabled", uid);
 			return SCE_KERNEL_ERROR_CAN_NOT_WAIT;
 		}
 		if (__IsInInterrupt())
 		{
-			WARN_LOG(Log::sceKernel, "__KernelReceiveMsgPipe(%d): in interrupt", uid);
+			WARN_LOG(SCEKERNEL, "__KernelReceiveMsgPipe(%d): in interrupt", uid);
 			return SCE_KERNEL_ERROR_ILLEGAL_CONTEXT;
 		}
 	}
@@ -909,47 +925,50 @@ int sceKernelReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 receiveSize, u32
 {
 	u32 error = __KernelValidateReceiveMsgPipe(uid, receiveBufAddr, receiveSize, waitMode, resultAddr);
 	if (error != 0) {
-		return hleLogError(Log::sceKernel, error);
+		return error;
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+		ERROR_LOG(SCEKERNEL, "sceKernelReceiveMsgPipe(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
-	int result = __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, false, false);
-	return hleLogDebug(Log::sceKernel, result);
+	DEBUG_LOG(SCEKERNEL, "sceKernelReceiveMsgPipe(%i, %08x, %i, %i, %08x, %08x)", uid, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr);
+	return __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, false, false);
 }
 
 int sceKernelReceiveMsgPipeCB(SceUID uid, u32 receiveBufAddr, u32 receiveSize, u32 waitMode, u32 resultAddr, u32 timeoutPtr)
 {
 	u32 error = __KernelValidateReceiveMsgPipe(uid, receiveBufAddr, receiveSize, waitMode, resultAddr);
 	if (error != 0) {
-		return hleLogError(Log::sceKernel, error);
+		return error;
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+		ERROR_LOG(SCEKERNEL, "sceKernelReceiveMsgPipeCB(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
+	DEBUG_LOG(SCEKERNEL, "sceKernelReceiveMsgPipeCB(%i, %08x, %i, %i, %08x, %08x)", uid, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr);
 	// TODO: Verify callback behavior.
 	hleCheckCurrentCallbacks();
-	int result = __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, true, false);
-	return hleLogDebug(Log::sceKernel, result);
+	return __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, true, false);
 }
 
 int sceKernelTryReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 receiveSize, u32 waitMode, u32 resultAddr)
 {
 	u32 error = __KernelValidateReceiveMsgPipe(uid, receiveBufAddr, receiveSize, waitMode, resultAddr, true);
 	if (error != 0) {
-		return hleLogError(Log::sceKernel, error);
+		return error;
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+		ERROR_LOG(SCEKERNEL, "sceKernelTryReceiveMsgPipe(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
-	int result = __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, 0, false, true);
-	return hleLogDebug(Log::sceKernel, result);
+	DEBUG_LOG(SCEKERNEL, "sceKernelTryReceiveMsgPipe(%i, %08x, %i, %i, %08x)", uid, receiveBufAddr, receiveSize, waitMode, resultAddr);
+	return __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, 0, false, true);
 }
 
 int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThreadsAddr)
@@ -958,8 +977,10 @@ int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThr
 
 	u32 error;
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
-	if (!m) {
-		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
+	if (!m)
+	{
+		ERROR_LOG(SCEKERNEL, "sceKernelCancelMsgPipe(%i) - ERROR %08x", uid, error);
+		return error;
 	}
 
 	hleEatCycles(1100);
@@ -981,17 +1002,23 @@ int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThr
 	// And now the entire buffer is free.
 	m->nmp.freeSize = m->nmp.bufSize;
 
-	return hleLogDebug(Log::sceKernel, 0);
+	DEBUG_LOG(SCEKERNEL, "sceKernelCancelMsgPipe(%i, %i, %i)", uid, numSendThreadsAddr, numReceiveThreadsAddr);
+	return 0;
 }
 
-int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr) {
+int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr)
+{
 	u32 error;
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
-	if (m) {
-		auto status = PSPPointer<NativeMsgPipe>::Create(statusPtr);
-		if (!status.IsValid()) {
-			return hleLogError(Log::sceKernel, -1, "invalid address");
+	if (m)
+	{
+		if (!Memory::IsValidAddress(statusPtr))
+		{
+			ERROR_LOG(SCEKERNEL, "sceKernelReferMsgPipeStatus(%i, %08x): invalid address", uid, statusPtr);
+			return -1;
 		}
+
+		DEBUG_LOG(SCEKERNEL, "sceKernelReferMsgPipeStatus(%i, %08x)", uid, statusPtr);
 
 		// Clean up any that have timed out.
 		m->SortReceiveThreads();
@@ -999,12 +1026,13 @@ int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr) {
 
 		m->nmp.numSendWaitThreads = (int) m->sendWaitingThreads.size();
 		m->nmp.numReceiveWaitThreads = (int) m->receiveWaitingThreads.size();
-		if (status->size != 0) {
-			*status = m->nmp;
-			status.NotifyWrite("MsgPipeStatus");
-		}
-		return hleLogDebug(Log::sceKernel, 0);
-	} else {
-		return hleLogError(Log::sceKernel, error, "bad message pipe");
+		if (Memory::Read_U32(statusPtr) != 0)
+			Memory::WriteStruct(statusPtr, &m->nmp);
+		return 0;
+	}
+	else
+	{
+		DEBUG_LOG(SCEKERNEL, "sceKernelReferMsgPipeStatus(%i, %08x): bad message pipe", uid, statusPtr);
+		return error;
 	}
 }

@@ -29,7 +29,14 @@ class PointerWrap;
 #define SCE_UTILITY_DIALOG_RESULT_CANCEL       1
 #define SCE_UTILITY_DIALOG_RESULT_ABORT        2
 
-struct pspUtilityDialogCommon {
+const int SCE_ERROR_UTILITY_INVALID_STATUS      = 0x80110001;
+const int SCE_ERROR_UTILITY_INVALID_PARAM_SIZE  = 0x80110004;
+const int SCE_ERROR_UTILITY_WRONG_TYPE          = 0x80110005;
+const int ERROR_UTILITY_INVALID_ADHOC_CHANNEL   = 0x80110104;
+const int ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID = 0x80110103;
+
+struct pspUtilityDialogCommon
+{
 	u32_le size;            /** Size of the structure */
 	s32_le language;        /** Language */
 	s32_le buttonSwap;      /** Set to 1 for X/O button swap */
@@ -41,20 +48,20 @@ struct pspUtilityDialogCommon {
 	s32_le reserved[4];     /** Set to 0 */
 };
 
-class PSPDialog {
+
+class PSPDialog
+{
 public:
-	PSPDialog(UtilityDialogType type) : dialogType_(type) {}
-	virtual ~PSPDialog() {}
+	PSPDialog(UtilityDialogType type);
+	virtual ~PSPDialog();
 
 	virtual int Update(int animSpeed) = 0;
 	virtual int Shutdown(bool force = false);
 	virtual void DoState(PointerWrap &p);
-	virtual pspUtilityDialogCommon *GetCommonParam() {
-		// This is returned properly by the derived classes (or should be...).
-		return nullptr;
-	}
+	virtual pspUtilityDialogCommon *GetCommonParam();
 
-	enum DialogStatus {
+	enum DialogStatus
+	{
 		SCE_UTILITY_STATUS_NONE       = 0,
 		SCE_UTILITY_STATUS_INITIALIZE = 1,
 		SCE_UTILITY_STATUS_RUNNING    = 2,
@@ -63,7 +70,8 @@ public:
 		SCE_UTILITY_STATUS_SCREENSHOT_UNKNOWN = 5,
 	};
 
-	enum DialogStockButton {
+	enum DialogStockButton
+	{
 		DS_BUTTON_NONE   = 0x00,
 		DS_BUTTON_OK     = 0x01,
 		DS_BUTTON_CANCEL = 0x02,
@@ -81,16 +89,13 @@ public:
 	int FinishShutdown();
 
 protected:
-	void InitCommon();
-	void UpdateCommon();
 	PPGeStyle FadedStyle(PPGeAlign align, float scale);
 	PPGeImageStyle FadedImageStyle();
 	void UpdateButtons();
 	bool IsButtonPressed(int checkButton);
 	bool IsButtonHeld(int checkButton, int &framesHeld, int framesHeldThreshold = 30, int framesHeldRepeatRate = 10);
 	// The caption override is assumed to have a size of 64 bytes.
-	void DisplayButtons(int flags, std::string_view caption = "");
-	void DisplayMessage2(std::string_view text1, std::string_view text2a = "", std::string_view text2b = "", std::string_view text3a = "", std::string_view text3b = "", bool hasYesNo = false, bool hasOK = false);
+	void DisplayButtons(int flags, const char *caption = NULL);
 	void ChangeStatus(DialogStatus newStatus, int delayUs);
 	void ChangeStatusInit(int delayUs);
 	void ChangeStatusShutdown(int delayUs);
@@ -101,13 +106,10 @@ protected:
 	// TODO: Remove this once all dialogs are updated.
 	virtual bool UseAutoStatus() = 0;
 
-	static int GetConfirmButton();
-	static int GetCancelButton();
-
 	void StartFade(bool fadeIn_);
 	void UpdateFade(int animSpeed);
 	virtual void FinishFadeOut();
-	u32 CalcFadedColor(u32 inColor) const;
+	u32 CalcFadedColor(u32 inColor);
 
 	DialogStatus pendingStatus = SCE_UTILITY_STATUS_NONE;
 	u64 pendingStatusTicks = 0;
@@ -122,20 +124,11 @@ protected:
 
 	ImageID okButtonImg;
 	ImageID cancelButtonImg;
-	int okButtonFlag = 0;
-	int cancelButtonFlag = 0;
-
-	// DisplayMessage2 variables
-	int yesnoChoice = 0;
-	float scrollPos_ = 0.0f;
-	int framesUpHeld_ = 0;
-	int framesDownHeld_ = 0;
+	int okButtonFlag;
+	int cancelButtonFlag;
 
 private:
 	DialogStatus status = SCE_UTILITY_STATUS_NONE;
-	UtilityDialogType dialogType_ = UtilityDialogType::NONE;
+	UtilityDialogType dialogType_;
 	bool volatileLocked_ = false;
 };
-
-const char *UtilityDialogTypeToString(UtilityDialogType type);
-const char *UtilityDialogStatusToString(PSPDialog::DialogStatus status);

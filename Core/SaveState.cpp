@@ -19,16 +19,12 @@
 #include <vector>
 #include <thread>
 #include <mutex>
-#include <string>
-#include <set>
 
 #include "Common/Data/Text/I18n.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/Data/Text/Parsers.h"
-#include "Common/System/System.h"
 
 #include "Common/File/FileUtil.h"
-#include "Common/File/DirListing.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/StringUtils.h"
@@ -38,21 +34,21 @@
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
+#include "Core/Host.h"
 #include "Core/Screenshot.h"
 #include "Core/System.h"
-#include "Core/SaveStateRewind.h"
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/HLE/HLE.h"
-#include "Core/HLE/sceNet.h"
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/HLE/sceDisplay.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceUtility.h"
 #include "Core/MemMap.h"
+#include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/JitCommon/JitBlockCache.h"
-#include "Core/RetroAchievements.h"
 #include "HW/MemoryStick.h"
+#include "GPU/GPUState.h"
 
 #ifndef MOBILE_DEVICE
 #include "Core/AVIDump.h"
@@ -61,66 +57,44 @@
 
 // Slot number is visual only, -2 will display special message
 constexpr int LOAD_UNDO_SLOT = -2;
-constexpr int SCREENSHOT_FAILURE_RETRIES = 6;
 
-static const char * const STATE_EXTENSION = "ppst";
-static const char * const UNDO_STATE_EXTENSION = "undo.ppst";
-static const char * const UNDO_SCREENSHOT_EXTENSION = "undo.jpg";
+namespace SaveState
+{
+	struct SaveStart
+	{
+		void DoState(PointerWrap &p);
+	};
 
-static const char * const LOAD_UNDO_NAME = "load_undo.ppst";
+	enum OperationType
+	{
+		SAVESTATE_SAVE,
+		SAVESTATE_LOAD,
+		SAVESTATE_VERIFY,
+		SAVESTATE_REWIND,
+		SAVESTATE_SAVE_SCREENSHOT,
+	};
 
-namespace SaveState {
-
-// Used for "confirm exit if you haven't saved in a while"
-double g_lastSaveTime = -1.0;
-
-static bool needsProcess = false;
-static bool needsRestart = false;
-static std::mutex mutex;
-static int screenshotFailures = 0;
-static bool hasLoadedState = false;
-static const int STALE_STATE_USES = 2;
-// 4 hours of total gameplay since the virtual PSP started the game.
-static const u64 STALE_STATE_TIME = 4 * 3600 * 1000000ULL;
-static int saveStateGeneration = 0;
-static int saveDataGeneration = 0;
-static int lastSaveDataGeneration = 0;
-static std::string saveStateInitialGitVersion = "";
-static StateRingbuffer rewindStates;
-
-// Updated by Rescan. This is to avoid calling Exists a lot of times, which could be slow
-// on some Android devices when we allow many save states.
-static double g_lastRescan = 0.0;
-static std::map<std::string, uint64_t, std::less<>> g_files;  // the value is the mod-time.
-
-struct SaveStart {
-	void DoState(PointerWrap &p);
-};
-
-enum class OperationType {
-	Save,
-	Load,
-	Verify,
-	Rewind,
-	SaveScreenshot,
-};
-
-	struct Operation {
+	struct Operation
+	{
 		// The slot number is for visual purposes only. Set to -1 for operations where we don't display a message for example.
-		Operation(OperationType t, const Path &f, int slot_, Callback cb)
-			: type(t), filename(f), callback(cb), slot(slot_) {}
+		Operation(OperationType t, const Path &f, int slot_, Callback cb, void *cbUserData_)
+			: type(t), filename(f), callback(cb), slot(slot_), cbUserData(cbUserData_)
+		{
+		}
 
 		OperationType type;
 		Path filename;
 		Callback callback;
 		int slot;
+		void *cbUserData;
 	};
-
-	static std::vector<Operation> pending;
 
 	CChunkFileReader::Error SaveToRam(std::vector<u8> &data) {
 		SaveStart state;
-		return CChunkFileReader::MeasureAndSavePtr(state, &data);
+		size_t sz = CChunkFileReader::MeasurePtr(state);
+		if (data.size() < sz)
+			data.resize(sz);
+		return CChunkFileReader::SavePtr(&data[0], state, sz);
 	}
 
 	CChunkFileReader::Error LoadFromRam(std::vector<u8> &data, std::string *errorString) {
@@ -128,13 +102,181 @@ enum class OperationType {
 		return CChunkFileReader::LoadPtr(&data[0], state, errorString);
 	}
 
-	// TODO: Should this be configurable?
-	// Should only fail if the game hasn't created a framebuffer yet. Some games play video without a framebuffer,
-	// we should probably just read back memory then instead (GTA for example). But this is a really unimportant edge case,
-	// when in-game it's just not an issue.
+	struct StateRingbuffer
+	{
+		StateRingbuffer(int size) : first_(0), next_(0), size_(size), base_(-1)
+		{
+			states_.resize(size);
+			baseMapping_.resize(size);
+		}
 
-	void SaveStart::DoState(PointerWrap &p) {
-		auto s = p.Section("SaveStart", 1, 3);
+		CChunkFileReader::Error Save()
+		{
+			std::lock_guard<std::mutex> guard(lock_);
+
+			int n = next_++ % size_;
+			if ((next_ % size_) == first_)
+				++first_;
+
+			static std::vector<u8> buffer;
+			std::vector<u8> *compressBuffer = &buffer;
+			CChunkFileReader::Error err;
+
+			if (base_ == -1 || ++baseUsage_ > BASE_USAGE_INTERVAL)
+			{
+				base_ = (base_ + 1) % ARRAY_SIZE(bases_);
+				baseUsage_ = 0;
+				err = SaveToRam(bases_[base_]);
+				// Let's not bother savestating twice.
+				compressBuffer = &bases_[base_];
+			}
+			else
+				err = SaveToRam(buffer);
+
+			if (err == CChunkFileReader::ERROR_NONE)
+				ScheduleCompress(&states_[n], compressBuffer, &bases_[base_]);
+			else
+				states_[n].clear();
+			baseMapping_[n] = base_;
+			return err;
+		}
+
+		CChunkFileReader::Error Restore(std::string *errorString)
+		{
+			std::lock_guard<std::mutex> guard(lock_);
+
+			// No valid states left.
+			if (Empty())
+				return CChunkFileReader::ERROR_BAD_FILE;
+
+			int n = (--next_ + size_) % size_;
+			if (states_[n].empty())
+				return CChunkFileReader::ERROR_BAD_FILE;
+
+			static std::vector<u8> buffer;
+			LockedDecompress(buffer, states_[n], bases_[baseMapping_[n]]);
+			return LoadFromRam(buffer, errorString);
+		}
+
+		void ScheduleCompress(std::vector<u8> *result, const std::vector<u8> *state, const std::vector<u8> *base)
+		{
+			if (compressThread_.joinable())
+				compressThread_.join();
+			compressThread_ = std::thread([=]{
+				SetCurrentThreadName("SaveStateCompress");
+				Compress(*result, *state, *base);
+			});
+		}
+
+		void Compress(std::vector<u8> &result, const std::vector<u8> &state, const std::vector<u8> &base)
+		{
+			std::lock_guard<std::mutex> guard(lock_);
+			// Bail if we were cleared before locking.
+			if (first_ == 0 && next_ == 0)
+				return;
+
+			result.clear();
+			for (size_t i = 0; i < state.size(); i += BLOCK_SIZE)
+			{
+				int blockSize = std::min(BLOCK_SIZE, (int)(state.size() - i));
+				if (i + blockSize > base.size() || memcmp(&state[i], &base[i], blockSize) != 0)
+				{
+					result.push_back(1);
+					result.insert(result.end(), state.begin() + i, state.begin() +i + blockSize);
+				}
+				else
+					result.push_back(0);
+			}
+		}
+
+		void LockedDecompress(std::vector<u8> &result, const std::vector<u8> &compressed, const std::vector<u8> &base)
+		{
+			result.clear();
+			result.reserve(base.size());
+			auto basePos = base.begin();
+			for (size_t i = 0; i < compressed.size(); )
+			{
+				if (compressed[i] == 0)
+				{
+					++i;
+					int blockSize = std::min(BLOCK_SIZE, (int)(base.size() - result.size()));
+					result.insert(result.end(), basePos, basePos + blockSize);
+					basePos += blockSize;
+				}
+				else
+				{
+					++i;
+					int blockSize = std::min(BLOCK_SIZE, (int)(compressed.size() - i));
+					result.insert(result.end(), compressed.begin() + i, compressed.begin() + i + blockSize);
+					i += blockSize;
+					basePos += blockSize;
+				}
+			}
+		}
+
+		void Clear()
+		{
+			if (compressThread_.joinable())
+				compressThread_.join();
+
+			// This lock is mainly for shutdown.
+			std::lock_guard<std::mutex> guard(lock_);
+			first_ = 0;
+			next_ = 0;
+		}
+
+		bool Empty() const
+		{
+			return next_ == first_;
+		}
+
+		static const int BLOCK_SIZE;
+		// TODO: Instead, based on size of compressed state?
+		static const int BASE_USAGE_INTERVAL;
+
+		typedef std::vector<u8> StateBuffer;
+
+		int first_;
+		int next_;
+		int size_;
+
+		std::vector<StateBuffer> states_;
+		StateBuffer bases_[2];
+		std::vector<int> baseMapping_;
+		std::mutex lock_;
+		std::thread compressThread_;
+
+		int base_;
+		int baseUsage_;
+	};
+
+	static bool needsProcess = false;
+	static bool needsRestart = false;
+	static std::vector<Operation> pending;
+	static std::mutex mutex;
+	static int screenshotFailures = 0;
+	static bool hasLoadedState = false;
+	static const int STALE_STATE_USES = 2;
+	// 4 hours of total gameplay since the virtual PSP started the game.
+	static const u64 STALE_STATE_TIME = 4 * 3600 * 1000000ULL;
+	static int saveStateGeneration = 0;
+	static int saveDataGeneration = 0;
+	static int lastSaveDataGeneration = 0;
+	static std::string saveStateInitialGitVersion = "";
+
+	// TODO: Should this be configurable?
+	static const int REWIND_NUM_STATES = 20;
+	static const int SCREENSHOT_FAILURE_RETRIES = 15;
+	static StateRingbuffer rewindStates(REWIND_NUM_STATES);
+	// TODO: Any reason for this to be configurable?
+	const static float rewindMaxWallFrequency = 1.0f;
+	static double rewindLastTime = 0.0f;
+	const int StateRingbuffer::BLOCK_SIZE = 8192;
+	const int StateRingbuffer::BASE_USAGE_INTERVAL = 15;
+
+	void SaveStart::DoState(PointerWrap &p)
+	{
+		auto s = p.Section("SaveStart", 1, 2);
 		if (!s)
 			return;
 
@@ -156,13 +298,10 @@ enum class OperationType {
 			saveDataGeneration = 0;
 		}
 
-		// Gotta do CoreTiming before HLE, but from v3 we've moved it after the memory stuff.
-		if (s <= 2) {
-			CoreTiming::DoState(p);
-		}
+		// Gotta do CoreTiming first since we'll restore into it.
+		CoreTiming::DoState(p);
 
 		// Memory is a bit tricky when jit is enabled, since there's emuhacks in it.
-		// These must be saved before copying out memory and restored after.
 		auto savedReplacements = SaveAndClearReplacements();
 		if (MIPSComp::jit && p.mode == p.MODE_WRITE) {
 			std::lock_guard<std::recursive_mutex> guard(MIPSComp::jitLock);
@@ -177,88 +316,60 @@ enum class OperationType {
 		} else {
 			Memory::DoState(p);
 		}
-
-		if (s >= 3) {
-			CoreTiming::DoState(p);
-		}
-
-		// Don't bother restoring if reading, we'll deal with that in KernelModuleDoState.
-		// In theory, different functions might have been runtime loaded in the state.
-		if (p.mode != p.MODE_READ) {
-			RestoreSavedReplacements(savedReplacements);
-		}
+		RestoreSavedReplacements(savedReplacements);
 
 		MemoryStick_DoState(p);
 		currentMIPS->DoState(p);
 		HLEDoState(p);
 		__KernelDoState(p);
-		Achievements::DoState(p);
 		// Kernel object destructors might close open files, so do the filesystem last.
 		pspFileSystem.DoState(p);
 	}
 
-	void Enqueue(const SaveState::Operation &op) {
-		if (!NetworkAllowSaveState()) {
-			return;
-		}
-		if (Achievements::HardcoreModeActive()) {
-			if (g_Config.bAchievementsSaveStateInHardcoreMode && ((op.type == SaveState::OperationType::Save) || (op.type == OperationType::SaveScreenshot))) {
-				// We allow saving in hardcore mode if this setting is on.
-			} else {
-				// Operation not allowed
-				return;
-			}
-		}
-
+	void Enqueue(SaveState::Operation op)
+	{
 		std::lock_guard<std::mutex> guard(mutex);
 		pending.push_back(op);
 
 		// Don't actually run it until next frame.
 		// It's possible there might be a duplicate but it won't hurt us.
 		needsProcess = true;
+		Core_UpdateSingleStep();
 	}
 
-	void Load(const Path &filename, int slot, Callback callback) {
-		if (!NetworkAllowSaveState()) {
-			return;
-		}
-
-		rewindStates.NotifyState();
+	void Load(const Path &filename, int slot, Callback callback, void *cbUserData)
+	{
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
-			Core_Break(BreakReason::SavestateLoad, 0);
-		Enqueue(Operation(OperationType::Load, filename, slot, callback));
+			Core_EnableStepping(true, "savestate.load", 0);
+		Enqueue(Operation(SAVESTATE_LOAD, filename, slot, callback, cbUserData));
 	}
 
-	void Save(const Path &filename, int slot, Callback callback) {
-		if (!NetworkAllowSaveState()) {
-			return;
-		}
-
-		rewindStates.NotifyState();
+	void Save(const Path &filename, int slot, Callback callback, void *cbUserData)
+	{
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
-			Core_Break(BreakReason::SavestateSave, 0);
-		Enqueue(Operation(OperationType::Save, filename, slot, callback));
+			Core_EnableStepping(true, "savestate.save", 0);
+		Enqueue(Operation(SAVESTATE_SAVE, filename, slot, callback, cbUserData));
 	}
 
-	void Verify(Callback callback) {
-		Enqueue(Operation(OperationType::Verify, Path(), -1, callback));
+	void Verify(Callback callback, void *cbUserData)
+	{
+		Enqueue(Operation(SAVESTATE_VERIFY, Path(), -1, callback, cbUserData));
 	}
 
-	void Rewind(Callback callback) {
-		if (g_netInited) {
-			return;
-		}
+	void Rewind(Callback callback, void *cbUserData)
+	{
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
-			Core_Break(BreakReason::SavestateRewind, 0);
-		Enqueue(Operation(OperationType::Rewind, Path(), -1, callback));
+			Core_EnableStepping(true, "savestate.rewind", 0);
+		Enqueue(Operation(SAVESTATE_REWIND, Path(), -1, callback, cbUserData));
 	}
 
-	static void SaveScreenshot(const Path &filename) {
-		screenshotFailures = 0;
-		Enqueue(Operation(OperationType::SaveScreenshot, filename, -1, nullptr));
+	void SaveScreenshot(const Path &filename, Callback callback, void *cbUserData)
+	{
+		Enqueue(Operation(SAVESTATE_SAVE_SCREENSHOT, filename, -1, callback, cbUserData));
 	}
 
-	bool CanRewind() {
+	bool CanRewind()
+	{
 		return !rewindStates.Empty();
 	}
 
@@ -297,9 +408,9 @@ enum class OperationType {
 			return StringFromFormat("%s (%c)", title.c_str(), slotChar);
 		}
 		if (detectSlot(UNDO_STATE_EXTENSION)) {
-			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			auto sy = GetI18NCategory("System");
 			// Allow the number to be positioned where it makes sense.
-			std::string undo(sy->T("undo %c"));
+			std::string undo = sy->T("undo %c");
 			return title + " (" + StringFromFormat(undo.c_str(), slotChar) + ")";
 		}
 
@@ -318,54 +429,41 @@ enum class OperationType {
 		}
 
 		// The file can't be loaded - let's note that.
-		auto sy = GetI18NCategory(I18NCat::SYSTEM);
-		return filename.GetFilename() + " " + std::string(sy->T("(broken)"));
+		auto sy = GetI18NCategory("System");
+		return filename.GetFilename() + " " + sy->T("(broken)");
 	}
 
-	// TODO: gameFilename is ignored!
-	// This means that this must always be called in-game, otherwise it will not work!
-	//
-	// This particular ID string generation is specific for save states.
-	static std::string GenerateFullDiscId(const ParamSFOData &paramSFO) {
-		std::string discId = paramSFO.GetValueString("DISC_ID");
-		std::string discVer = paramSFO.GetValueString("DISC_VERSION");
+	std::string GenerateFullDiscId(const Path &gameFilename) {
+		std::string discId = g_paramSFO.GetValueString("DISC_ID");
+		std::string discVer = g_paramSFO.GetValueString("DISC_VERSION");
 		if (discId.empty()) {
-			// Should never happen.
-			discId = g_paramSFO.GenerateFakeID(Path());
+			discId = g_paramSFO.GenerateFakeID();
 			discVer = "1.00";
 		}
 		return StringFromFormat("%s_%s", discId.c_str(), discVer.c_str());
 	}
 
-	std::string GetGamePrefix(const ParamSFOData &paramSFO) {
-		return GenerateFullDiscId(paramSFO);
-	}
-
-	// The prefix is always based on GenerateFullDiscId. So we can find these by scanning, too.
-	std::string GenerateSaveSlotFilename(std::string_view gamePrefix, int slot, const char *extension) {
-		return StringFromFormat("%.*s_%d.%s", STR_VIEW(gamePrefix), slot, extension);
-	}
-
-	Path GenerateSaveSlotPath(std::string_view gamePrefix, int slot, const char *extension) {
-		std::string filename = GenerateSaveSlotFilename(gamePrefix, slot, extension);
+	Path GenerateSaveSlotFilename(const Path &gameFilename, int slot, const char *extension)
+	{
+		std::string filename = StringFromFormat("%s_%d.%s", GenerateFullDiscId(gameFilename).c_str(), slot, extension);
 		return GetSysDirectory(DIRECTORY_SAVESTATE) / filename;
 	}
 
-	int GetCurrentSlot() {
+	int GetCurrentSlot()
+	{
 		return g_Config.iCurrentStateSlot;
 	}
 
-	void PrevSlot() {
-		g_Config.iCurrentStateSlot = (g_Config.iCurrentStateSlot - 1 + g_Config.iSaveStateSlotCount) % g_Config.iSaveStateSlotCount;
-	}
-
-	void NextSlot() {
-		g_Config.iCurrentStateSlot = (g_Config.iCurrentStateSlot + 1) % g_Config.iSaveStateSlotCount;
+	void NextSlot()
+	{
+		g_Config.iCurrentStateSlot = (g_Config.iCurrentStateSlot + 1) % NUM_SLOTS;
 	}
 
 	static void DeleteIfExists(const Path &fn) {
 		// Just avoiding error messages.
-		File::Delete(fn, true);
+		if (File::Exists(fn)) {
+			File::Delete(fn);
+		}
 	}
 
 	static void RenameIfExists(const Path &from, const Path &to) {
@@ -383,87 +481,76 @@ enum class OperationType {
 		}
 	}
 
-	void LoadSlot(std::string_view gamePrefix, int slot, Callback callback) {
-		if (!NetworkAllowSaveState()) {
-			return;
-		}
-
-		Path fn = GenerateSaveSlotPath(gamePrefix, slot, STATE_EXTENSION);
+	void LoadSlot(const Path &gameFilename, int slot, Callback callback, void *cbUserData)
+	{
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
 		if (!fn.empty()) {
 			// This add only 1 extra state, should we just always enable it?
 			if (g_Config.bEnableStateUndo) {
 				Path backup = GetSysDirectory(DIRECTORY_SAVESTATE) / LOAD_UNDO_NAME;
 				
-				auto saveCallback = [=](Status status, std::string_view message) {
+				auto saveCallback = [=](Status status, const std::string &message, void *data) {
 					if (status != Status::FAILURE) {
 						DeleteIfExists(backup);
 						File::Rename(backup.WithExtraExtension(".tmp"), backup);
-						g_Config.sStateLoadUndoGame = gamePrefix;
+						g_Config.sStateLoadUndoGame = GenerateFullDiscId(gameFilename);
 						g_Config.Save("Saving config for savestate last load undo");
 					} else {
-						ERROR_LOG(Log::SaveState, "Saving load undo state failed: %.*s", (int)message.size(), message.data());
+						ERROR_LOG(SAVESTATE, "Saving load undo state failed: %s", message.c_str());
 					}
-					Load(fn, slot, callback);
+					Load(fn, slot, callback, cbUserData);
 				};
 
 				if (!backup.empty()) {
-					Save(backup.WithExtraExtension(".tmp"), LOAD_UNDO_SLOT, saveCallback);
+					Save(backup.WithExtraExtension(".tmp"), LOAD_UNDO_SLOT, saveCallback, cbUserData);
 				} else {
-					ERROR_LOG(Log::SaveState, "Saving load undo state failed. Error in the file system.");
-					Load(fn, slot, callback);
+					ERROR_LOG(SAVESTATE, "Saving load undo state failed. Error in the file system.");
+					Load(fn, slot, callback, cbUserData);
 				}
 			} else {
-				Load(fn, slot, callback);
+				Load(fn, slot, callback, cbUserData);
 			}
 		} else {
-			if (callback) {
-				auto sy = GetI18NCategory(I18NCat::SYSTEM);
-				callback(Status::FAILURE, sy->T("Failed to load state. Error in the file system."));
-			}
+			auto sy = GetI18NCategory("System");
+			if (callback)
+				callback(Status::FAILURE, sy->T("Failed to load state. Error in the file system."), cbUserData);
 		}
 	}
 
-	bool UndoLoad(std::string_view gamePrefix, Callback callback) {
-		if (!NetworkAllowSaveState()) {
-			return false;
-		}
-
-		if (g_Config.sStateLoadUndoGame != gamePrefix) {
-			if (callback) {
-				auto sy = GetI18NCategory(I18NCat::SYSTEM);
-				callback(Status::FAILURE, sy->T("Error: load undo state is from a different game"));
-			}
+	bool UndoLoad(const Path &gameFilename, Callback callback, void *cbUserData)
+	{
+		if (g_Config.sStateLoadUndoGame != GenerateFullDiscId(gameFilename)) {
+			auto sy = GetI18NCategory("System");
+			if (callback)
+				callback(Status::FAILURE, sy->T("Error: load undo state is from a different game"), cbUserData);
 			return false;
 		}
 
 		Path fn = GetSysDirectory(DIRECTORY_SAVESTATE) / LOAD_UNDO_NAME;
 		if (!fn.empty()) {
-			Load(fn, LOAD_UNDO_SLOT, callback);
+			Load(fn, LOAD_UNDO_SLOT, callback, cbUserData);
 			return true;
 		} else {
-			if (callback) {
-				auto sy = GetI18NCategory(I18NCat::SYSTEM);
-				callback(Status::FAILURE, sy->T("Failed to load state for load undo. Error in the file system."));
-			}
+			auto sy = GetI18NCategory("System");
+			if (callback)
+				callback(Status::FAILURE, sy->T("Failed to load state for load undo. Error in the file system."), cbUserData);
 			return false;
 		}
 	}
 
-	void SaveSlot(std::string_view gamePrefix, int slot, Callback callback) {
-		if (!NetworkAllowSaveState()) {
-			return;
-		}
-
-		Path fn = GenerateSaveSlotPath(gamePrefix, slot, STATE_EXTENSION);
-		Path fnUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_STATE_EXTENSION);
+	void SaveSlot(const Path &gameFilename, int slot, Callback callback, void *cbUserData)
+	{
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
+		Path shot = GenerateSaveSlotFilename(gameFilename, slot, SCREENSHOT_EXTENSION);
+		Path fnUndo = GenerateSaveSlotFilename(gameFilename, slot, UNDO_STATE_EXTENSION);
+		Path shotUndo = GenerateSaveSlotFilename(gameFilename, slot, UNDO_SCREENSHOT_EXTENSION);
 		if (!fn.empty()) {
-			Path shot = GenerateSaveSlotPath(gamePrefix, slot, SCREENSHOT_EXTENSION);
-			auto renameCallback = [=](Status status, std::string_view message) {
+			auto renameCallback = [=](Status status, const std::string &message, void *data) {
 				if (status != Status::FAILURE) {
 					if (g_Config.bEnableStateUndo) {
 						DeleteIfExists(fnUndo);
 						RenameIfExists(fn, fnUndo);
-						g_Config.sStateUndoLastSaveGame = gamePrefix;
+						g_Config.sStateUndoLastSaveGame = GenerateFullDiscId(gameFilename);
 						g_Config.iStateUndoLastSaveSlot = slot;
 						g_Config.Save("Saving config for savestate last save undo");
 					} else {
@@ -472,119 +559,78 @@ enum class OperationType {
 					File::Rename(fn.WithExtraExtension(".tmp"), fn);
 				}
 				if (callback) {
-					callback(status, message);
+					callback(status, message, data);
 				}
 			};
 			// Let's also create a screenshot.
 			if (g_Config.bEnableStateUndo) {
-				Path shotUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_SCREENSHOT_EXTENSION);
 				DeleteIfExists(shotUndo);
 				RenameIfExists(shot, shotUndo);
 			}
-			SaveScreenshot(shot);
-			Save(fn.WithExtraExtension(".tmp"), slot, renameCallback);
+			SaveScreenshot(shot, Callback(), 0);
+			Save(fn.WithExtraExtension(".tmp"), slot, renameCallback, cbUserData);
 		} else {
-			if (callback) {
-				auto sy = GetI18NCategory(I18NCat::SYSTEM);
-				callback(Status::FAILURE, sy->T("Failed to save state. Error in the file system."));
-			}
+			auto sy = GetI18NCategory("System");
+			if (callback)
+				callback(Status::FAILURE, sy->T("Failed to save state. Error in the file system."), cbUserData);
 		}
-		Rescan(gamePrefix);
 	}
 
-	bool UndoSaveSlot(std::string_view gamePrefix, int slot) {
-		if (!NetworkAllowSaveState()) {
-			return false;
-		}
-
-		Path fnUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_STATE_EXTENSION);
+	bool UndoSaveSlot(const Path &gameFilename, int slot) {
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
+		Path shot = GenerateSaveSlotFilename(gameFilename, slot, SCREENSHOT_EXTENSION);
+		Path fnUndo = GenerateSaveSlotFilename(gameFilename, slot, UNDO_STATE_EXTENSION);
+		Path shotUndo = GenerateSaveSlotFilename(gameFilename, slot, UNDO_SCREENSHOT_EXTENSION);
 
 		// Do nothing if there's no undo.
 		if (File::Exists(fnUndo)) {
-			Path fn = GenerateSaveSlotPath(gamePrefix, slot, STATE_EXTENSION);
-			Path shot = GenerateSaveSlotPath(gamePrefix, slot, SCREENSHOT_EXTENSION);
-			Path shotUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_SCREENSHOT_EXTENSION);
 			// Swap them so they can undo again to redo.  Mistakes happen.
 			SwapIfExists(shotUndo, shot);
 			SwapIfExists(fnUndo, fn);
 			return true;
 		}
 
-		Rescan(gamePrefix);
 		return false;
 	}
 
-	void DeleteSlot(std::string_view gamePrefix, int slot) {
-		Path fn = GenerateSaveSlotPath(gamePrefix, slot, STATE_EXTENSION);
-		Path shot = GenerateSaveSlotPath(gamePrefix, slot, SCREENSHOT_EXTENSION);
 
-		if (File::Exists(fn)) {
-			DeleteIfExists(fn);
-			DeleteIfExists(shot);
-		}
-		Rescan(gamePrefix);
-	}
-
-	bool UndoLastSave(std::string_view gamePrefix) {
-		if (!NetworkAllowSaveState()) {
-			return false;
-		}
-
-		if (g_Config.sStateUndoLastSaveGame != gamePrefix)
+	bool UndoLastSave(const Path &gameFilename) {
+		if (g_Config.sStateUndoLastSaveGame != GenerateFullDiscId(gameFilename))
 			return false;
 
-		bool retval = UndoSaveSlot(gamePrefix, g_Config.iStateUndoLastSaveSlot);
-		Rescan(gamePrefix);
-		return retval;
+		return UndoSaveSlot(gameFilename, g_Config.iStateUndoLastSaveSlot);
 	}
 
-	void Rescan(std::string_view gamePrefix) {
-		// Currently nothing to do here.
-		// On Android this would be important to rescan the save state directory.
-		std::vector<File::FileInfo> file;
-
-		std::string prefix(gamePrefix);
-		prefix += "_";
-
-		if (!File::GetFilesInDir(GetSysDirectory(DIRECTORY_SAVESTATE), &file, nullptr, 0, prefix)) {
-			ERROR_LOG(Log::System, "Failed to list savestate directory!");
-			return;
-		}
-
-		g_files.clear();
-		for (const auto &f : file) {
-			g_files[f.name] = f.mtime;
-		}
-
-		g_lastRescan = time_now_d();
+	bool HasSaveInSlot(const Path &gameFilename, int slot)
+	{
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
+		return File::Exists(fn);
 	}
 
-	static bool SaveStateFileExists(std::string_view gamePrefix, int slot, const char *extension) {
-		return g_files.find(GenerateSaveSlotFilename(gamePrefix, slot, extension)) != g_files.end();
+	bool HasUndoSaveInSlot(const Path &gameFilename, int slot)
+	{
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, UNDO_STATE_EXTENSION);
+		return File::Exists(fn);
 	}
 
-	bool HasSaveInSlot(std::string_view gamePrefix, int slot) {
-		return SaveStateFileExists(gamePrefix, slot, STATE_EXTENSION);
-	}
-
-	bool HasUndoSaveInSlot(std::string_view gamePrefix, int slot) {
-		return SaveStateFileExists(gamePrefix, slot, UNDO_STATE_EXTENSION);
-	}
-
-	bool HasUndoLastSave(std::string_view gamePrefix) {
-		if (g_Config.sStateUndoLastSaveGame != gamePrefix)
+	bool HasUndoLastSave(const Path &gameFilename) 
+	{
+		if (g_Config.sStateUndoLastSaveGame != GenerateFullDiscId(gameFilename))
 			return false;
 
-		return HasUndoSaveInSlot(gamePrefix, g_Config.iStateUndoLastSaveSlot);
+		return HasUndoSaveInSlot(gameFilename, g_Config.iStateUndoLastSaveSlot);
 	}
 
-	bool HasScreenshotInSlot(std::string_view gamePrefix, int slot) {
-		return SaveStateFileExists(gamePrefix, slot, SCREENSHOT_EXTENSION);
+	bool HasScreenshotInSlot(const Path &gameFilename, int slot)
+	{
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, SCREENSHOT_EXTENSION);
+		return File::Exists(fn);
 	}
 
-	bool HasUndoLoad(std::string_view gamePrefix) {
+	bool HasUndoLoad(const Path &gameFilename)
+	{
 		Path fn = GetSysDirectory(DIRECTORY_SAVESTATE) / LOAD_UNDO_NAME;
-		return File::Exists(fn) && g_Config.sStateLoadUndoGame == gamePrefix;
+		return File::Exists(fn) && g_Config.sStateLoadUndoGame == GenerateFullDiscId(gameFilename);
 	}
 
 	bool operator < (const tm &t1, const tm &t2) {
@@ -624,15 +670,16 @@ enum class OperationType {
 		return true;
 	}
 
-	int GetNewestSlot(std::string_view gamePrefix) {
+	int GetNewestSlot(const Path &gameFilename) {
 		int newestSlot = -1;
-		int64_t newestTime = 0;
-		for (int i = 0; i < g_Config.iSaveStateSlotCount; i++) {
-			auto iter = g_files.find(GenerateSaveSlotFilename(gamePrefix, i, STATE_EXTENSION));
-			if (iter != g_files.end()) {
-				int64_t mod = iter->second;
-				if (mod > newestTime) {
-					newestTime = mod;
+		tm newestDate = {0};
+		for (int i = 0; i < NUM_SLOTS; i++) {
+			Path fn = GenerateSaveSlotFilename(gameFilename, i, STATE_EXTENSION);
+			if (File::Exists(fn)) {
+				tm time;
+				bool success = File::GetModifTime(fn, time);
+				if (success && newestDate < time) {
+					newestDate = time;
 					newestSlot = i;
 				}
 			}
@@ -640,15 +687,16 @@ enum class OperationType {
 		return newestSlot;
 	}
 
-	int GetOldestSlot(std::string_view gamePrefix) {
+	int GetOldestSlot(const Path &gameFilename) {
 		int oldestSlot = -1;
-		int64_t oldestTime = INT64_MAX;
-		for (int i = 0; i < g_Config.iSaveStateSlotCount; i++) {
-			auto iter = g_files.find(GenerateSaveSlotFilename(gamePrefix, i, STATE_EXTENSION));
-			if (iter != g_files.end()) {
-				int64_t mod = iter->second;
-				if (mod < oldestTime) {
-					oldestTime = mod;
+		tm oldestDate = {0};
+		for (int i = 0; i < NUM_SLOTS; i++) {
+			Path fn = GenerateSaveSlotFilename(gameFilename, i, STATE_EXTENSION);
+			if (File::Exists(fn)) {
+				tm time;
+				bool success = File::GetModifTime(fn, time);
+				if (success && (!oldestDate || oldestDate > time)) {
+					oldestDate = time;
 					oldestSlot = i;
 				}
 			}
@@ -656,35 +704,34 @@ enum class OperationType {
 		return oldestSlot;
 	}
 
-	std::string GetSlotDateAsString(std::string_view gamePrefix, int slot) {
-		std::string fn = GenerateSaveSlotFilename(gamePrefix, slot, STATE_EXTENSION);
-		auto iter = g_files.find(fn);
-		if (iter == g_files.end()) {
-			return "";
+	std::string GetSlotDateAsString(const Path &gameFilename, int slot) {
+		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
+		if (File::Exists(fn)) {
+			tm time;
+			if (File::GetModifTime(fn, time)) {
+				char buf[256];
+				// TODO: Use local time format? Americans and some others might not like ISO standard :)
+				switch (g_Config.iDateFormat) {
+				case PSP_SYSTEMPARAM_DATE_FORMAT_YYYYMMDD:
+					strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &time);
+					break;
+				case PSP_SYSTEMPARAM_DATE_FORMAT_MMDDYYYY:
+					strftime(buf, sizeof(buf), "%m-%d-%Y %H:%M:%S", &time);
+					break;
+				case PSP_SYSTEMPARAM_DATE_FORMAT_DDMMYYYY:
+					strftime(buf, sizeof(buf), "%d-%m-%Y %H:%M:%S", &time);
+					break;
+				default: // Should never happen
+					return "";
+				}
+				return std::string(buf);
+			}
 		}
-		time_t t = iter->second;
-		tm time;
-		localtime_r((time_t*)&t, &time);
-		char buf[256];
-		// TODO: Use local time format instead of the configured PSP format?
-		// Americans and some others might not like ISO standard :)
-		switch (g_Config.iDateFormat) {
-		case PSP_SYSTEMPARAM_DATE_FORMAT_YYYYMMDD:
-			strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &time);
-			break;
-		case PSP_SYSTEMPARAM_DATE_FORMAT_MMDDYYYY:
-			strftime(buf, sizeof(buf), "%m-%d-%Y %H:%M:%S", &time);
-			break;
-		case PSP_SYSTEMPARAM_DATE_FORMAT_DDMMYYYY:
-			strftime(buf, sizeof(buf), "%d-%m-%Y %H:%M:%S", &time);
-			break;
-		default: // Should never happen
-			return "";
-		}
-		return buf;
+		return "";
 	}
 
-	std::vector<Operation> Flush() {
+	std::vector<Operation> Flush()
+	{
 		std::lock_guard<std::mutex> guard(mutex);
 		std::vector<Operation> copy = pending;
 		pending.clear();
@@ -692,20 +739,18 @@ enum class OperationType {
 		return copy;
 	}
 
-	bool HandleLoadFailure(bool wasRewinding) {
-		if (wasRewinding) {
-			WARN_LOG(Log::SaveState, "HandleLoadFailure - trying a rewind state.");
-			// Okay, first, let's give the next rewind state a shot - maybe we can at least not reset entirely.
-			// Actually, this seems like a bad thing - some systems can end up in bad states, like sceFont :(
-			CChunkFileReader::Error result;
-			do {
-				std::string errorString;
-				result = rewindStates.Restore(&errorString);
-			} while (result == CChunkFileReader::ERROR_BROKEN_STATE);
+	bool HandleLoadFailure()
+	{
+		// Okay, first, let's give the rewind state a shot - maybe we can at least not reset entirely.
+		// Even if this was a rewind, maybe we can still load a previous one.
+		CChunkFileReader::Error result;
+		do {
+			std::string errorString;
+			result = rewindStates.Restore(&errorString);
+		} while (result == CChunkFileReader::ERROR_BROKEN_STATE);
 
-			if (result == CChunkFileReader::ERROR_NONE) {
-				return true;
-			}
+		if (result == CChunkFileReader::ERROR_NONE) {
+			return true;
 		}
 
 		// We tried, our only remaining option is to reset the game.
@@ -713,6 +758,22 @@ enum class OperationType {
 		// Make sure we don't proceed to run anything yet.
 		coreState = CORE_NEXTFRAME;
 		return false;
+	}
+
+	static inline void CheckRewindState()
+	{
+		if (gpuStats.numFlips % g_Config.iRewindFlipFrequency != 0)
+			return;
+
+		// For fast-forwarding, otherwise they may be useless and too close.
+		double now = time_now_d();
+		float diff = now - rewindLastTime;
+		if (diff < rewindMaxWallFrequency)
+			return;
+
+		rewindLastTime = now;
+		DEBUG_LOG(BOOT, "Saving rewind state");
+		rewindStates.Save();
 	}
 
 	bool HasLoadedState() {
@@ -739,7 +800,7 @@ enum class OperationType {
 	}
 
 	static Status TriggerLoadWarnings(std::string &callbackMessage) {
-		auto sc = GetI18NCategory(I18NCat::SCREEN);
+		auto sc = GetI18NCategory("Screen");
 
 		if (g_Config.bHideStateWarnings)
 			return Status::SUCCESS;
@@ -750,12 +811,12 @@ enum class OperationType {
 			// Sometimes this exposes game bugs that were rarely seen on real devices,
 			// because few people played on a real PSP for 10 hours straight.
 			callbackMessage = sc->T("Loaded. Save in game, restart, and load for less bugs.");
-			return Status::SUCCESS;
+			return Status::WARNING;
 		}
 		if (IsOldVersion()) {
 			// Save states also preserve bugs from old PPSSPP versions, so warn.
 			callbackMessage = sc->T("Loaded. Save in game, restart, and load for less bugs.");
-			return Status::SUCCESS;
+			return Status::WARNING;
 		}
 		// If the loaded state (saveDataGeneration) is older, the game may prevent saving again.
 		// This can happen with newer too, but ignore to/from 0 as a common likely safe case.
@@ -769,42 +830,48 @@ enum class OperationType {
 		return Status::SUCCESS;
 	}
 
-	// NOTE: This can cause ending of the current renderpass, due to the readback needed for the screenshot.
-	// TODO: This should run the actual operations on a thread. While this returns true (for example), emulation
-	// *must* not run further, in order not to disturb the current state operation.
-	bool Process() {
-		rewindStates.Process();
+	void Process()
+	{
+		if (g_Config.iRewindFlipFrequency != 0 && gpuStats.numFlips != 0)
+			CheckRewindState();
 
 		if (!needsProcess)
-			return false;
+			return;
 		needsProcess = false;
 
-		if (!__KernelIsRunning()) {
-			ERROR_LOG(Log::SaveState, "Savestate failure: Unable to load without kernel, this should never happen.");
-			return false;
+		if (!__KernelIsRunning())
+		{
+			ERROR_LOG(SAVESTATE, "Savestate failure: Unable to load without kernel, this should never happen.");
+			return;
 		}
 
 		std::vector<Operation> operations = Flush();
 		SaveStart state;
 
-		bool readbackImage = false;
-
-		for (const auto &op : operations) {
+		for (size_t i = 0, n = operations.size(); i < n; ++i)
+		{
+			Operation &op = operations[i];
 			CChunkFileReader::Error result;
 			Status callbackResult;
+			bool tempResult;
 			std::string callbackMessage;
 			std::string title;
 
-			auto sc = GetI18NCategory(I18NCat::SCREEN);
-			const char *i18nLoadFailure = sc->T_cstr("Failed to load state");
-			const char *i18nSaveFailure = sc->T_cstr("Failed to save state");
+			auto sc = GetI18NCategory("Screen");
+			const char *i18nLoadFailure = sc->T("Load savestate failed", "");
+			const char *i18nSaveFailure = sc->T("Save State Failed", "");
+			if (strlen(i18nLoadFailure) == 0)
+				i18nLoadFailure = sc->T("Failed to load state");
+			if (strlen(i18nSaveFailure) == 0)
+				i18nSaveFailure = sc->T("Failed to save state");
 
 			std::string slot_prefix = op.slot >= 0 ? StringFromFormat("(%d) ", op.slot + 1) : "";
 			std::string errorString;
 
-			switch (op.type) {
-			case OperationType::Load:
-				INFO_LOG(Log::SaveState, "Loading state from '%s'", op.filename.c_str());
+			switch (op.type)
+			{
+			case SAVESTATE_LOAD:
+				INFO_LOG(SAVESTATE, "Loading state from '%s'", op.filename.c_str());
 				// Use the state's latest version as a guess for saveStateInitialGitVersion.
 				result = CChunkFileReader::Load(op.filename, &saveStateInitialGitVersion, state, &errorString);
 				if (result == CChunkFileReader::ERROR_NONE) {
@@ -827,11 +894,10 @@ enum class OperationType {
 						}
 					}
 #endif
-					g_lastSaveTime = time_now_d();
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
-					HandleLoadFailure(false);
+					HandleLoadFailure();
 					callbackMessage = std::string(i18nLoadFailure) + ": " + errorString;
-					ERROR_LOG(Log::SaveState, "Load state failure: %s", errorString.c_str());
+					ERROR_LOG(SAVESTATE, "Load state failure: %s", errorString.c_str());
 					callbackResult = Status::FAILURE;
 				} else {
 					callbackMessage = sc->T(errorString.c_str(), i18nLoadFailure);
@@ -839,18 +905,18 @@ enum class OperationType {
 				}
 				break;
 
-			case OperationType::Save:
-				INFO_LOG(Log::SaveState, "Saving state to '%s'", op.filename.c_str());
+			case SAVESTATE_SAVE:
+				INFO_LOG(SAVESTATE, "Saving state to %s", op.filename.c_str());
 				title = g_paramSFO.GetValueString("TITLE");
 				if (title.empty()) {
 					// Homebrew title
 					title = PSP_CoreParameter().fileToStart.ToVisualString();
-					std::size_t lslash = title.find_last_of('/');
+					std::size_t lslash = title.find_last_of("/");
 					title = title.substr(lslash + 1);
 				}
 				result = CChunkFileReader::Save(op.filename, title, PPSSPP_GIT_VERSION, state);
 				if (result == CChunkFileReader::ERROR_NONE) {
-					callbackMessage = slot_prefix + std::string(sc->T("Saved State"));
+					callbackMessage = slot_prefix + sc->T("Saved State");
 					callbackResult = Status::SUCCESS;
 #ifndef MOBILE_DEVICE
 					if (g_Config.bSaveLoadResetsAVdumping) {
@@ -863,11 +929,10 @@ enum class OperationType {
 						}
 					}
 #endif
-					g_lastSaveTime = time_now_d();
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
 					// TODO: What else might we want to do here? This should be very unusual.
 					callbackMessage = i18nSaveFailure;
-					ERROR_LOG(Log::SaveState, "Save state failure");
+					ERROR_LOG(SAVESTATE, "Save state failure");
 					callbackResult = Status::FAILURE;
 				} else {
 					callbackMessage = i18nSaveFailure;
@@ -875,20 +940,18 @@ enum class OperationType {
 				}
 				break;
 
-			case OperationType::Verify:
-			{
-				int tempResult = CChunkFileReader::Verify(state) == CChunkFileReader::ERROR_NONE;
+			case SAVESTATE_VERIFY:
+				tempResult = CChunkFileReader::Verify(state) == CChunkFileReader::ERROR_NONE;
 				callbackResult = tempResult ? Status::SUCCESS : Status::FAILURE;
 				if (tempResult) {
-					INFO_LOG(Log::SaveState, "Verified save state system");
+					INFO_LOG(SAVESTATE, "Verified save state system");
 				} else {
-					ERROR_LOG(Log::SaveState, "Save state system verification failed");
+					ERROR_LOG(SAVESTATE, "Save state system verification failed");
 				}
 				break;
-			}
 
-			case OperationType::Rewind:
-				INFO_LOG(Log::SaveState, "Rewinding to recent savestate snapshot");
+			case SAVESTATE_REWIND:
+				INFO_LOG(SAVESTATE, "Rewinding to recent savestate snapshot");
 				result = rewindStates.Restore(&errorString);
 				if (result == CChunkFileReader::ERROR_NONE) {
 					callbackMessage = sc->T("Loaded State");
@@ -897,7 +960,7 @@ enum class OperationType {
 					Core_ResetException();
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
 					// Cripes.  Good news is, we might have more.  Let's try those too, better than a reset.
-					if (HandleLoadFailure(true)) {
+					if (HandleLoadFailure()) {
 						// Well, we did rewind, even if too much...
 						callbackMessage = sc->T("Loaded State");
 						callbackResult = Status::SUCCESS;
@@ -913,56 +976,35 @@ enum class OperationType {
 				}
 				break;
 
-			case OperationType::SaveScreenshot:
+			case SAVESTATE_SAVE_SCREENSHOT:
 			{
-				_dbg_assert_(!op.callback);
-
-				int maxResMultiplier = 2;
-				ScreenshotResult tempResult = TakeGameScreenshot(nullptr, op.filename, ScreenshotFormat::JPG, SCREENSHOT_DISPLAY, maxResMultiplier, [](bool success) {
-					if (success) {
-						screenshotFailures = 0;
+				int maxRes = g_Config.iInternalResolution > 2 ? 2 : -1;
+				tempResult = TakeGameScreenshot(op.filename, ScreenshotFormat::JPG, SCREENSHOT_DISPLAY, nullptr, nullptr, maxRes);
+				callbackResult = tempResult ? Status::SUCCESS : Status::FAILURE;
+				if (!tempResult) {
+					ERROR_LOG(SAVESTATE, "Failed to take a screenshot for the savestate! %s", op.filename.c_str());
+					if (screenshotFailures++ < SCREENSHOT_FAILURE_RETRIES) {
+						// Requeue for next frame.
+						SaveScreenshot(op.filename, op.callback, op.cbUserData);
 					}
-				});
-				
-				switch (tempResult) {
-				case ScreenshotResult::ScreenshotNotPossible:
-					// Try again soon, for a short while.
-					callbackResult = Status::FAILURE;
-					WARN_LOG(Log::SaveState, "Failed to take a screenshot for the savestate! (%s) The savestate will lack an icon.", op.filename.c_str());
-					if (coreState != CORE_STEPPING_CPU && screenshotFailures++ < SCREENSHOT_FAILURE_RETRIES) {
-						// Requeue for next frame (if we were stepping, no point, will just spam errors quickly).
-						SaveScreenshot(op.filename);
-					}
-					break;
-				case ScreenshotResult::DelayedResult:
-				case ScreenshotResult::Success:
-					// We might not know if the file write succeeded yet though.
-					callbackResult = Status::SUCCESS;
-					readbackImage = true;
-					break;
-				case ScreenshotResult::FailedToWriteFile:
-					// Can't reach here when we pass in a callback to TakeGameScreenshot.
-					callbackResult = Status::SUCCESS;
-					break;
+				} else {
+					screenshotFailures = 0;
 				}
 				break;
 			}
 			default:
-				ERROR_LOG(Log::SaveState, "Savestate failure: unknown operation type %d", op.type);
+				ERROR_LOG(SAVESTATE, "Savestate failure: unknown operation type %d", op.type);
 				callbackResult = Status::FAILURE;
 				break;
 			}
 
-			if (op.callback) {
-				op.callback(callbackResult, callbackMessage);
-			}
+			if (op.callback)
+				op.callback(callbackResult, callbackMessage, op.cbUserData);
 		}
 		if (operations.size()) {
 			// Avoid triggering frame skipping due to slowdown
 			__DisplaySetWasPaused();
 		}
-
-		return readbackImage;
 	}
 
 	void NotifySaveData() {
@@ -970,15 +1012,24 @@ enum class OperationType {
 		lastSaveDataGeneration = saveDataGeneration;
 	}
 
-	bool PollRestartNeeded() {
+	void Cleanup() {
 		if (needsRestart) {
+			PSP_Shutdown();
+			std::string resetError;
+			if (!PSP_Init(PSP_CoreParameter(), &resetError)) {
+				ERROR_LOG(BOOT, "Error resetting: %s", resetError.c_str());
+				// TODO: This probably doesn't clean up well enough.
+				Core_Stop();
+				return;
+			}
+			host->BootDone();
+			host->UpdateDisassembly();
 			needsRestart = false;
-			return true;
 		}
-		return false;
 	}
 
-	void Init() {
+	void Init()
+	{
 		// Make sure there's a directory for save slots
 		File::CreateFullPath(GetSysDirectory(DIRECTORY_SAVESTATE));
 
@@ -990,20 +1041,11 @@ enum class OperationType {
 		saveDataGeneration = 0;
 		lastSaveDataGeneration = 0;
 		saveStateInitialGitVersion.clear();
-
-		g_lastSaveTime = time_now_d();
 	}
 
-	void Shutdown() {
+	void Shutdown()
+	{
 		std::lock_guard<std::mutex> guard(mutex);
 		rewindStates.Clear();
-	}
-
-	double SecondsSinceLastSavestate() {
-		if (g_lastSaveTime < 0) {
-			return -1.0;
-		} else {
-			return time_now_d() - g_lastSaveTime;
-		}
 	}
 }

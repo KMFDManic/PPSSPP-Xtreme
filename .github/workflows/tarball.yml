@@ -7,23 +7,25 @@ on:
       - created
   push:
     tags:
-      - "v*.*"
+      - "v*.*.*"
 
 jobs:
   build:
+    name: build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+
+    - uses: actions/checkout@v2
       with:
         submodules: recursive
 
-    - name: Archive
+    - name: archive
       id: archive
       run: |
-        VERSION=$GITHUB_REF_NAME
+        VERSION=${GITHUB_REF##*/}
         test -z "$VERSION" && VERSION=${{ github.event.release.tag_name }}
         VERSION=$(printf "%s\n" "$VERSION" | sed 's/^v//')
-        PKGNAME=ppsspp-$VERSION
+        PKGNAME="ppsspp-$VERSION"
         mkdir -p /tmp/$PKGNAME
         mv * /tmp/$PKGNAME
         mv /tmp/$PKGNAME .
@@ -32,14 +34,16 @@ jobs:
         find $PKGNAME/ext -name '*.dylib' -delete || true
         find $PKGNAME/ext -name '*.lib' -delete || true
         find $PKGNAME/ext -name '*.so.*' -delete || true
+        find $PKGNAME/dx9sdk -name '*.lib' -delete || true
+        find $PKGNAME/dx9sdk -name '*.dll' -delete || true
         rm -rf $PKGNAME/ext/rapidjson/thirdparty/gtest || true
         sed -i "s;unknown;${VERSION};" $PKGNAME/git-version.cmake || true
         TARBALL=$PKGNAME.tar.xz
         tar cJf $TARBALL $PKGNAME
-        echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+        echo "::set-output name=tarball::$TARBALL"
 
-    - name: Upload tarball
-      uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+    - name: upload tarball
+      uses: softprops/action-gh-release@v1
       with:
         files: ${{ steps.archive.outputs.tarball }}
         token: ${{ secrets.GITHUB_TOKEN }}

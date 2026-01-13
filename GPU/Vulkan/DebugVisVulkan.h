@@ -19,9 +19,9 @@
 
 #include "Common/GPU/thin3d.h"
 
-class GPUDebugInterface;
+class GPUInterface;
 class UIContext;
 
 // gpu MUST be an instance of GPU_Vulkan. If not, will definitely crash.
-void DrawGPUMemoryVis(UIContext *ui, GPUDebugInterface *gpu);
-void DrawGPUProfilerVis(UIContext *ui, GPUDebugInterface *gpu);
+void DrawAllocatorVis(UIContext *ui, GPUInterface *gpu);
+void DrawGPUProfilerVis(UIContext *ui, GPUInterface *gpu);

@@ -21,11 +21,9 @@
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
 #include "Core/System.h"
 #include "GPU/Debugger/Record.h"
-#include "GPU/GPU.h"
-#include "GPU/Common/GPUDebugInterface.h"
 
 struct WebSocketGPURecordState : public DebuggerSubscriber {
-	~WebSocketGPURecordState();
+	~WebSocketGPURecordState() override;
 	void Dump(DebuggerRequest &req);
 
 	void Broadcast(net::WebSocketServer *ws) override;
@@ -38,7 +36,7 @@ protected:
 
 DebuggerSubscriber *WebSocketGPURecordInit(DebuggerEventHandlerMap &map) {
 	auto p = new WebSocketGPURecordState();
-	map["gpu.record.dump"] = [p](DebuggerRequest &req) { p->Dump(req); };
+	map["gpu.record.dump"] = std::bind(&WebSocketGPURecordState::Dump, p, std::placeholders::_1);
 
 	return p;
 }
@@ -46,7 +44,7 @@ DebuggerSubscriber *WebSocketGPURecordInit(DebuggerEventHandlerMap &map) {
 WebSocketGPURecordState::~WebSocketGPURecordState() {
 	// Clear the callback to hopefully avoid a crash.
 	if (pending_)
-		gpuDebug->GetRecorder()->ClearCallback();
+		GPURecord::SetCallback(nullptr);
 }
 
 // Begin recording (gpu.record.dump)
@@ -58,20 +56,17 @@ WebSocketGPURecordState::~WebSocketGPURecordState() {
 //
 // Note: recording may take a moment.
 void WebSocketGPURecordState::Dump(DebuggerRequest &req) {
-	if (PSP_GetBootState() != BootState::Complete) {
+	if (!PSP_IsInited())
 		return req.Fail("CPU not started");
-	}
 
-	bool result = gpuDebug->GetRecorder()->RecordNextFrame([=](const Path &filename) {
+	if (!GPURecord::Activate())
+		return req.Fail("Recording already in progress");
+
+	pending_ = true;
+	GPURecord::SetCallback([=](const Path &filename) {
 		lastFilename_ = filename;
 		pending_ = false;
 	});
-
-	if (!result) {
-		return req.Fail("Recording already in progress");
-	}
-
-	pending_ = true;
 
 	const JsonNode *value = req.data.get("ticket");
 	lastTicket_ = value ? json_stringify(value) : "";

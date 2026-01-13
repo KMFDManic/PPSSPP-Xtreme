@@ -41,7 +41,6 @@
 #include "Common/GPU/ShaderTranslation.h"
 #include "ext/glslang/SPIRV/GlslangToSpv.h"
 #include "Common/GPU/thin3d.h"
-#include "Common/GPU/Shader.h"
 #include "Common/GPU/OpenGL/GLFeatures.h"
 
 #include "ext/SPIRV-Cross/spirv.hpp"
@@ -51,6 +50,8 @@
 #ifdef _WIN32
 #include "ext/SPIRV-Cross/spirv_hlsl.hpp"
 #endif
+
+extern void init_resources(TBuiltInResource &Resources);
 
 static EShLanguage GetShLanguageFromStage(const ShaderStage stage) {
 	switch (stage) {
@@ -63,10 +64,15 @@ static EShLanguage GetShLanguageFromStage(const ShaderStage stage) {
 }
 
 void ShaderTranslationInit() {
+	// TODO: We have TLS issues on UWP
+#if !PPSSPP_PLATFORM(UWP)
 	glslang::InitializeProcess();
+#endif
 }
 void ShaderTranslationShutdown() {
+#if !PPSSPP_PLATFORM(UWP)
 	glslang::FinalizeProcess();
+#endif
 }
 
 struct Builtin {
@@ -74,7 +80,7 @@ struct Builtin {
 	const char *replacement;
 };
 
-static const char * const cbufferDecl = R"(
+static const char *cbufferDecl = R"(
 cbuffer data : register(b0) {
 	float2 u_texelDelta;
 	float2 u_pixelDelta;
@@ -82,17 +88,16 @@ cbuffer data : register(b0) {
 	float4 u_timeDelta;
 	float4 u_setting;
 	float u_video;
-	float u_vr;
 };
 )";
 
-static const char * const vulkanPrologue =
+static const char *vulkanPrologue =
 R"(#version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 )";
 
-static const char * const vulkanUboDecl = R"(
+static const char *vulkanUboDecl = R"(
 layout (std140, set = 0, binding = 0) uniform Data {
 	vec2 u_texelDelta;
 	vec2 u_pixelDelta;
@@ -100,17 +105,25 @@ layout (std140, set = 0, binding = 0) uniform Data {
 	vec4 u_timeDelta;
 	vec4 u_setting;
 	float u_video;
-	float u_vr;
 };
 )";
 
+static const char *d3d9RegisterDecl = R"(
+float4 gl_HalfPixel : register(c0);
+float2 u_texelDelta : register(c1);
+float2 u_pixelDelta : register(c2);
+float4 u_time : register(c3);
+float4 u_timeDelta : register(c4);
+float4 u_setting : register(c5);
+float u_video : register(c6);
+)";
 
 // SPIRV-Cross' HLSL output has some deficiencies we need to work around.
 // Also we need to rip out single uniforms and replace them with blocks.
 // Should probably do it in the source shader instead and then back translate to old style GLSL, but
 // SPIRV-Cross currently won't compile with the Android NDK so I can't be bothered.
 std::string Postprocess(std::string code, ShaderLanguage lang, ShaderStage stage) {
-	if (lang != HLSL_D3D11)
+	if (lang != HLSL_D3D11 && lang != HLSL_D3D9)
 		return code;
 
 	std::stringstream out;
@@ -118,11 +131,18 @@ std::string Postprocess(std::string code, ShaderLanguage lang, ShaderStage stage
 	// Output the uniform buffer.
 	if (lang == HLSL_D3D11)
 		out << cbufferDecl;
+	else if (lang == HLSL_D3D9)
+		out << d3d9RegisterDecl;
 
 	// Alright, now let's go through it line by line and zap the single uniforms.
 	std::string line;
 	std::stringstream instream(code);
 	while (std::getline(instream, line)) {
+		int num;
+		if (lang == HLSL_D3D9 && sscanf(line.c_str(), "uniform sampler2D sampler%d;", &num) == 1) {
+			out << "sampler2D sampler" << num << " : register(s" << num << ");\n";
+			continue;
+		}
 		if (line.find("uniform float") != std::string::npos) {
 			continue;
 		}
@@ -132,18 +152,16 @@ std::string Postprocess(std::string code, ShaderLanguage lang, ShaderStage stage
 	return output;
 }
 
-static_assert(Draw::SEM_TEXCOORD0 == 3, "Semantic shader hardcoded in glsl below.");
-
 bool ConvertToVulkanGLSL(std::string *dest, TranslatedShaderMetadata *destMetadata, std::string src, ShaderStage stage, std::string *errorMessage) {
 	std::stringstream out;
 
-	static const struct {
+	static struct {
 		ShaderStage stage;
 		const char *needle;
 		const char *replacement;
 	} replacements[] = {
 		{ ShaderStage::Vertex, "attribute vec4 a_position;", "layout(location = 0) in vec4 a_position;" },
-		{ ShaderStage::Vertex, "attribute vec2 a_texcoord0;", "layout(location = 3) in vec2 a_texcoord0;"},
+		{ ShaderStage::Vertex, "attribute vec2 a_texcoord0;", "layout(location = 2) in vec2 a_texcoord0;"},
 		{ ShaderStage::Vertex, "varying vec2 v_position;", "layout(location = 0) out vec2 v_position;" },
 		{ ShaderStage::Fragment, "varying vec2 v_position;", "layout(location = 0) in vec2 v_position;" },
 		{ ShaderStage::Fragment, "texture2D(", "texture(" },
@@ -189,7 +207,7 @@ bool ConvertToVulkanGLSL(std::string *dest, TranslatedShaderMetadata *destMetada
 	}
 
 	// DUMPLOG(src.c_str());
-	// INFO_LOG(Log::System, "---->");
+	// INFO_LOG(SYSTEM, "---->");
 	// DUMPLOG(LineNumberString(out.str()).c_str());
 
 	*dest = out.str();
@@ -210,13 +228,18 @@ bool TranslateShader(std::string *dest, ShaderLanguage destLang, const ShaderLan
 		return result;
 	}
 
-	errorMessage->clear();
+#if PPSSPP_PLATFORM(UWP)
+	*errorMessage = "No shader translation available (UWP)";
+	return false;
+#endif
+
+	*errorMessage = "";
 
 	glslang::TProgram program;
 	const char *shaderStrings[1]{};
 
 	TBuiltInResource Resources{};
-	InitShaderResources(Resources);
+	init_resources(Resources);
 
 	// Don't enable SPIR-V and Vulkan rules when parsing GLSL. Our postshaders are written in oldschool GLES 2.0.
 	EShMessages messages = EShMessages::EShMsgDefault;
@@ -258,6 +281,19 @@ bool TranslateShader(std::string *dest, ShaderLanguage destLang, const ShaderLan
 
 	switch (destLang) {
 #ifdef _WIN32
+	case HLSL_D3D9:
+	{
+		spirv_cross::CompilerHLSL hlsl(spirv);
+		spirv_cross::CompilerHLSL::Options options{};
+		options.shader_model = 30;
+		spirv_cross::CompilerGLSL::Options options_common{};
+		options_common.vertex.fixup_clipspace = true;
+		hlsl.set_hlsl_options(options);
+		hlsl.set_common_options(options_common);
+		std::string raw = hlsl.compile();
+		*dest = Postprocess(raw, destLang, stage);
+		return true;
+	}
 	case HLSL_D3D11:
 	{
 		spirv_cross::CompilerHLSL hlsl(spirv);

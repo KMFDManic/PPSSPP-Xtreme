@@ -2,20 +2,15 @@
 #include <cstring>
 
 #include "Common/Thread/ParallelLoop.h"
-#include "Common/Log.h"
 #include "Common/CPUDetect.h"
 
 class LoopRangeTask : public Task {
 public:
-	LoopRangeTask(WaitableCounter *counter, const std::function<void(int, int)> &loop, int lower, int upper, TaskPriority p)
-		: counter_(counter), loop_(loop), lower_(lower), upper_(upper), priority_(p) {}
+	LoopRangeTask(WaitableCounter *counter, const std::function<void(int, int)> &loop, int lower, int upper)
+		: counter_(counter), loop_(loop), lower_(lower), upper_(upper) {}
 
 	TaskType Type() const override {
 		return TaskType::CPU_COMPUTE;
-	}
-
-	TaskPriority Priority() const override {
-		return priority_;
 	}
 
 	void Run() override {
@@ -28,15 +23,14 @@ public:
 
 	int lower_;
 	int upper_;
-	const TaskPriority priority_;
 };
 
-WaitableCounter *ParallelRangeLoopWaitable(ThreadManager *threadMan, const std::function<void(int, int)> &loop, int lower, int upper, int minSize, TaskPriority priority) {
+WaitableCounter *ParallelRangeLoopWaitable(ThreadManager *threadMan, const std::function<void(int, int)> &loop, int lower, int upper, int minSize) {
 	if (minSize == -1) {
 		minSize = 1;
 	}
 
-	const int numLooperTasks = threadMan->GetNumLooperThreads();
+	int numTasks = threadMan->GetNumLooperThreads();
 	int range = upper - lower;
 	if (range <= 0) {
 		// Nothing to do. A finished counter allocated to keep the API.
@@ -44,28 +38,21 @@ WaitableCounter *ParallelRangeLoopWaitable(ThreadManager *threadMan, const std::
 	} else if (range <= minSize) {
 		// Single background task.
 		WaitableCounter *waitableCounter = new WaitableCounter(1);
-		threadMan->EnqueueTaskOnThread(0, new LoopRangeTask(waitableCounter, loop, lower, upper, priority));
+		threadMan->EnqueueTaskOnThread(0, new LoopRangeTask(waitableCounter, loop, lower, upper));
 		return waitableCounter;
 	} else {
 		// Split the range between threads. Allow for some fractional bits.
 		const int fractionalBits = 8;
 
 		int64_t totalFrac = (int64_t)range << fractionalBits;
-		int64_t delta = totalFrac / numLooperTasks;
+		int64_t delta = totalFrac / numTasks;
 
 		delta = std::max(delta, (int64_t)minSize << fractionalBits);
 
 		// Now we can compute the actual number of tasks.
 		// Remember that stragglers are done on the current thread
 		// so we don't round up.
-		const int numTasks = (int)(totalFrac / delta);
-		// Sanity check
-		if (numTasks > numLooperTasks) {
-			// Something went very wrong in our calculations (seen this in a report). Let's just run it without threads.
-			_dbg_assert_(false);
-			loop(lower, upper);
-			return new WaitableCounter(0);
-		}
+		numTasks = (int)(totalFrac / delta);
 
 		WaitableCounter *waitableCounter = new WaitableCounter(numTasks);
 		int64_t counter = (int64_t)lower << fractionalBits;
@@ -78,7 +65,7 @@ WaitableCounter *ParallelRangeLoopWaitable(ThreadManager *threadMan, const std::
 				// Let's do the stragglers on the current thread.
 				break;
 			}
-			threadMan->EnqueueTaskOnThread(i, new LoopRangeTask(waitableCounter, loop, start, end, priority));
+			threadMan->EnqueueTaskOnThread(i, new LoopRangeTask(waitableCounter, loop, start, end));
 			counter += delta;
 			if ((counter >> fractionalBits) >= upper) {
 				break;
@@ -96,7 +83,7 @@ WaitableCounter *ParallelRangeLoopWaitable(ThreadManager *threadMan, const std::
 	}
 }
 
-void ParallelRangeLoop(ThreadManager *threadMan, const std::function<void(int, int)> &loop, int lower, int upper, int minSize, TaskPriority priority) {
+void ParallelRangeLoop(ThreadManager *threadMan, const std::function<void(int, int)> &loop, int lower, int upper, int minSize) {
 	if (cpu_info.num_cores == 1 || (minSize >= (upper - lower) && upper > lower)) {
 		// "Optimization" for single-core devices, or minSize larger than the range.
 		// No point in adding threading overhead, let's just do it inline (since this is the blocking variant).
@@ -109,7 +96,7 @@ void ParallelRangeLoop(ThreadManager *threadMan, const std::function<void(int, i
 		minSize = 1;
 	}
 
-	WaitableCounter *counter = ParallelRangeLoopWaitable(threadMan, loop, lower, upper, minSize, priority);
+	WaitableCounter *counter = ParallelRangeLoopWaitable(threadMan, loop, lower, upper, minSize);
 	// TODO: Optimize using minSize. We'll just compute whether there's a remainer, remove it from the call to ParallelRangeLoopWaitable,
 	// and process the remainder right here. If there's no remainer, we'll steal a whole chunk.
 	if (counter) {
@@ -118,9 +105,9 @@ void ParallelRangeLoop(ThreadManager *threadMan, const std::function<void(int, i
 }
 
 // NOTE: Supports a max of 2GB.
-void ParallelMemcpy(ThreadManager *threadMan, void *dst, const void *src, size_t bytes, TaskPriority priority) {
-	// This threshold should be the same as the minimum split below, 128kb.
-	if (bytes < 128 * 1024) {
+void ParallelMemcpy(ThreadManager *threadMan, void *dst, const void *src, size_t bytes) {
+	// This threshold can probably be a lot bigger.
+	if (bytes < 512) {
 		memcpy(dst, src, bytes);
 		return;
 	}
@@ -131,13 +118,13 @@ void ParallelMemcpy(ThreadManager *threadMan, void *dst, const void *src, size_t
 	const char *s = (const char *)src;
 	ParallelRangeLoop(threadMan, [&](int l, int h) {
 		memmove(d + l, s + l, h - l);
-	}, 0, (int)bytes, 128 * 1024, priority);
+	}, 0, (int)bytes, 128 * 1024);
 }
 
 // NOTE: Supports a max of 2GB.
-void ParallelMemset(ThreadManager *threadMan, void *dst, uint8_t value, size_t bytes, TaskPriority priority) {
+void ParallelMemset(ThreadManager *threadMan, void *dst, uint8_t value, size_t bytes) {
 	// This threshold can probably be a lot bigger.
-	if (bytes < 128 * 1024) {
+	if (bytes < 512) {
 		memset(dst, 0, bytes);
 		return;
 	}
@@ -147,5 +134,5 @@ void ParallelMemset(ThreadManager *threadMan, void *dst, uint8_t value, size_t b
 	char *d = (char *)dst;
 	ParallelRangeLoop(threadMan, [&](int l, int h) {
 		memset(d + l, value, h - l);
-	}, 0, (int)bytes, 128 * 1024, priority);
+	}, 0, (int)bytes, 128 * 1024);
 }

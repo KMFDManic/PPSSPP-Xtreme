@@ -17,8 +17,8 @@ public:
 	void ShutdownFromRenderThread() override;
 
 	void Shutdown() override;
-
-	void Poll() override;
+	void SwapInterval(int interval) override;
+	void SwapBuffers() override;
 
 	// Used during window resize. Must be called from the window thread,
 	// not the rendering thread or CPU thread.
@@ -28,7 +28,8 @@ public:
 
 	void ThreadStart() override;
 	void ThreadEnd() override;
-	bool ThreadFrame(bool waitIfEmpty) override;
+	bool ThreadFrame() override;
+	void StopThread() override;
 
 	Draw::DrawContext *GetDrawContext() override { return draw_; }
 
@@ -46,4 +47,7 @@ private:
 	volatile bool resumeRequested;
 	HANDLE pauseEvent;
 	HANDLE resumeEvent;
+
+	int xres;
+	int yres;
 };

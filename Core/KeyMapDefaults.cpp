@@ -13,8 +13,8 @@ namespace KeyMap {
 
 struct DefMappingStruct {
 	int pspKey;
-	int keyOrAxis;
-	int direction;  // if 0, it's a key, otherwise an axis.
+	int key;
+	int direction;
 };
 
 static const DefMappingStruct defaultQwertyKeyboardKeyMap[] = {
@@ -45,8 +45,6 @@ static const DefMappingStruct defaultQwertyKeyboardKeyMap[] = {
 	{VIRTKEY_PAUSE       , NKCODE_ESCAPE},
 	{VIRTKEY_REWIND      , NKCODE_DEL},
 	{VIRTKEY_ANALOG_LIGHTLY, NKCODE_SHIFT_RIGHT},
-	{VIRTKEY_TOGGLE_DEBUGGER, NKCODE_F12},
-	{VIRTKEY_PAUSE_NO_MENU, NKCODE_F8},
 };
 
 static const DefMappingStruct defaultAzertyKeyboardKeyMap[] = {
@@ -130,8 +128,6 @@ static const DefMappingStruct defaultXInputKeyMap[] = {
 	{VIRTKEY_SPEED_TOGGLE, NKCODE_BUTTON_THUMBR},
 	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_LTRIGGER, +1},
 	{VIRTKEY_PAUSE,        NKCODE_HOME},
-	{VIRTKEY_FASTFORWARD , JOYSTICK_AXIS_GAS, +1},
-	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_BRAKE, +1},
 };
 
 static const DefMappingStruct defaultShieldKeyMap[] = {
@@ -192,8 +188,6 @@ static const DefMappingStruct defaultAndroidXboxControllerMap[] = {
 	{CTRL_RTRIGGER       , NKCODE_BUTTON_R1},
 	{VIRTKEY_FASTFORWARD , JOYSTICK_AXIS_RTRIGGER, +1},
 	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_LTRIGGER, +1},
-	{VIRTKEY_FASTFORWARD , JOYSTICK_AXIS_GAS, +1},
-	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_BRAKE, +1},
 	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
@@ -202,32 +196,28 @@ static const DefMappingStruct defaultAndroidXboxControllerMap[] = {
 
 // Retroid reports its controller as "Retro Station Controller".
 // It's very similar to the Android Xbox mapping, just with main buttons swapped around.
-static const DefMappingStruct defaultRetroidControllerMap[] = {
+static const DefMappingStruct defaultRetroStationControllerMap[] = {
 	{CTRL_CROSS          , NKCODE_BUTTON_B},
 	{CTRL_CIRCLE         , NKCODE_BUTTON_A},
 	{CTRL_SQUARE         , NKCODE_BUTTON_Y},
 	{CTRL_TRIANGLE       , NKCODE_BUTTON_X},
-	{CTRL_LEFT           , JOYSTICK_AXIS_HAT_X, -1},
+	// The hat for DPAD is standard for bluetooth pads, which is the most likely pads on Android I think.
 	{CTRL_LEFT           , NKCODE_DPAD_LEFT},
-	{CTRL_RIGHT          , JOYSTICK_AXIS_HAT_X, +1},
 	{CTRL_RIGHT          , NKCODE_DPAD_RIGHT},
-	{CTRL_UP             , JOYSTICK_AXIS_HAT_Y, -1},
 	{CTRL_UP             , NKCODE_DPAD_UP},
-	{CTRL_DOWN           , JOYSTICK_AXIS_HAT_Y, +1},
 	{CTRL_DOWN           , NKCODE_DPAD_DOWN},
 	{CTRL_START          , NKCODE_BUTTON_START},
-	{CTRL_SELECT         , NKCODE_BUTTON_SELECT},
+	{CTRL_SELECT         , NKCODE_BACK},
 	{CTRL_LTRIGGER       , NKCODE_BUTTON_L1},
 	{CTRL_RTRIGGER       , NKCODE_BUTTON_R1},
-	{VIRTKEY_FASTFORWARD , NKCODE_BUTTON_R2},
 	{VIRTKEY_FASTFORWARD , JOYSTICK_AXIS_RTRIGGER, +1},
-	{VIRTKEY_PAUSE       , NKCODE_BUTTON_L2},
 	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_LTRIGGER, +1},
 	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
 	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
 };
+
 
 static const DefMappingStruct defaultPadMapAndroid[] = {
 	{CTRL_CROSS          , NKCODE_BUTTON_A},
@@ -252,8 +242,6 @@ static const DefMappingStruct defaultPadMapAndroid[] = {
 	{VIRTKEY_FASTFORWARD , NKCODE_BUTTON_R2},
 	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_LTRIGGER, +1},
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_L2 },
-	{VIRTKEY_FASTFORWARD , JOYSTICK_AXIS_GAS, +1},
-	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_BRAKE, +1},
 	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
@@ -277,32 +265,29 @@ static const DefMappingStruct defaultPadMap[] = {
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
 	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
-	{VIRTKEY_PAUSE       , NKCODE_BUTTON_THUMBL},
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_SELECT },
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_L2 },
-	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_LTRIGGER, +1},
-	{VIRTKEY_SPEED_ANALOG, JOYSTICK_AXIS_RTRIGGER, +1},
 };
 
-static const DefMappingStruct defaultPadMapIOS[] = {
-	{CTRL_CROSS          , NKCODE_BUTTON_2},
-	{CTRL_CIRCLE         , NKCODE_BUTTON_3},
-	{CTRL_SQUARE         , NKCODE_BUTTON_4},
-	{CTRL_TRIANGLE       , NKCODE_BUTTON_1},
+static const DefMappingStruct defaultOuyaMap[] = {
+	{CTRL_CROSS          , NKCODE_BUTTON_A},
+	{CTRL_CIRCLE         , NKCODE_BUTTON_B},
+	{CTRL_SQUARE         , NKCODE_BUTTON_X},
+	{CTRL_TRIANGLE       , NKCODE_BUTTON_Y},
 	{CTRL_UP             , NKCODE_DPAD_UP},
 	{CTRL_RIGHT          , NKCODE_DPAD_RIGHT},
 	{CTRL_DOWN           , NKCODE_DPAD_DOWN},
 	{CTRL_LEFT           , NKCODE_DPAD_LEFT},
-	{CTRL_START          , NKCODE_BUTTON_START},
-	{CTRL_SELECT         , NKCODE_BUTTON_SELECT},
+	{CTRL_START          , NKCODE_BUTTON_R2},
+	{CTRL_SELECT         , NKCODE_BUTTON_L2},
 	{CTRL_LTRIGGER       , NKCODE_BUTTON_L1},
 	{CTRL_RTRIGGER       , NKCODE_BUTTON_R1},
+	{VIRTKEY_FASTFORWARD  , NKCODE_BUTTON_THUMBL},
+	{VIRTKEY_PAUSE       , NKCODE_BUTTON_THUMBR},
 	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
 	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
-	{VIRTKEY_PAUSE       , NKCODE_BUTTON_THUMBL },
-	{VIRTKEY_FASTFORWARD , JOYSTICK_AXIS_RTRIGGER, +1},
 };
 
 static const DefMappingStruct defaultXperiaPlay[] = {
@@ -324,35 +309,12 @@ static const DefMappingStruct defaultXperiaPlay[] = {
 	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, +1},
 };
 
-static const DefMappingStruct defaultVRLeftController[] = {
-	{CTRL_UP             , NKCODE_DPAD_UP},
-	{CTRL_DOWN           , NKCODE_DPAD_DOWN},
-	{CTRL_LEFT           , NKCODE_DPAD_LEFT},
-	{CTRL_RIGHT          , NKCODE_DPAD_RIGHT},
-	{CTRL_SELECT         , NKCODE_BUTTON_THUMBL},
-	{CTRL_LTRIGGER       , NKCODE_BUTTON_X},
-	{CTRL_RTRIGGER       , NKCODE_BUTTON_Y},
-	{CTRL_SCREEN         , NKCODE_ALT_LEFT},
-};
-
-static const DefMappingStruct defaultVRRightController[] = {
-	{CTRL_CIRCLE         , NKCODE_ALT_RIGHT},
-	{CTRL_CROSS          , NKCODE_ENTER},
-	{CTRL_SQUARE         , NKCODE_BUTTON_B},
-	{CTRL_TRIANGLE       , NKCODE_BUTTON_A},
-	{CTRL_START          , NKCODE_BUTTON_THUMBR},
-	{VIRTKEY_AXIS_Y_MAX, NKCODE_DPAD_UP},
-	{VIRTKEY_AXIS_Y_MIN, NKCODE_DPAD_DOWN},
-	{VIRTKEY_AXIS_X_MIN, NKCODE_DPAD_LEFT},
-	{VIRTKEY_AXIS_X_MAX, NKCODE_DPAD_RIGHT},
-};
-
-static void SetDefaultKeyMap(InputDeviceID deviceId, const DefMappingStruct *array, size_t count, bool replace) {
+static void SetDefaultKeyMap(int deviceId, const DefMappingStruct *array, size_t count, bool replace) {
 	for (size_t i = 0; i < count; i++) {
 		if (array[i].direction == 0)
-			SetInputMapping(array[i].pspKey, MultiInputMapping(InputMapping(deviceId, array[i].keyOrAxis)), replace);
+			SetKeyMapping(array[i].pspKey, KeyDef(deviceId, array[i].key), replace);
 		else
-			SetInputMapping(array[i].pspKey, MultiInputMapping(InputMapping(deviceId, array[i].keyOrAxis, array[i].direction)), replace);
+			SetAxisMapping(array[i].pspKey, deviceId, array[i].key, array[i].direction, replace);
 	}
 	g_seenDeviceIds.insert(deviceId);
 }
@@ -361,7 +323,7 @@ void SetDefaultKeyMap(DefaultMaps dmap, bool replace) {
 	switch (dmap) {
 	case DEFAULT_MAPPING_KEYBOARD:
 	{
-		int keyboardLayout = (int)System_GetPropertyInt(SYSPROP_KEYBOARD_LAYOUT);
+		int keyboardLayout = System_GetPropertyInt(SYSPROP_KEYBOARD_LAYOUT);
 		switch (keyboardLayout) {
 		case KEYBOARD_LAYOUT_QWERTZ:
 			SetDefaultKeyMap(DEVICE_ID_KEYBOARD, defaultQwertzKeyboardKeyMap, ARRAY_SIZE(defaultQwertzKeyboardKeyMap), replace);
@@ -391,8 +353,8 @@ void SetDefaultKeyMap(DefaultMaps dmap, bool replace) {
 	case DEFAULT_MAPPING_ANDROID_PAD:
 		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultPadMapAndroid, ARRAY_SIZE(defaultPadMapAndroid), replace);
 		break;
-	case DEFAULT_MAPPING_IOS_PAD:
-		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultPadMapIOS, ARRAY_SIZE(defaultPadMapIOS), replace);
+	case DEFAULT_MAPPING_OUYA:
+		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultOuyaMap, ARRAY_SIZE(defaultOuyaMap), replace);
 		break;
 	case DEFAULT_MAPPING_XPERIA_PLAY:
 		SetDefaultKeyMap(DEVICE_ID_DEFAULT, defaultXperiaPlay, ARRAY_SIZE(defaultXperiaPlay), replace);
@@ -400,12 +362,8 @@ void SetDefaultKeyMap(DefaultMaps dmap, bool replace) {
 	case DEFAULT_MAPPING_ANDROID_XBOX:
 		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultAndroidXboxControllerMap, ARRAY_SIZE(defaultAndroidXboxControllerMap), replace);
 		break;
-	case DEFAULT_MAPPING_RETROID_CONTROLLER:
-		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultRetroidControllerMap, ARRAY_SIZE(defaultRetroidControllerMap), replace);
-		break;
-	case DEFAULT_MAPPING_VR_HEADSET:
-		SetDefaultKeyMap(DEVICE_ID_XR_CONTROLLER_LEFT, defaultVRLeftController, ARRAY_SIZE(defaultVRLeftController), replace);
-		SetDefaultKeyMap(DEVICE_ID_XR_CONTROLLER_RIGHT, defaultVRRightController, ARRAY_SIZE(defaultVRRightController), replace);
+	case DEFAULT_MAPPING_RETRO_STATION_CONTROLLER:
+		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultRetroStationControllerMap, ARRAY_SIZE(defaultRetroStationControllerMap), replace);
 		break;
 	}
 

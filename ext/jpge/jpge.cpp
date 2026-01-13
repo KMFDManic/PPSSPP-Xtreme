@@ -30,7 +30,6 @@
 
 #include "jpge.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -934,6 +933,7 @@ namespace jpge {
 	}
 
 	// Higher level wrappers/examples (optional).
+#include <stdio.h>
 
 	class cfile_stream : public output_stream
 	{

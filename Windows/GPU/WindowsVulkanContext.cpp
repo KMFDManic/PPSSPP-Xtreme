@@ -52,7 +52,6 @@
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/System.h"
-#include "Core/FrameTiming.h"
 #include "Common/GPU/Vulkan/VulkanLoader.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 
@@ -60,7 +59,6 @@
 #include "Common/GPU/thin3d_create.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
 #include "Common/Data/Text/Parsers.h"
-#include "GPU/Vulkan/VulkanUtil.h"
 #include "Windows/GPU/WindowsVulkanContext.h"
 
 #ifdef _DEBUG
@@ -68,6 +66,15 @@ static const bool g_validate_ = true;
 #else
 static const bool g_validate_ = false;
 #endif
+
+static uint32_t FlagsFromConfig() {
+	uint32_t flags = 0;
+	flags = g_Config.bVSync ? VULKAN_FLAG_PRESENT_FIFO : VULKAN_FLAG_PRESENT_MAILBOX;
+	if (g_validate_) {
+		flags |= VULKAN_FLAG_VALIDATE;
+	}
+	return flags;
+}
 
 bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_message) {
 	*error_message = "N/A";
@@ -85,17 +92,17 @@ bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_m
 
 	Version gitVer(PPSSPP_GIT_VERSION);
 
-	std::string errorStr;
-	if (!VulkanLoad(&errorStr)) {
-		*error_message = "Failed to load Vulkan driver library: ";
-		(*error_message) += errorStr;
+	if (!VulkanLoad()) {
+		*error_message = "Failed to load Vulkan driver library";
 		return false;
 	}
 
 	vulkan_ = new VulkanContext();
 
 	VulkanContext::CreateInfo info{};
-	InitVulkanCreateInfoFromConfig(&info);
+	info.app_name = "PPSSPP";
+	info.app_ver = gitVer.ToInteger();
+	info.flags = FlagsFromConfig();
 	if (VK_SUCCESS != vulkan_->CreateInstance(info)) {
 		*error_message = vulkan_->InitError();
 		delete vulkan_;
@@ -109,7 +116,8 @@ bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_m
 			g_Config.sVulkanDevice = vulkan_->GetPhysicalDeviceProperties(deviceNum).properties.deviceName;
 	}
 
-	if (vulkan_->CreateDevice(deviceNum) != VK_SUCCESS) {
+	vulkan_->ChooseDevice(deviceNum);
+	if (vulkan_->CreateDevice() != VK_SUCCESS) {
 		*error_message = vulkan_->InitError();
 		delete vulkan_;
 		vulkan_ = nullptr;
@@ -117,21 +125,15 @@ bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_m
 	}
 
 	vulkan_->InitSurface(WINDOWSYSTEM_WIN32, (void *)hInst, (void *)hWnd);
-
-	bool useMultiThreading = g_Config.bRenderMultiThreading;
-	if (g_Config.iInflightFrames == 1) {
-		useMultiThreading = false;
-	}
-
-	draw_ = Draw::T3DCreateVulkanContext(vulkan_, useMultiThreading);
-
-	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
-	if (!vulkan_->InitSwapchain(presentMode)) {
+	if (!vulkan_->InitSwapchain()) {
 		*error_message = vulkan_->InitError();
 		Shutdown();
 		return false;
 	}
 
+	bool splitSubmit = g_Config.bGfxDebugSplitSubmit;
+
+	draw_ = Draw::T3DCreateVulkanContext(vulkan_, splitSubmit);
 	SetGPUBackend(GPUBackend::VULKAN, vulkan_->GetPhysicalDeviceProperties(deviceNum).properties.deviceName);
 	bool success = draw_->CreatePresets();
 	_assert_msg_(success, "Failed to compile preset shaders");
@@ -168,18 +170,16 @@ void WindowsVulkanContext::Shutdown() {
 
 void WindowsVulkanContext::Resize() {
 	draw_->HandleEvent(Draw::Event::LOST_BACKBUFFER, vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
-	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
-	vulkan_->InitSwapchain(presentMode);
+	vulkan_->DestroySwapchain();
+	vulkan_->UpdateFlags(FlagsFromConfig());
+	vulkan_->InitSwapchain();
 	draw_->HandleEvent(Draw::Event::GOT_BACKBUFFER, vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
 }
 
 void WindowsVulkanContext::Poll() {
 	// Check for existing swapchain to avoid issues during shutdown.
-	if (vulkan_->IsSwapchainInited() && renderManager_->NeedsSwapchainRecreate()) {
+	if (vulkan_->GetSwapchain() && renderManager_->NeedsSwapchainRecreate()) {
 		Resize();
-	} else if (vulkan_->IsSwapchainInited() && windowRestored_) {
-		Resize();
-		windowRestored_ = false;
 	}
 }
 

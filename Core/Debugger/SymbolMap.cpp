@@ -31,21 +31,19 @@
 
 #include <algorithm>
 #include <memory>
-#include <string_view>
 #include <unordered_map>
 
 #include "zlib.h"
 
-#include "ext/armips/Core/Assembler.h"
-
 #include "Common/CommonTypes.h"
+#include "Common/Data/Encoding/Utf8.h"
 #include "Common/Log.h"
 #include "Common/File/FileUtil.h"
 #include "Common/StringUtils.h"
-#include "Common/Buffer.h"
 #include "Core/MemMap.h"
-#include "Core/Config.h"
 #include "Core/Debugger/SymbolMap.h"
+
+#include "ext/armips/Core/Assembler.h"
 
 SymbolMap *g_symbolMap;
 
@@ -128,9 +126,9 @@ bool SymbolMap::LoadSymbolMap(const Path &filename) {
 
 		if (!started) continue;
 
-		u32 address = -1, size = 0, vaddress = -1;
+		u32 address = -1, size, vaddress = -1;
 		int moduleIndex = 0;
-		int typeInt = ST_NONE;
+		int typeInt;
 		SymbolType type;
 		char name[128] = {0};
 
@@ -146,13 +144,11 @@ bool SymbolMap::LoadSymbolMap(const Path &filename) {
 			continue;
 		}
 
-		int matched = sscanf(line, "%08x %08x %x %i %127c", &address, &size, &vaddress, &typeInt, name);
-		if (matched < 1)
-			continue;
+		sscanf(line, "%08x %08x %x %i %127c", &address, &size, &vaddress, &typeInt, name);
 		type = (SymbolType) typeInt;
 		if (!hasModules) {
 			if (!Memory::IsValidAddress(vaddress)) {
-				ERROR_LOG(Log::Loader, "Invalid address in symbol file: %08x (%s)", vaddress, name);
+				ERROR_LOG(LOADER, "Invalid address in symbol file: %08x (%s)", vaddress, name);
 				continue;
 			}
 		} else {
@@ -160,7 +156,7 @@ bool SymbolMap::LoadSymbolMap(const Path &filename) {
 			moduleIndex = vaddress;
 			vaddress = GetModuleAbsoluteAddr(address, moduleIndex);
 			if (!Memory::IsValidAddress(vaddress)) {
-				ERROR_LOG(Log::Loader, "Invalid address in symbol file: %08x (%s)", vaddress, name);
+				ERROR_LOG(LOADER, "Invalid address in symbol file: %08x (%s)", vaddress, name);
 				continue;
 			}
 		}
@@ -168,19 +164,11 @@ bool SymbolMap::LoadSymbolMap(const Path &filename) {
 		if (type == ST_DATA && size == 0)
 			size = 4;
 
-		// Ignore syscalls, will be recognized from stubs.
-		// Note: it's still useful to save these for grepping and importing into other tools.
-		if (strncmp(name, "zz_sce", 6) == 0)
-			continue;
-		// Also ignore unresolved imports, which will similarly be replaced.
-		if (strncmp(name, "zz_[UNK", 7) == 0)
-			continue;
-
 		if (!strcmp(name, ".text") || !strcmp(name, ".init") || strlen(name) <= 1) {
-			// Ignored
+
 		} else {
-			// Seems legit
-			switch (type) {
+			switch (type)
+			{
 			case ST_FUNCTION:
 				AddFunction(name, vaddress, size, moduleIndex);
 				break;
@@ -197,113 +185,45 @@ bool SymbolMap::LoadSymbolMap(const Path &filename) {
 		}
 	}
 	gzclose(f);
-	activeNeedUpdate_ = true;
 	SortSymbols();
 	return started;
 }
 
-bool SymbolMap::SaveSymbolMap(const Path &filename) const {
+void SymbolMap::SaveSymbolMap(const Path &filename) const {
 	std::lock_guard<std::recursive_mutex> guard(lock_);
 
 	// Don't bother writing a blank file.
 	if (!File::Exists(filename) && functions.empty() && data.empty()) {
-		return true;
+		return;
 	}
 
-	Buffer buf;
-	buf.Printf(".text\n");
+	// TODO(scoped): Use gzdopen
+#if defined(_WIN32) && defined(UNICODE)
+	gzFile f = gzopen_w(filename.ToWString().c_str(), "w9");
+#else
+	gzFile f = gzopen(filename.c_str(), "w9");
+#endif
+
+	if (f == Z_NULL)
+		return;
+
+	gzprintf(f, ".text\n");
+
 	for (auto it = modules.begin(), end = modules.end(); it != end; ++it) {
 		const ModuleEntry &mod = *it;
-		buf.Printf(".module %x %08x %08x %s\n", mod.index, mod.start, mod.size, mod.name);
+		gzprintf(f, ".module %x %08x %08x %s\n", mod.index, mod.start, mod.size, mod.name);
 	}
 
 	for (auto it = functions.begin(), end = functions.end(); it != end; ++it) {
 		const FunctionEntry& e = it->second;
-		buf.Printf("%08x %08x %x %i %s\n", e.start, e.size, e.module, ST_FUNCTION, GetLabelNameRel(e.start, e.module));
+		gzprintf(f, "%08x %08x %x %i %s\n", e.start, e.size, e.module, ST_FUNCTION, GetLabelNameRel(e.start, e.module));
 	}
 
 	for (auto it = data.begin(), end = data.end(); it != end; ++it) {
 		const DataEntry& e = it->second;
-		buf.Printf("%08x %08x %x %i %s\n", e.start, e.size, e.module, ST_DATA, GetLabelNameRel(e.start, e.module));
+		gzprintf(f, "%08x %08x %x %i %s\n", e.start, e.size, e.module, ST_DATA, GetLabelNameRel(e.start, e.module));
 	}
-
-	std::string data;
-	buf.TakeAll(&data);
-	FILE *file = File::OpenCFile(filename, "wb");
-	if (file == nullptr) {
-		return false;
-	}
-	if (g_Config.bCompressSymbols) {
-		uInt out_size = 4096;
-		Bytef *out_data = (Bytef *)std::malloc(out_size);
-		if (out_data == nullptr) {
-			fclose(file);
-			return false;
-		}
-		z_stream strm;
-		strm.zalloc = nullptr;
-		strm.zfree = nullptr;
-		strm.opaque = nullptr;
-		if (deflateInit2(&strm, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
-			std::free(out_data);
-			fclose(file);
-			return false;
-		}
-		strm.next_in = (Bytef *)data.data();
-		strm.avail_in = data.size();
-		strm.next_out = out_data;
-		strm.avail_out = out_size;
-		int flush = Z_NO_FLUSH;
-		for (;;) {
-			int status = deflate(&strm, flush);
-			switch (status) {
-				case Z_OK:
-				case Z_STREAM_END:
-					if (strm.avail_out != out_size) {
-						fwrite(out_data, 1, out_size - strm.avail_out, file);
-					}
-					break;
-				case Z_BUF_ERROR:
-					{
-						std::free(out_data);
-						uInt new_out_size = 2 * out_size;
-						if (new_out_size < out_size) {
-							deflateEnd(&strm);
-							fclose(file);
-							return false;
-						}
-						out_size = new_out_size;
-						out_data = (Bytef *)std::malloc(out_size);
-						if (out_data == nullptr) {
-							deflateEnd(&strm);
-							fclose(file);
-							return false;
-						}
-					}
-					break;
-				default:
-					deflateEnd(&strm);
-					std::free(out_data);
-					fclose(file);
-					return false;
-			}
-			if (status == Z_STREAM_END) {
-				break;
-			}
-			if (strm.avail_in == 0) {
-				flush = Z_FINISH;
-			}
-			strm.next_out = out_data;
-			strm.avail_out = out_size;
-		}
-		deflateEnd(&strm);
-		std::free(out_data);
-	} else {
-		// Just plain write it.
-		fwrite(data.data(), 1, data.size(), file);
-	}
-	fclose(file);
-	return true;
+	gzclose(f);
 }
 
 bool SymbolMap::LoadNocashSym(const Path &filename) {
@@ -346,43 +266,43 @@ bool SymbolMap::LoadNocashSym(const Path &filename) {
 			}
 		} else {				// labels
 			unsigned int size = 1;
-			char *separator = strchr(value, ',');
-			if (separator != NULL) {
-				*separator = '\0';
-				sscanf(separator + 1, "%08X", &size);
+			char* seperator = strchr(value, ',');
+			if (seperator != NULL) {
+				*seperator = 0;
+				sscanf(seperator+1,"%08X",&size);
 			}
 
 			if (size != 1) {
-				AddFunction(value, address, size, 0);
+				AddFunction(value, address,size, 0);
 			} else {
 				AddLabel(value, address, 0);
 			}
 		}
 	}
+
 	fclose(f);
 	return true;
 }
 
-bool SymbolMap::SaveNocashSym(const Path &filename) const {
+void SymbolMap::SaveNocashSym(const Path &filename) const {
 	std::lock_guard<std::recursive_mutex> guard(lock_);
 
 	// Don't bother writing a blank file.
 	if (!File::Exists(filename) && functions.empty() && data.empty()) {
-		return false;
+		return;
 	}
 
-	FILE *f = File::OpenCFile(filename, "w");
-	if (!f)
-		return false;
+	FILE* f = File::OpenCFile(filename, "w");
+	if (f == NULL)
+		return;
 
 	// only write functions, the rest isn't really interesting
 	for (auto it = functions.begin(), end = functions.end(); it != end; ++it) {
 		const FunctionEntry& e = it->second;
-		fprintf(f, "%08X %s,%04X\n", GetModuleAbsoluteAddr(e.start,e.module), GetLabelNameRel(e.start, e.module), e.size);
+		fprintf(f, "%08X %s,%04X\n", GetModuleAbsoluteAddr(e.start,e.module),GetLabelNameRel(e.start, e.module), e.size);
 	}
-
+	
 	fclose(f);
-	return true;
 }
 
 SymbolType SymbolMap::GetSymbolType(u32 address) {
@@ -457,7 +377,7 @@ u32 SymbolMap::GetNextSymbolAddress(u32 address, SymbolType symmask) {
 
 std::string SymbolMap::GetDescription(unsigned int address) {
 	std::lock_guard<std::recursive_mutex> guard(lock_);
-	const char *labelName = nullptr;
+	const char* labelName = NULL;
 
 	u32 funcStart = GetFunctionStart(address);
 	if (funcStart != INVALID_ADDRESS) {
@@ -468,15 +388,15 @@ std::string SymbolMap::GetDescription(unsigned int address) {
 			labelName = GetLabelName(dataStart);
 	}
 
-	if (labelName)
+	if (labelName != NULL)
 		return labelName;
 
-	char descriptionTemp[32];
-	snprintf(descriptionTemp, sizeof(descriptionTemp), "(%08x)", address);
+	char descriptionTemp[256];
+	sprintf(descriptionTemp, "(%08x)", address);
 	return descriptionTemp;
 }
 
-std::vector<SymbolEntry> SymbolMap::GetAllActiveSymbols(SymbolType symmask) {
+std::vector<SymbolEntry> SymbolMap::GetAllSymbols(SymbolType symmask) {
 	if (activeNeedUpdate_)
 		UpdateActiveSymbols();
 
@@ -489,7 +409,7 @@ std::vector<SymbolEntry> SymbolMap::GetAllActiveSymbols(SymbolType symmask) {
 			entry.address = it->first;
 			entry.size = GetFunctionSize(entry.address);
 			const char* name = GetLabelName(entry.address);
-			if (name)
+			if (name != NULL)
 				entry.name = name;
 			result.push_back(entry);
 		}
@@ -502,7 +422,7 @@ std::vector<SymbolEntry> SymbolMap::GetAllActiveSymbols(SymbolType symmask) {
 			entry.address = it->first;
 			entry.size = GetDataSize(entry.address);
 			const char* name = GetLabelName(entry.address);
-			if (name)
+			if (name != NULL)
 				entry.name = name;
 			result.push_back(entry);
 		}
@@ -519,7 +439,7 @@ void SymbolMap::AddModule(const char *name, u32 address, u32 size) {
 			// Just reactivate that one.
 			it->start = address;
 			it->size = size;
-			activeModuleEnds.emplace(it->start + it->size, *it);
+			activeModuleEnds.insert(std::make_pair(it->start + it->size, *it));
 			activeNeedUpdate_ = true;
 			return;
 		}
@@ -532,7 +452,7 @@ void SymbolMap::AddModule(const char *name, u32 address, u32 size) {
 	mod.index = (int)modules.size() + 1;
 
 	modules.push_back(mod);
-	activeModuleEnds.emplace(mod.start + mod.size, mod);
+	activeModuleEnds.insert(std::make_pair(mod.start + mod.size, mod));
 	activeNeedUpdate_ = true;
 }
 
@@ -639,7 +559,7 @@ void SymbolMap::AddFunction(const char* name, u32 address, u32 size, int moduleI
 		auto active = activeFunctions.find(address);
 		if (active != activeFunctions.end() && active->second.module == moduleIndex) {
 			activeFunctions.erase(active);
-			activeFunctions.emplace(address, existing->second);
+			activeFunctions.insert(std::make_pair(address, existing->second));
 		}
 	} else {
 		FunctionEntry func;
@@ -650,7 +570,7 @@ void SymbolMap::AddFunction(const char* name, u32 address, u32 size, int moduleI
 		functions[symbolKey] = func;
 
 		if (IsModuleActive(moduleIndex)) {
-			activeFunctions.emplace(address, func);
+			activeFunctions.insert(std::make_pair(address, func));
 		}
 	}
 
@@ -775,8 +695,8 @@ void SymbolMap::AssignFunctionIndices() {
 	}
 }
 
-// Copies functions, labels and data to the active set depending on which modules are "active".
 void SymbolMap::UpdateActiveSymbols() {
+	// return;   (slow in debug mode)
 	std::lock_guard<std::recursive_mutex> guard(lock_);
 
 	activeFunctions.clear();
@@ -796,27 +716,27 @@ void SymbolMap::UpdateActiveSymbols() {
 	for (auto it = functions.begin(), end = functions.end(); it != end; ++it) {
 		const auto mod = activeModuleIndexes.find(it->second.module);
 		if (it->second.module == 0) {
-			activeFunctions.emplace(it->second.start, it->second);
+			activeFunctions.insert(std::make_pair(it->second.start, it->second));
 		} else if (mod != activeModuleIndexes.end()) {
-			activeFunctions.emplace(mod->second + it->second.start, it->second);
+			activeFunctions.insert(std::make_pair(mod->second + it->second.start, it->second));
 		}
 	}
 
 	for (auto it = labels.begin(), end = labels.end(); it != end; ++it) {
 		const auto mod = activeModuleIndexes.find(it->second.module);
 		if (it->second.module == 0) {
-			activeLabels.emplace(it->second.addr, it->second);
+			activeLabels.insert(std::make_pair(it->second.addr, it->second));
 		} else if (mod != activeModuleIndexes.end()) {
-			activeLabels.emplace(mod->second + it->second.addr, it->second);
+			activeLabels.insert(std::make_pair(mod->second + it->second.addr, it->second));
 		}
 	}
 
 	for (auto it = data.begin(), end = data.end(); it != end; ++it) {
 		const auto mod = activeModuleIndexes.find(it->second.module);
 		if (it->second.module == 0) {
-			activeData.emplace(it->second.start, it->second);
+			activeData.insert(std::make_pair(it->second.start, it->second));
 		} else if (mod != activeModuleIndexes.end()) {
-			activeData.emplace(mod->second + it->second.start, it->second);
+			activeData.insert(std::make_pair(mod->second + it->second.start, it->second));
 		}
 	}
 
@@ -837,7 +757,7 @@ bool SymbolMap::SetFunctionSize(u32 startAddress, u32 newSize) {
 		if (func != functions.end()) {
 			func->second.size = newSize;
 			activeFunctions.erase(funcInfo);
-			activeFunctions.emplace(startAddress, func->second);
+			activeFunctions.insert(std::make_pair(startAddress, func->second));
 		}
 	}
 
@@ -909,7 +829,7 @@ void SymbolMap::AddLabel(const char* name, u32 address, int moduleIndex) {
 			auto active = activeLabels.find(address);
 			if (active != activeLabels.end() && active->second.module == moduleIndex) {
 				activeLabels.erase(active);
-				activeLabels.emplace(address, label);
+				activeLabels.insert(std::make_pair(address, label));
 			}
 		}
 	} else {
@@ -920,7 +840,7 @@ void SymbolMap::AddLabel(const char* name, u32 address, int moduleIndex) {
 
 		labels[symbolKey] = label;
 		if (IsModuleActive(moduleIndex)) {
-			activeLabels.emplace(address, label);
+			activeLabels.insert(std::make_pair(address, label));
 		}
 	}
 }
@@ -944,7 +864,7 @@ void SymbolMap::SetLabelName(const char* name, u32 address) {
 			auto active = activeLabels.find(address);
 			if (active != activeLabels.end() && active->second.module == label->second.module) {
 				activeLabels.erase(active);
-				activeLabels.emplace(address, label->second);
+				activeLabels.insert(std::make_pair(address, label->second));
 			}
 		}
 	}
@@ -1027,7 +947,7 @@ void SymbolMap::AddData(u32 address, u32 size, DataType type, int moduleIndex) {
 		auto active = activeData.find(address);
 		if (active != activeData.end() && active->second.module == moduleIndex) {
 			activeData.erase(active);
-			activeData.emplace(address, existing->second);
+			activeData.insert(std::make_pair(address, existing->second));
 		}
 	} else {
 		DataEntry entry;
@@ -1038,7 +958,7 @@ void SymbolMap::AddData(u32 address, u32 size, DataType type, int moduleIndex) {
 
 		data[symbolKey] = entry;
 		if (IsModuleActive(moduleIndex)) {
-			activeData.emplace(address, entry);
+			activeData.insert(std::make_pair(address, entry));
 		}
 	}
 }
@@ -1117,9 +1037,8 @@ void SymbolMap::GetLabels(std::vector<LabelDefinition> &dest) {
 	for (auto it = activeLabels.begin(); it != activeLabels.end(); it++) {
 		LabelDefinition entry;
 		entry.value = it->first;
-		std::string name = it->second.name;
-		std::transform(name.begin(), name.end(), name.begin(), ::tolower);
-		entry.name = Identifier(name);
+		entry.name = ConvertUTF8ToWString(it->second.name);
+		std::transform(entry.name.begin(), entry.name.end(), entry.name.begin(), ::towlower);
 		dest.push_back(entry);
 	}
 }
@@ -1168,7 +1087,7 @@ void SymbolMap::FillSymbolListBox(HWND listbox,SymbolType symType) {
 
 	case ST_DATA:
 		{
-			size_t count = ARRAYSIZE(defaultSymbols)+activeData.size();
+			int count = ARRAYSIZE(defaultSymbols)+(int)activeData.size();
 			SendMessage(listbox, LB_INITSTORAGE, (WPARAM)count, (LPARAM)count * 30);
 
 			for (int i = 0; i < ARRAYSIZE(defaultSymbols); i++) {
@@ -1189,9 +1108,6 @@ void SymbolMap::FillSymbolListBox(HWND listbox,SymbolType symType) {
 				ListBox_SetItemData(listbox,index,it->first);
 			}
 		}
-		break;
-	case ST_NONE:
-	case ST_ALL:
 		break;
 	}
 

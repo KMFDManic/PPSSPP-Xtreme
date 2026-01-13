@@ -28,13 +28,15 @@
 std::vector<std::string> DisassembleArm2(const u8 *data, int size);
 std::vector<std::string> DisassembleArm64(const u8 *data, int size);
 std::vector<std::string> DisassembleX86(const u8 *data, int size);
-std::vector<std::string> DisassembleRV64(const u8 *data, int size);
-std::vector<std::string> DisassembleLA64(const u8 *data, int size);
 
 struct JitBlock;
 class JitBlockCache;
 class JitBlockCacheDebugInterface;
 class PointerWrap;
+
+#ifdef USING_QT_UI
+#undef emit
+#endif
 
 class MIPSState;
 
@@ -51,7 +53,6 @@ namespace MIPSComp {
 		virtual void Comp_RunBlock(MIPSOpcode op) = 0;
 		virtual void Comp_ReplacementFunc(MIPSOpcode op) = 0;
 		virtual void Comp_ITypeMem(MIPSOpcode op) = 0;
-		virtual void Comp_StoreSync(MIPSOpcode op) = 0;
 		virtual void Comp_Cache(MIPSOpcode op) = 0;
 		virtual void Comp_RelBranch(MIPSOpcode op) = 0;
 		virtual void Comp_RelBranchRI(MIPSOpcode op) = 0;
@@ -133,6 +134,7 @@ namespace MIPSComp {
 		virtual void DoState(PointerWrap &p) = 0;
 		virtual void RunLoopUntil(u64 globalticks) = 0;
 		virtual void Compile(u32 em_address) = 0;
+		virtual void CompileFunction(u32 start_address, u32 length) { }
 		virtual void ClearCache() = 0;
 		virtual void UpdateFCR31() = 0;
 		virtual MIPSOpcode GetOriginalOp(MIPSOpcode op) = 0;
@@ -151,27 +153,10 @@ namespace MIPSComp {
 	typedef void (MIPSFrontendInterface::*MIPSCompileFunc)(MIPSOpcode opcode);
 	typedef int (MIPSFrontendInterface::*MIPSReplaceFunc)();
 
-	struct BranchInfo {
-		BranchInfo(u32 pc, MIPSOpcode op, MIPSOpcode delaySlotOp, bool andLink, bool likely);
-
-		u32 compilerPC;
-		MIPSOpcode op;
-		MIPSOpcode delaySlotOp;
-		u64 delaySlotInfo;
-		bool likely;
-		bool andLink;
-		// Update manually if it's not always nice (rs/rt, rs/zero, etc.)
-		bool delaySlotIsNice = true;
-		bool delaySlotIsBranch;
-	};
-
-	// This seems to be the same for all branch types.
-	u32 ResolveNotTakenTarget(const BranchInfo &branchInfo);
-
 	extern JitInterface *jit;
 	extern std::recursive_mutex jitLock;
 
 	void DoDummyJitState(PointerWrap &p);
 
-	JitInterface *CreateNativeJit(MIPSState *mipsState, bool useIR);
+	JitInterface *CreateNativeJit(MIPSState *mipsState);
 }

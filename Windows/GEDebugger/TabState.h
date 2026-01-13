@@ -20,16 +20,14 @@
 #include "Windows/W32Util/DialogManager.h"
 #include "Windows/W32Util/Misc.h"
 
-#include "GPU/Debugger/GECommandTable.h"
-
 struct TabStateRow;
 
 class CtrlStateValues: public GenericListControl {
 public:
-	CtrlStateValues(const GECommand *rows, int rowCount, HWND hwnd);
+	CtrlStateValues(const TabStateRow *rows, int rowCount, HWND hwnd);
 
 	// Used by watch.
-	void UpdateRows(const GECommand *rows, int rowCount) {
+	void UpdateRows(const TabStateRow *rows, int rowCount) {
 		rows_ = rows;
 		rowCount_ = rowCount;
 	}
@@ -38,7 +36,7 @@ protected:
 	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& returnValue) override {
 		return false;
 	}
-	void GetColumnText(wchar_t *dest, size_t destSize, int row, int col) override;
+	void GetColumnText(wchar_t* dest, int row, int col) override;
 	int GetRowCount() override { return rowCount_; }
 	void OnDoubleClick(int row, int column) override;
 	void OnRightClick(int row, int column, const POINT& point) override;
@@ -49,23 +47,22 @@ protected:
 private:
 	bool RowValuesChanged(int row);
 	void SetCmdValue(u32 op);
-	void PromptBreakpointCond(const GECmdInfo &info);
 
-	const GECommand *rows_;
+	const TabStateRow *rows_;
 	int rowCount_;
 };
 
 class TabStateValues : public Dialog {
 public:
-	TabStateValues(const GECommand *rows, size_t rowCount, LPCSTR dialogID, HINSTANCE _hInstance, HWND _hParent);
+	TabStateValues(const TabStateRow *rows, int rowCount, LPCSTR dialogID, HINSTANCE _hInstance, HWND _hParent);
 	~TabStateValues();
 
-	void Update() override {
+	virtual void Update() {
 		values->Update();
 	}
 
 protected:
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 
 	CtrlStateValues *values;
 

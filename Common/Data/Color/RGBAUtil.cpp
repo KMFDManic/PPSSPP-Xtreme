@@ -30,7 +30,7 @@ uint32_t colorAlpha(uint32_t rgb, float alpha) {
 }
 
 uint32_t colorBlend(uint32_t rgb1, uint32_t rgb2, float alpha) {
-	const float invAlpha = (1.0f - alpha);
+	float invAlpha = (1.0f - alpha);
 	int r = (int)(((rgb1 >> 0) & 0xFF) * alpha + ((rgb2 >> 0) & 0xFF) * invAlpha);
 	int g = (int)(((rgb1 >> 8) & 0xFF) * alpha + ((rgb2 >> 8) & 0xFF) * invAlpha);
 	int b = (int)(((rgb1 >> 16) & 0xFF) * alpha + ((rgb2 >> 16) & 0xFF) * invAlpha);
@@ -44,21 +44,19 @@ uint32_t colorBlend(uint32_t rgb1, uint32_t rgb2, float alpha) {
 }
 
 uint32_t alphaMul(uint32_t color, float alphaMul) {
-	const uint32_t rgb = color & 0xFFFFFF;
+	uint32_t rgb = color & 0xFFFFFF;
 	int32_t alpha = color >> 24;
 	alpha = (int32_t)(alpha * alphaMul);
-	if (alpha < 0)
-		alpha = 0;
-	if (alpha > 255)
-		alpha = 255;
-	return (alpha << 24) | rgb;
+	if (alpha < 0) alpha = 0;
+	if (alpha > 255) alpha = 255;
+	return (alpha << 24) | (rgb & 0xFFFFFF);
 }
 
 uint32_t rgba(float r, float g, float b, float alpha) {
-	uint32_t color = (int)(alpha * 255.0f) << 24;
-	color |= (int)(b * 255.0f) << 16;
-	color |= (int)(g * 255.0f) << 8;
-	color |= (int)(r * 255.0f);
+	uint32_t color = (int)(alpha*255)<<24;
+	color |= (int)(b*255)<<16;
+	color |= (int)(g*255)<<8;
+	color |= (int)(r*255);
 	return color;
 }
 

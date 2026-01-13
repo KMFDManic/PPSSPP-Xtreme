@@ -51,7 +51,7 @@ static void ParseExtensionsString(const std::string& str, std::set<std::string> 
 	size_t next = 0;
 	for (size_t pos = 0, len = str.length(); pos < len; ++pos) {
 		if (str[pos] == ' ') {
-			output.emplace(str.substr(next, pos - next));
+			output.insert(str.substr(next, pos - next));
 			// Skip the delimiter itself.
 			next = pos + 1;
 		}
@@ -60,7 +60,7 @@ static void ParseExtensionsString(const std::string& str, std::set<std::string> 
 	if (next == 0 && str.length() != 0) {
 		output.insert(str);
 	} else if (next < str.length()) {
-		output.emplace(str.substr(next));
+		output.insert(str.substr(next));
 	}
 }
 
@@ -105,7 +105,7 @@ int GLExtensions::GLSLVersion() {
 void ProcessGPUFeatures() {
 	gl_extensions.bugs = 0;
 
-	DEBUG_LOG(Log::G3D, "Checking for GL driver bugs... vendor=%i model='%s'", (int)gl_extensions.gpuVendor, gl_extensions.model);
+	DEBUG_LOG(G3D, "Checking for GL driver bugs... vendor=%i model='%s'", (int)gl_extensions.gpuVendor, gl_extensions.model);
 
 	if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
 		if (!strcmp(gl_extensions.model, "PowerVR SGX 545") ||
@@ -115,11 +115,11 @@ void ProcessGPUFeatures() {
 			  !strcmp(gl_extensions.model, "PowerVR SGX 540") ||
 			  !strcmp(gl_extensions.model, "PowerVR SGX 530") ||
 				!strcmp(gl_extensions.model, "PowerVR SGX 520") ) {
-			WARN_LOG(Log::G3D, "GL DRIVER BUG: PVR with bad and terrible precision");
+			WARN_LOG(G3D, "GL DRIVER BUG: PVR with bad and terrible precision");
 			gl_extensions.bugs |= BUG_PVR_SHADER_PRECISION_TERRIBLE | BUG_PVR_SHADER_PRECISION_BAD;
 		} else {
 			// TODO: I'm not sure if the Rogue series is affected by this.
-			WARN_LOG(Log::G3D, "GL DRIVER BUG: PVR with bad precision");
+			WARN_LOG(G3D, "GL DRIVER BUG: PVR with bad precision");
 			gl_extensions.bugs |= BUG_PVR_SHADER_PRECISION_BAD;
 		}
 	}
@@ -127,27 +127,21 @@ void ProcessGPUFeatures() {
 
 // http://stackoverflow.com/questions/16147700/opengl-es-using-tegra-specific-extensions-gl-ext-texture-array
 
-bool CheckGLExtensions() {
-#if PPSSPP_API(ANY_GL)
-	// Make sure to only do this once. It's okay to call CheckGLExtensions from wherever,
-	// as long as you're on the rendering thread (the one with the GL context).
-	if (extensionsDone) {
-		return true;
-	}
+void CheckGLExtensions() {
 
-	gl_extensions = {};
+#if PPSSPP_API(ANY_GL)
+
+	// Make sure to only do this once. It's okay to call CheckGLExtensions from wherever.
+	if (extensionsDone)
+		return;
+	extensionsDone = true;
+	memset(&gl_extensions, 0, sizeof(gl_extensions));
 	gl_extensions.IsCoreContext = useCoreContext;
 
 	const char *renderer = (const char *)glGetString(GL_RENDERER);
 	const char *versionStr = (const char *)glGetString(GL_VERSION);
 	const char *glslVersionStr = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
 
-	if (!renderer || !versionStr || !glslVersionStr) {
-		// Something is very wrong! Bail.
-		return false;
-	}
-
-	extensionsDone = true;
 
 #ifdef USING_GLES2
 	gl_extensions.IsGLES = !useCoreContext;
@@ -162,7 +156,7 @@ bool CheckGLExtensions() {
 	const char *cvendor = (char *)glGetString(GL_VENDOR);
 	// TODO: move this stuff to gpu_features.cpp
 	if (cvendor) {
-		const std::string vendor(StripSpaces(cvendor));
+		const std::string vendor = StripSpaces(std::string(cvendor));
 		if (vendor == "NVIDIA Corporation"
 			|| vendor == "Nouveau"
 			|| vendor == "nouveau") {
@@ -182,9 +176,7 @@ bool CheckGLExtensions() {
 			gl_extensions.gpuVendor = GPU_VENDOR_IMGTEC;
 		} else if (vendor == "Qualcomm") {
 			gl_extensions.gpuVendor = GPU_VENDOR_QUALCOMM;
-			if (1 != sscanf(renderer, "Adreno (TM) %d", &gl_extensions.modelNumber)) {
-				gl_extensions.modelNumber = 300;  // or what should we default to?
-			}
+			sscanf(renderer, "Adreno (TM) %d", &gl_extensions.modelNumber);
 		} else if (vendor == "Broadcom") {
 			gl_extensions.gpuVendor = GPU_VENDOR_BROADCOM;
 			// Just for reference: Galaxy Y has renderer == "VideoCore IV HW"
@@ -193,30 +185,29 @@ bool CheckGLExtensions() {
 		} else if (vendor == "Apple Inc." || vendor == "Apple") {
 			gl_extensions.gpuVendor = GPU_VENDOR_APPLE;
 		} else {
-			WARN_LOG(Log::G3D, "Unknown GL vendor: '%s'", vendor.c_str());
+			WARN_LOG(G3D, "Unknown GL vendor: '%s'", vendor.c_str());
 			gl_extensions.gpuVendor = GPU_VENDOR_UNKNOWN;
 		}
 	} else {
 		gl_extensions.gpuVendor = GPU_VENDOR_UNKNOWN;
 	}
 
-	INFO_LOG(Log::G3D, "GPU Vendor : %s ; renderer: %s version str: %s ; GLSL version str: %s", cvendor ? cvendor : "N/A", renderer, versionStr ? versionStr : "N/A", glslVersionStr ? glslVersionStr : "N/A");
+	INFO_LOG(G3D, "GPU Vendor : %s ; renderer: %s version str: %s ; GLSL version str: %s", cvendor ? cvendor : "N/A", renderer ? renderer : "N/A", versionStr ? versionStr : "N/A", glslVersionStr ? glslVersionStr : "N/A");
 
-	strncpy(gl_extensions.model, renderer, sizeof(gl_extensions.model));
-	gl_extensions.model[sizeof(gl_extensions.model) - 1] = 0;
-
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &gl_extensions.maxTextureSize);
-#ifndef USING_GLES2
-	glGetIntegerv(GL_MAX_CLIP_PLANES, &gl_extensions.maxClipPlanes);
-#endif
-
+	if (renderer) {
+		strncpy(gl_extensions.model, renderer, sizeof(gl_extensions.model));
+		gl_extensions.model[sizeof(gl_extensions.model) - 1] = 0;
+	}
+	
 	// Start by assuming we're at 2.0.
 	int parsed[2] = {2, 0};
 	{ // Grab the version and attempt to parse.		
 		char buffer[128] = { 0 };
-		strncpy(buffer, versionStr, sizeof(buffer) - 1);
+		if (versionStr) {
+			strncpy(buffer, versionStr, sizeof(buffer) - 1);
+		}
 	
-		const int len = (int)strlen(buffer);
+		int len = (int)strlen(buffer);
 		bool beforeDot = true;
 		int lastDigit = 0;
 		for (int i = 0; i < len; i++) {
@@ -268,7 +259,7 @@ bool CheckGLExtensions() {
 			gl_extensions.ver[1] = 0;
 		} else if (parsed[0] && (gl_extensions.ver[0] != parsed[0] || gl_extensions.ver[1] != parsed[1])) {
 			// Something going wrong. Possible bug in GL ES drivers. See #9688
-			INFO_LOG(Log::G3D, "GL ES version mismatch. Version string '%s' parsed as %d.%d but API return %d.%d. Fallback to GL ES 2.0.", 
+			INFO_LOG(G3D, "GL ES version mismatch. Version string '%s' parsed as %d.%d but API return %d.%d. Fallback to GL ES 2.0.", 
 				versionStr ? versionStr : "N/A", parsed[0], parsed[1], gl_extensions.ver[0], gl_extensions.ver[1]);
 			
 			gl_extensions.ver[0] = 2;
@@ -278,12 +269,12 @@ bool CheckGLExtensions() {
 
 		// If the above didn't give us a version, or gave us a crazy version, fallback.
 #ifdef USING_GLES2
-		if (versionStr && (gl_extensions.ver[0] < 3 || gl_extensions.ver[0] > 5)) {
+		if (gl_extensions.ver[0] < 3 || gl_extensions.ver[0] > 5) {
 			// Try to load GLES 3.0 only if "3.0" found in version
 			// This simple heuristic avoids issues on older devices where you can only call eglGetProcAddress a limited
 			// number of times. Make sure to check for 3.0 in the shader version too to avoid false positives, see #5584.
-			bool gl_3_0_in_string = versionStr && strstr(versionStr, "3.0") && glslVersionStr && strstr(glslVersionStr, "3.0");
-			bool gl_3_1_in_string = versionStr && strstr(versionStr, "3.1") && glslVersionStr && strstr(glslVersionStr, "3.1");  // intentionally left out .1
+			bool gl_3_0_in_string = strstr(versionStr, "3.0") && (glslVersionStr && strstr(glslVersionStr, "3.0"));
+			bool gl_3_1_in_string = strstr(versionStr, "3.1") && (glslVersionStr && strstr(glslVersionStr, "3.1"));  // intentionally left out .1
 			if ((gl_3_0_in_string || gl_3_1_in_string) && gl3stubInit()) {
 				gl_extensions.ver[0] = 3;
 				if (gl_3_1_in_string) {
@@ -292,7 +283,7 @@ bool CheckGLExtensions() {
 				gl_extensions.GLES3 = true;
 				// Though, let's ban Mali from the GLES 3 path for now, see #4078
 				if (strstr(renderer, "Mali") != 0) {
-					INFO_LOG(Log::G3D, "Forcing GLES3 off for Mali driver version: %s\n", versionStr ? versionStr : "N/A");
+					INFO_LOG(G3D, "Forcing GLES3 off for Mali driver version: %s\n", versionStr ? versionStr : "N/A");
 					gl_extensions.GLES3 = false;
 				}
 			} else {
@@ -313,9 +304,9 @@ bool CheckGLExtensions() {
 
 		if (gl_extensions.GLES3) {
 			if (gl_extensions.ver[1] >= 1) {
-				INFO_LOG(Log::G3D, "OpenGL ES 3.1 support detected!\n");
+				INFO_LOG(G3D, "OpenGL ES 3.1 support detected!\n");
 			} else {
-				INFO_LOG(Log::G3D, "OpenGL ES 3.0 support detected!\n");
+				INFO_LOG(G3D, "OpenGL ES 3.0 support detected!\n");
 			}
 		}
 	}
@@ -354,8 +345,10 @@ bool CheckGLExtensions() {
 
 	// Check the desktop extension instead of the OES one. They are very similar.
 	// Also explicitly check those ATI devices that claims to support npot
-	gl_extensions.OES_texture_npot = g_set_gl_extensions.count("GL_ARB_texture_non_power_of_two") != 0
-		&& !(((strncmp(renderer, "ATI RADEON X", 12) == 0) || (strncmp(renderer, "ATI MOBILITY RADEON X", 21) == 0)));
+	if (renderer) {
+		gl_extensions.OES_texture_npot = g_set_gl_extensions.count("GL_ARB_texture_non_power_of_two") != 0
+			&& !(((strncmp(renderer, "ATI RADEON X", 12) == 0) || (strncmp(renderer, "ATI MOBILITY RADEON X", 21) == 0)));
+	}
 
 	gl_extensions.ARB_conservative_depth = g_set_gl_extensions.count("GL_ARB_conservative_depth") != 0;
 	gl_extensions.ARB_shader_image_load_store = (g_set_gl_extensions.count("GL_ARB_shader_image_load_store") != 0) || (g_set_gl_extensions.count("GL_EXT_shader_image_load_store") != 0);
@@ -377,13 +370,6 @@ bool CheckGLExtensions() {
 	gl_extensions.ARB_depth_clamp = g_set_gl_extensions.count("GL_ARB_depth_clamp") != 0;
 	gl_extensions.ARB_uniform_buffer_object = g_set_gl_extensions.count("GL_ARB_uniform_buffer_object") != 0;
 	gl_extensions.ARB_explicit_attrib_location = g_set_gl_extensions.count("GL_ARB_explicit_attrib_location") != 0;
-	gl_extensions.ARB_texture_non_power_of_two = g_set_gl_extensions.count("GL_ARB_texture_non_power_of_two") != 0;
-	gl_extensions.ARB_shader_stencil_export = g_set_gl_extensions.count("GL_ARB_shader_stencil_export") != 0;
-	gl_extensions.ARB_texture_compression_bptc = g_set_gl_extensions.count("GL_ARB_texture_compression_bptc") != 0;
-	gl_extensions.ARB_texture_compression_rgtc = g_set_gl_extensions.count("GL_ARB_texture_compression_rgtc") != 0;
-	gl_extensions.KHR_texture_compression_astc_ldr = g_set_gl_extensions.count("GL_KHR_texture_compression_astc_ldr") != 0;
-	gl_extensions.EXT_texture_compression_s3tc = g_set_gl_extensions.count("GL_EXT_texture_compression_s3tc") != 0;
-	gl_extensions.OES_texture_compression_astc = g_set_gl_extensions.count("GL_OES_texture_compression_astc") != 0;
 
 	if (gl_extensions.IsGLES) {
 		gl_extensions.EXT_blend_func_extended = g_set_gl_extensions.count("GL_EXT_blend_func_extended") != 0;
@@ -397,10 +383,8 @@ bool CheckGLExtensions() {
 		gl_extensions.EXT_shader_framebuffer_fetch = g_set_gl_extensions.count("GL_EXT_shader_framebuffer_fetch") != 0;
 		gl_extensions.ARM_shader_framebuffer_fetch = g_set_gl_extensions.count("GL_ARM_shader_framebuffer_fetch") != 0;
 		gl_extensions.OES_texture_float = g_set_gl_extensions.count("GL_OES_texture_float") != 0;
-		gl_extensions.OES_texture_3D = g_set_gl_extensions.count("GL_OES_texture_3D") != 0;
 		gl_extensions.EXT_buffer_storage = g_set_gl_extensions.count("GL_EXT_buffer_storage") != 0;
 		gl_extensions.EXT_clip_cull_distance = g_set_gl_extensions.count("GL_EXT_clip_cull_distance") != 0;
-		gl_extensions.EXT_depth_clamp = g_set_gl_extensions.count("GL_EXT_depth_clamp") != 0;
 		gl_extensions.APPLE_clip_distance = g_set_gl_extensions.count("GL_APPLE_clip_distance") != 0;
 
 #if defined(__ANDROID__)
@@ -409,7 +393,7 @@ bool CheckGLExtensions() {
 #ifdef _DEBUG
 		void *invalidAddress = (void *)eglGetProcAddress("InvalidGlCall1");
 		void *invalidAddress2 = (void *)eglGetProcAddress("AnotherInvalidGlCall2");
-		DEBUG_LOG(Log::G3D, "Addresses returned for invalid extensions: %p %p", invalidAddress, invalidAddress2);
+		DEBUG_LOG(G3D, "Addresses returned for invalid extensions: %p %p", invalidAddress, invalidAddress2);
 #endif
 
 		// These are all the same.  Let's alias.
@@ -510,7 +494,7 @@ bool CheckGLExtensions() {
 		// The model number comparison should probably be 400 or 500. This causes us to avoid depal-in-shader.
 		// It seems though that this caused large perf regressions on Adreno 5xx, so I've bumped it up to 600.
 		if (gl_extensions.gpuVendor == GPU_VENDOR_QUALCOMM && gl_extensions.modelNumber < 600) {
-			WARN_LOG(Log::G3D, "Detected old Adreno - lowering reported int precision for safety");
+			WARN_LOG(G3D, "Detected old Adreno - lowering reported int precision for safety");
 			gl_extensions.range[1][5][0] = 15;
 			gl_extensions.range[1][5][1] = 15;
 		}
@@ -558,8 +542,8 @@ bool CheckGLExtensions() {
 		}
 		if (gl_extensions.VersionGEThan(4, 3)) {
 			gl_extensions.ARB_copy_image = true;
-			gl_extensions.ARB_stencil_texturing = true;
 			// ARB_explicit_uniform_location = true;
+			// ARB_stencil_texturing = true;
 			// ARB_texture_view = true;
 			// ARB_vertex_attrib_binding = true;
 		}
@@ -575,65 +559,22 @@ bool CheckGLExtensions() {
 		}
 	}
 
-	// Force off clip for a cmomon buggy Samsung version.
-	if (!strcmp(versionStr, "OpenGL ES 3.2 ANGLE git hash: aa8f94c52952")) {
-		// Maybe could use bugs, but for now let's just force it back off.
-		// Seeing errors that gl_ClipDistance is undefined.
-		gl_extensions.EXT_clip_cull_distance = false;
-	}
-
-	// Check the old query API. It doesn't seem to be very reliable (can miss stuff).
-	GLint numCompressedFormats = 0;
-	glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS, &numCompressedFormats);
-	GLint *compressedFormats = new GLint[numCompressedFormats];
-	if (numCompressedFormats > 0) {
-		glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS, compressedFormats);
-		for (int i = 0; i < numCompressedFormats; i++) {
-			switch (compressedFormats[i]) {
-			case GL_COMPRESSED_RGB8_ETC2: gl_extensions.supportsETC2 = true; break;
-#ifdef GL_COMPRESSED_RGBA_ASTC_4x4_KHR
-			case GL_COMPRESSED_RGBA_ASTC_4x4_KHR: gl_extensions.supportsASTC = true; break;
-#endif
-#ifndef USING_GLES2
-			case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT: gl_extensions.supportsBC123 = true; break;
-			case GL_COMPRESSED_RGBA_BPTC_UNORM: gl_extensions.supportsBC7 = true; break;
-#endif
-			}
-		}
-	}
-
-	// Enable additional formats based on extensions.
-	if (gl_extensions.EXT_texture_compression_s3tc) gl_extensions.supportsBC123 = true;
-	if (gl_extensions.ARB_texture_compression_bptc) gl_extensions.supportsBC7 = true;
-	if (gl_extensions.ARB_texture_compression_rgtc) gl_extensions.supportsBC45 = true;
-	if (gl_extensions.KHR_texture_compression_astc_ldr) gl_extensions.supportsASTC = true;
-	if (gl_extensions.OES_texture_compression_astc) gl_extensions.supportsASTC = true;
-
-	// Now, disable known-emulated texture formats.
-	if (gl_extensions.gpuVendor == GPU_VENDOR_NVIDIA && !gl_extensions.IsGLES) {
-		gl_extensions.supportsETC2 = false;
-		gl_extensions.supportsASTC = false;
-	}
-	delete[] compressedFormats;
-
 	ProcessGPUFeatures();
 
 	int error = glGetError();
 	if (error)
-		ERROR_LOG(Log::G3D, "GL error in init: %i", error);
+		ERROR_LOG(G3D, "GL error in init: %i", error);
 
 #endif
-	return true;
+
 }
 
 void SetGLCoreContext(bool flag) {
-	if (!extensionsDone) {
-		useCoreContext = flag;
-		// For convenience, it'll get reset later.
-		gl_extensions.IsCoreContext = useCoreContext;
-	} else {
-		_assert_(flag == useCoreContext);
-	}
+	_assert_msg_(!extensionsDone, "SetGLCoreContext() after CheckGLExtensions()");
+
+	useCoreContext = flag;
+	// For convenience, it'll get reset later.
+	gl_extensions.IsCoreContext = useCoreContext;
 }
 
 void ResetGLExtensions() {
@@ -645,7 +586,7 @@ void ResetGLExtensions() {
 	g_all_egl_extensions.clear();
 }
 
-static const char * const glsl_fragment_prelude =
+static const char *glsl_fragment_prelude =
 "#ifdef GL_ES\n"
 "precision mediump float;\n"
 "#endif\n";

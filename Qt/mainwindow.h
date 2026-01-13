@@ -9,13 +9,9 @@
 #include <QMainWindow>
 #include <QActionGroup>
 
-#include "ppsspp_config.h"
 #include "Common/System/System.h"
 #include "Common/System/NativeApp.h"
-#include "Common/System/Display.h"
-#if PPSSPP_PLATFORM(WINDOWS)
-#include "Common/Log/ConsoleListener.h"
-#endif
+#include "ConsoleListener.h"
 #include "Core/Core.h"
 #include "Core/Config.h"
 #include "Core/System.h"
@@ -68,7 +64,7 @@ protected:
 		QMainWindow::changeEvent(e);
 		// Does not work on Linux for Qt5.2 or Qt5.3 (Qt bug)
 		if(e->type() == QEvent::WindowStateChange)
-			Native_NotifyWindowHidden(isMinimized());
+			Core_NotifyWindowHidden(isMinimized());
 	}
 
 	void closeEvent(QCloseEvent *) { exitAct(); }
@@ -102,10 +98,7 @@ private slots:
 	void stopAct();
 	void resetAct();
 	void switchUMDAct();
-	void displayRotationGroup_triggered(QAction *action) { 
-		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
-		config.iInternalScreenRotation = action->data().toInt();
-	}
+	void displayRotationGroup_triggered(QAction *action) { g_Config.iInternalScreenRotation = action->data().toInt(); }
 
 	// Debug
 	void breakonloadAct();
@@ -120,57 +113,68 @@ private slots:
 	void consoleAct();
 
 	// Game settings
-	void languageAct() { System_PostUIMessage(UIMessage::SHOW_LANGUAGE_SCREEN); }
-	void controlMappingAct() { System_PostUIMessage(UIMessage::SHOW_CONTROL_MAPPING); }
-	void displayLayoutEditorAct() { System_PostUIMessage(UIMessage::SHOW_DISPLAY_LAYOUT_EDITOR); }
-	void moreSettingsAct() { System_PostUIMessage(UIMessage::SHOW_SETTINGS); }
+	void languageAct() { NativeMessageReceived("language screen", ""); }
+	void controlMappingAct() { NativeMessageReceived("control mapping", ""); }
+	void displayLayoutEditorAct() { NativeMessageReceived("display layout editor", ""); }
+	void moreSettingsAct() { NativeMessageReceived("settings", ""); }
 
 	void bufferRenderAct() {
-		System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
-		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+		g_Config.iRenderingMode = !g_Config.iRenderingMode;
+		NativeMessageReceived("gpu_resized", "");
 	}
 	void linearAct() { g_Config.iTexFiltering = (g_Config.iTexFiltering != 0) ? 0 : 3; }
 
 	void renderingResolutionGroup_triggered(QAction *action) {
 		g_Config.iInternalResolution = action->data().toInt();
-		System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
+		NativeMessageReceived("gpu_resized", "");
 	}
 	void windowGroup_triggered(QAction *action) { SetWindowScale(action->data().toInt()); }
 
+	void displayLayoutGroup_triggered(QAction *action) {
+		g_Config.iSmallDisplayZoomType = action->data().toInt();
+		NativeMessageReceived("gpu_resized", "");
+	}
+	void renderingModeGroup_triggered(QAction *action) {
+		g_Config.iRenderingMode = action->data().toInt();
+		g_Config.bAutoFrameSkip = false;
+		NativeMessageReceived("gpu_resized", "");
+	}
 	void autoframeskipAct() {
 		g_Config.bAutoFrameSkip = !g_Config.bAutoFrameSkip;
-		if (g_Config.bSkipBufferEffects) {
-			g_Config.bSkipBufferEffects = false;
-			System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+		if (g_Config.iRenderingMode == FB_NON_BUFFERED_MODE) {
+			g_Config.iRenderingMode = FB_BUFFERED_MODE;
+			NativeMessageReceived("gpu_resized", "");
 		}
 	}
 	void frameSkippingGroup_triggered(QAction *action) { g_Config.iFrameSkip = action->data().toInt(); }
+	void frameSkippingTypeGroup_triggered(QAction *action) { g_Config.iFrameSkipType = action->data().toInt(); }
 	void textureFilteringGroup_triggered(QAction *action) { g_Config.iTexFiltering = action->data().toInt(); }
-	void screenScalingFilterGroup_triggered(QAction *action) {
-		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
-		config.iDisplayFilter = action->data().toInt();
-	}
+	void screenScalingFilterGroup_triggered(QAction *action) { g_Config.iBufFilter = action->data().toInt(); }
 	void textureScalingLevelGroup_triggered(QAction *action) {
 		g_Config.iTexScalingLevel = action->data().toInt();
-		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+		NativeMessageReceived("gpu_clearCache", "");
 	}
 	void textureScalingTypeGroup_triggered(QAction *action) {
 		g_Config.iTexScalingType = action->data().toInt();
-		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+		NativeMessageReceived("gpu_clearCache", "");
 	}
 	void deposterizeAct() {
 		g_Config.bTexDeposterize = !g_Config.bTexDeposterize;
-		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+		NativeMessageReceived("gpu_clearCache", "");
 	}
 	void transformAct() {
 		g_Config.bHardwareTransform = !g_Config.bHardwareTransform;
-		System_PostUIMessage(UIMessage::GPU_CONFIG_CHANGED);
+		NativeMessageReceived("gpu_resized", "");
 	}
+	void vertexCacheAct() { g_Config.bVertexCache = !g_Config.bVertexCache; }
 	void frameskipAct() { g_Config.iFrameSkip = !g_Config.iFrameSkip; }
+	void frameskipTypeAct() { g_Config.iFrameSkipType = !g_Config.iFrameSkipType; }
 
 	// Sound
 	void audioAct() {
 		g_Config.bEnableSound = !g_Config.bEnableSound;
+		if (PSP_IsInited() && !IsAudioInitialised())
+			Audio_Init();
 	}
 
 	// Cheats
@@ -179,12 +183,17 @@ private slots:
 	// Chat
 	void chatAct() {
 		if (GetUIState() == UISTATE_INGAME) {
-			System_PostUIMessage(UIMessage::SHOW_CHAT_SCREEN);
+			NativeMessageReceived("chat screen", "");
 		}
 	}
 
 	void fullscrAct();
 	void raiseTopMost();
+	void statsAct() {
+		g_Config.bShowDebugStats = !g_Config.bShowDebugStats;
+		NativeMessageReceived("clear jit", "");
+	}
+	void showFPSAct() { g_Config.iShowFPSCounter = g_Config.iShowFPSCounter ? 0 : 3; } // 3 = both speed and FPS
 
 	// Help
 	void websiteAct();
@@ -214,7 +223,8 @@ private:
 	QActionGroup *windowGroup,
 	             *textureScalingLevelGroup, *textureScalingTypeGroup,
 	             *screenScalingFilterGroup, *textureFilteringGroup,
-	             *frameSkippingGroup, *renderingResolutionGroup,
+	             *frameSkippingTypeGroup, *frameSkippingGroup,
+	             *renderingModeGroup, *renderingResolutionGroup,
 	             *displayRotationGroup, *saveStateGroup;
 
 	std::queue<MainWindowMsg> msgQueue_;

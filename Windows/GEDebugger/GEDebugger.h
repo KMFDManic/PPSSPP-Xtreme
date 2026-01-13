@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include "Common/Common.h"
 #include "Common/CommonWindows.h"
 #include "GPU/Common/GPUDebugInterface.h"
 #include "GPU/Debugger/Debugger.h"
@@ -45,44 +44,12 @@ class TabMatrices;
 class TabStateWatch;
 struct GPUgstate;
 
-enum class GETabPosition {
-	LEFT = 1,
-	RIGHT = 2,
-	TOPRIGHT = 4,
-	ALL = 7,
-};
-ENUM_CLASS_BITOPS(GETabPosition);
-
-enum class GETabType {
-	LIST_DISASM,
-	LISTS,
-	STATE,
-	WATCH,
-};
-
-struct GEDebuggerTab {
-	const wchar_t *name;
-	GETabPosition pos;
-	GETabType type;
-	struct {
-		union {
-			Dialog *dlg;
-			CtrlDisplayListView *displayList;
-			void *ptr;
-		};
-		int index = -1;
-	} state[3];
-	void *(*add)(GEDebuggerTab *tab, TabControl *tabs, GETabPosition pos, HINSTANCE inst, HWND parent);
-	void (*remove)(GEDebuggerTab *tab, TabControl *tabs, GETabPosition pos, void *ptr);
-	void (*update)(GEDebuggerTab *tab, TabControl *tabs, GETabPosition pos, void *ptr);
-};
-
 class StepCountDlg : public Dialog {
 public:
 	StepCountDlg(HINSTANCE _hInstance, HWND _hParent);
 	~StepCountDlg();
 protected:
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 private:
 	void Jump(int count, bool relative);
 };
@@ -95,14 +62,14 @@ public:
 	static void Init();
 
 protected:
-	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam) override;
+	BOOL DlgProc(UINT message, WPARAM wParam, LPARAM lParam);
 
 private:
 	void SetupPreviews();
 	void UpdatePreviews();
 	void UpdatePrimaryPreview(const GPUgstate &state);
 	void UpdateSecondPreview(const GPUgstate &state);
-	static u32 PrimPreviewOp();
+	u32 PrimPreviewOp();
 	void UpdatePrimPreview(u32 op, int which);
 	void CleanupPrimPreview();
 	void HandleRedraw(int which);
@@ -114,37 +81,32 @@ private:
 	void PrimaryPreviewHover(int x, int y);
 	void SecondPreviewHover(int x, int y);
 	void PreviewExport(const GPUDebugBuffer *buffer);
-	void PreviewToClipboard(const GPUDebugBuffer *buffer, bool saveAlpha);
+	void DescribePixel(u32 pix, GPUDebugBufferFormat fmt, int x, int y, char desc[256]);
+	void DescribePixelRGBA(u32 pix, GPUDebugBufferFormat fmt, int x, int y, char desc[256]);
 	void UpdateMenus();
-	void UpdateTab(GEDebuggerTab *tab);
-	void AddTab(GEDebuggerTab *tab, GETabPosition mask);
-	void RemoveTab(GEDebuggerTab *tab, GETabPosition mask);
-	int HasTabIndex(GEDebuggerTab *tab, GETabPosition pos);
-	void CheckTabMessage(TabControl *t, GETabPosition pos, LPARAM lParam);
 
 	u32 TexturePreviewFlags(const GPUgstate &state);
 
+	CtrlDisplayListView *displayList = nullptr;
+	TabDisplayLists *lists = nullptr;
+	TabStateFlags *flags = nullptr;
+	TabStateLighting *lighting = nullptr;
+	TabStateTexture *textureState = nullptr;
+	TabStateSettings *settings = nullptr;
+	TabVertices *vertices = nullptr;
+	TabMatrices *matrices = nullptr;
 	SimpleGLWindow *primaryWindow = nullptr;
 	SimpleGLWindow *secondWindow = nullptr;
-	std::vector<GEDebuggerTab> tabStates_;
+	TabStateWatch *watch = nullptr;
 	TabControl *tabs = nullptr;
-	TabControl *tabsRight_ = nullptr;
-	TabControl *tabsTR_ = nullptr;
 	TabControl *fbTabs = nullptr;
 	int textureLevel_ = 0;
 	bool showClut_ = false;
 	bool forceOpaque_ = false;
-	bool autoFlush_ = true;
+	bool autoFlush_ = false;
 	// The most recent primary/framebuffer and texture buffers.
 	const GPUDebugBuffer *primaryBuffer_ = nullptr;
 	const GPUDebugBuffer *secondBuffer_ = nullptr;
-	bool primaryIsFramebuffer_ = false;
-	bool secondIsFramebuffer_ = false;
-
-	uint32_t primaryTrackX_ = 0xFFFFFFFF;
-	uint32_t primaryTrackY_ = 0xFFFFFFFF;
-	uint32_t secondTrackX_ = 0xFFFFFFFF;
-	uint32_t secondTrackY_ = 0xFFFFFFFF;
 
 	bool updating_ = false;
 	int previewsEnabled_ = 3;

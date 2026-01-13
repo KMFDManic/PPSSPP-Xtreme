@@ -15,57 +15,47 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#pragma once
-
 #include <cstdint>
 #include <functional>
 
 #include "Common/UI/View.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/Context.h"
-#include "UI/BaseScreens.h"
-#include "UI/SimpleDialogScreen.h"
+#include "UI/MiscScreens.h"
 
 struct CheatFileInfo;
 class CWCheatEngine;
 
-class CwCheatScreen : public UITwoPaneBaseDialogScreen {
+class CwCheatScreen : public UIDialogScreenWithBackground {
 public:
 	CwCheatScreen(const Path &gamePath);
 	~CwCheatScreen();
 
-	bool TryLoadCheatInfo();
+	void LoadCheatInfo();
 
-	void OnAddCheat(UI::EventParams &params);
-	void OnImportCheat(UI::EventParams &params);
-	void OnImportBrowse(UI::EventParams &params);
-	void OnEditCheatFile(UI::EventParams &params);
-	void OnDisableAll(UI::EventParams &params);
+	UI::EventReturn OnAddCheat(UI::EventParams &params);
+	UI::EventReturn OnImportCheat(UI::EventParams &params);
+	UI::EventReturn OnEditCheatFile(UI::EventParams &params);
+	UI::EventReturn OnEnableAll(UI::EventParams &params);
 
 	void update() override;
 	void onFinish(DialogResult result) override;
 
-	const char *tag() const override { return "CwCheat"; }
-
 protected:
-	void BeforeCreateViews() override;
-	void CreateSettingsViews(UI::ViewGroup *) override;
-	void CreateContentViews(UI::ViewGroup *) override;
-	std::string_view GetTitle() const override;
+	void CreateViews() override;
 
 private:
-	void OnCheckBox(int index);
-	bool ImportCheats(const Path &cheatFile);
+	UI::EventReturn OnCheckBox(int index);
 
 	enum { INDEX_ALL = -1 };
-	bool HasCheatWithName(const std::string &name);
 	bool RebuildCheatFile(int index);
 
-	UI::TextView *errorMessageView_ = nullptr;
-
+	UI::ScrollView *rightScroll_ = nullptr;
 	CWCheatEngine *engine_ = nullptr;
 	std::vector<CheatFileInfo> fileInfo_;
+	Path gamePath_;
 	std::string gameID_;
 	int fileCheckCounter_ = 0;
-	uint64_t fileCheckHash_ = 0;
+	uint64_t fileCheckHash_;
+	bool enableAllFlag_ = false;
 };

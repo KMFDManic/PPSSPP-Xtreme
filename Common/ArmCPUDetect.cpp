@@ -26,21 +26,6 @@
 
 #if PPSSPP_ARCH(ARM) || PPSSPP_ARCH(ARM64)
 
-#if PPSSPP_ARCH(ARM)
-#include "ext/cpu_features/include/cpuinfo_arm.h"
-
-#if defined(CPU_FEATURES_OS_LINUX)
-#define USE_CPU_FEATURES 1
-#endif
-#elif PPSSPP_ARCH(ARM64)
-#include "ext/cpu_features/include/cpuinfo_aarch64.h"
-
-#if defined(CPU_FEATURES_OS_LINUX) || defined(CPU_FEATURES_OS_ANDROID) || defined(CPU_FEATURES_OS_WINDOWS)
-#define USE_CPU_FEATURES 1
-#endif
-#endif
-
-#include <cstring>
 #include <ctype.h>
 
 #include "Common/CommonTypes.h"
@@ -55,7 +40,7 @@
 std::string GetCPUBrandString();
 #else
 // No CPUID on ARM, so we'll have to read the registry
-#include "Common/CommonWindows.h"
+#include <windows.h>
 std::string GetCPUBrandString() {
 	std::string cpu_string;
 	
@@ -90,7 +75,7 @@ const char syscpupresentfile[] = "/sys/devices/system/cpu/present";
 
 std::string GetCPUString() {
 	std::string procdata;
-	bool readSuccess = File::ReadSysTextFileToString(Path(procfile), &procdata);
+	bool readSuccess = File::ReadFileToString(true, Path(procfile), procdata);
 	std::istringstream file(procdata);
 	std::string cpu_string;
 
@@ -113,7 +98,7 @@ std::string GetCPUString() {
 
 std::string GetCPUBrandString() {
 	std::string procdata;
-	bool readSuccess = File::ReadSysTextFileToString(Path(procfile), &procdata);
+	bool readSuccess = File::ReadFileToString(true, Path(procfile), procdata);
 	std::istringstream file(procdata);
 	std::string brand_string;
 
@@ -143,7 +128,7 @@ unsigned char GetCPUImplementer()
 	unsigned char implementer = 0;
 
 	std::string procdata;
-	if (!File::ReadSysTextFileToString(Path(procfile), &procdata))
+	if (!File::ReadFileToString(true, Path(procfile), procdata))
 		return 0;
 	std::istringstream file(procdata);
 
@@ -166,7 +151,7 @@ unsigned short GetCPUPart()
 	unsigned short part = 0;
 
 	std::string procdata;
-	if (!File::ReadSysTextFileToString(Path(procfile), &procdata))
+	if (!File::ReadFileToString(true, Path(procfile), procdata))
 		return 0;
 	std::istringstream file(procdata);
 
@@ -188,7 +173,7 @@ bool CheckCPUFeature(const std::string& feature)
 	std::string line, marker = "Features\t: ";
 
 	std::string procdata;
-	if (!File::ReadSysTextFileToString(Path(procfile), &procdata))
+	if (!File::ReadFileToString(true, Path(procfile), procdata))
 		return false;
 	std::istringstream file(procdata);
 	while (std::getline(file, line))
@@ -214,7 +199,7 @@ int GetCoreCount()
 	int cores = 1;
 
 	std::string presentData;
-	bool presentSuccess = File::ReadSysTextFileToString(Path(syscpupresentfile), &presentData);
+	bool presentSuccess = File::ReadFileToString(true, Path(syscpupresentfile), presentData);
 	std::istringstream presentFile(presentData);
 
 	if (presentSuccess) {
@@ -228,7 +213,7 @@ int GetCoreCount()
 	}
 
 	std::string procdata;
-	if (!File::ReadSysTextFileToString(Path(procfile), &procdata))
+	if (!File::ReadFileToString(true, Path(procfile), procdata))
 		return 1;
 	std::istringstream file(procdata);
 	
@@ -291,7 +276,7 @@ void CPUInfo::Detect()
 		}
 	}
 #elif PPSSPP_PLATFORM(WINDOWS)
-	truncate_cpy(brand_string, GetCPUBrandString());
+	truncate_cpy(brand_string, GetCPUBrandString().c_str());
 	isVFP3 = true;
 	isVFP4 = false;
 	SYSTEM_INFO sysInfo;
@@ -319,8 +304,8 @@ void CPUInfo::Detect()
 	bFP = false;
 	bASIMD = false;
 #else // PPSSPP_PLATFORM(LINUX)
-	truncate_cpy(cpu_string, GetCPUString());
-	truncate_cpy(brand_string, GetCPUBrandString());
+	truncate_cpy(cpu_string, GetCPUString().c_str());
+	truncate_cpy(brand_string, GetCPUBrandString().c_str());
 
 	bSwp = CheckCPUFeature("swp");
 	bHalf = CheckCPUFeature("half");
@@ -352,81 +337,31 @@ void CPUInfo::Detect()
 	bNEON = true;
 	bASIMD = true;
 #endif
-
-#if PPSSPP_ARCH(ARM) && defined(USE_CPU_FEATURES)
-	cpu_features::ArmInfo info = cpu_features::GetArmInfo();
-	bSwp = info.features.swp;
-	bHalf = info.features.half;
-	bThumb = info.features.thumb;
-	bFastMult = info.features.fastmult;
-	bEDSP = info.features.edsp;
-	bThumbEE = info.features.thumbee;
-	bNEON = info.features.neon;
-	bTLS = info.features.tls;
-	bVFP = info.features.vfp;
-	bVFPv3 = info.features.vfpv3;
-	bVFPv4 = info.features.vfpv4;
-	bIDIVa = info.features.idiva;
-	bIDIVt = info.features.idivt;
-#endif
-#if PPSSPP_ARCH(ARM64) && defined(USE_CPU_FEATURES)
-	cpu_features::Aarch64Info info = cpu_features::GetAarch64Info();
-	bFP = info.features.fp;
-	bASIMD = info.features.asimd;
-	bSVE = info.features.sve;
-	bSVE2 = info.features.sve2;
-	bFRINT = info.features.frint;
-#endif
-}
-
-std::vector<std::string> CPUInfo::Features() {
-	std::vector<std::string> features;
-
-	struct Flag {
-		bool &flag;
-		const char *str;
-	};
-	const Flag list[] = {
-		{ bSwp, "SWP" },
-		{ bHalf, "Half" },
-		{ bThumb, "Thumb" },
-		{ bFastMult, "FastMult" },
-		{ bEDSP, "EDSP" },
-		{ bThumbEE, "ThumbEE" },
-		{ bTLS, "TLS" },
-		{ bVFP, "VFP" },
-		{ bVFPv3, "VFPv3" },
-		{ bVFPv4, "VFPv4" },
-		{ bNEON, "NEON" },
-		{ bIDIVa, "IDIVa" },
-		{ bIDIVt, "IDIVt" },
-		{ bFRINT, "FRINT" },
-		{ bSVE, "SVE" },
-		{ bSVE2, "SVE2" },
-		{ CPU64bit, "64-bit" },
-	};
-
-	for (auto &item : list) {
-		if (item.flag) {
-			features.push_back(item.str);
-		}
-	}
-
-	return features;
 }
 
 // Turn the cpu info into a string we can show
-std::string CPUInfo::Summarize() {
+std::string CPUInfo::Summarize()
+{
 	std::string sum;
 	if (num_cores == 1)
 		sum = StringFromFormat("%s, %d core", cpu_string, num_cores);
 	else
 		sum = StringFromFormat("%s, %d cores", cpu_string, num_cores);
+	if (bSwp) sum += ", SWP";
+	if (bHalf) sum += ", Half";
+	if (bThumb) sum += ", Thumb";
+	if (bFastMult) sum += ", FastMult";
+	if (bEDSP) sum += ", EDSP";
+	if (bThumbEE) sum += ", ThumbEE";
+	if (bTLS) sum += ", TLS";
+	if (bVFP) sum += ", VFP";
+	if (bVFPv3) sum += ", VFPv3";
+	if (bVFPv4) sum += ", VFPv4";
+	if (bNEON) sum += ", NEON";
+	if (bIDIVa) sum += ", IDIVa";
+	if (bIDIVt) sum += ", IDIVt";
+	if (CPU64bit) sum += ", 64-bit";
 
-	auto features = Features();
-	for (std::string &feature : features) {
-		sum += ", " + feature;
-	}
 	return sum;
 }
 

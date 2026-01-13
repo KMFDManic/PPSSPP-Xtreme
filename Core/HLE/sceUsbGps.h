@@ -36,12 +36,12 @@ typedef struct {
 	short second;
 	float garbage1;
 	float hdop;
-	u32 garbage2;    // 0 > 257 > 513
+	float garbage2;
 	float latitude;
 	float longitude;
-	float altitude;  // m
+	float altitude;
 	float garbage3;
-	float speed;     // km/h
+	float speed;
 	float bearing;
 } GpsData;
 

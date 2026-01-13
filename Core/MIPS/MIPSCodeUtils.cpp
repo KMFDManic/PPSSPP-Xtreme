@@ -18,6 +18,7 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
+#include "Core/Host.h"
 #include "Core/MemMap.h"
 
 namespace MIPSCodeUtils
@@ -74,7 +75,6 @@ namespace MIPSCodeUtils
 		}
 	}
 
-	// As long as addr is aligned, this will only return aligned addresses.
 	u32 GetSureBranchTarget(u32 addr) {
 		MIPSOpcode op = Memory::Read_Instruction(addr, true);
 		if (op != 0) {
@@ -131,4 +131,6 @@ namespace MIPSCodeUtils
 	bool IsBranch(MIPSOpcode op) {
 		return (MIPSGetInfo(op) & IS_CONDBRANCH) == IS_CONDBRANCH;
 	}
+
+
 }

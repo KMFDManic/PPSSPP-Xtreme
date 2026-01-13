@@ -17,8 +17,6 @@
 
 #pragma once
 
-#include "ext/libkirk/kirk_engine.h"
-
 typedef struct _pspChnnlsvContext1 {
 	/** Cipher mode */
 	s32_le mode;
@@ -36,15 +34,11 @@ typedef struct _pspChnnlsvContext2 {
 	u8 cryptedData[0x92];
 } pspChnnlsvContext2;
 
-int sceSdMacInit(pspChnnlsvContext1& ctx, int value);
-int sceSdMacUpdate(pspChnnlsvContext1& ctx, const u8* data, int length);
-int sceSdCipherInit(pspChnnlsvContext2& ctx2, int mode, int uknw, u8* data, const u8* cryptkey);
-int sceSdCipherUpdate(pspChnnlsvContext2& ctx, u8* data, int alignedLen);
-int sceSdCipherFinal(pspChnnlsvContext2& ctx);
-int sceSdMacFinal(pspChnnlsvContext1& ctx, u8* in_hash, const u8* in_key);
+int sceSdSetIndex_(pspChnnlsvContext1& ctx, int value);
+int sceSdRemoveValue_(pspChnnlsvContext1& ctx, u8* data, int length);
+int sceSdCreateList_(pspChnnlsvContext2& ctx2, int mode, int uknw, u8* data, u8* cryptkey);
+int sceSdSetMember_(pspChnnlsvContext2& ctx, u8* data, int alignedLen);
+int sceChnnlsv_21BE78B4_(pspChnnlsvContext2& ctx);
+int sceSdGetLastIndex_(pspChnnlsvContext1& ctx, u8* in_hash, u8* in_key);
 
-KirkState *__ChnnlsvKirkState();
-
-// deceptively named.
 void Register_sceChnnlsv();
-void Register_semaphore();

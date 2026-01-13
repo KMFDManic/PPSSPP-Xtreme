@@ -1,48 +1,21 @@
-use std::fs::File;
-use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::io::{self, Write};
+use std::fs::File;
 
 use crate::section::Section;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct IniFile {
-    pub filename: Option<PathBuf>,
+    pub filename: PathBuf,
     pub preamble: Vec<String>,
     pub sections: Vec<Section>,
     pub has_bom: bool,
 }
 
-// Grabbed from a sample, a fast line reader iterator.
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-where
-    P: AsRef<Path>,
-{
-    let file = File::open(filename)?;
-    use std::io::BufRead;
-    Ok(io::BufReader::new(file).lines())
-}
-
-fn read_lines_from_string(s: &str) -> io::Result<io::Lines<io::BufReader<&[u8]>>> {
-    Ok(io::BufReader::new(s.as_bytes()).lines())
-}
-
 impl IniFile {
-    pub fn parse_file(filename: &str) -> io::Result<IniFile> {
+    pub fn parse(filename: &str) -> io::Result<IniFile> {
         let lines = read_lines(filename)?;
 
-        Self::parse_lines(lines, Some(PathBuf::from(filename)))
-    }
-
-    pub fn parse_string(s: &str) -> io::Result<IniFile> {
-        let lines = read_lines_from_string(s)?;
-
-        Self::parse_lines(lines, None)
-    }
-
-    pub fn parse_lines<R: io::BufRead>(
-        lines: io::Lines<R>,
-        filename: Option<PathBuf>,
-    ) -> io::Result<IniFile> {
         let mut sections = vec![];
         let mut preamble = vec![];
         let mut cur_section = None;
@@ -87,7 +60,7 @@ impl IniFile {
         }
 
         let ini = IniFile {
-            filename,
+            filename: PathBuf::from(filename),
             preamble,
             sections,
             has_bom,
@@ -96,13 +69,7 @@ impl IniFile {
     }
 
     pub fn write(&self) -> io::Result<()> {
-        let Some(filename) = &self.filename else {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "No filename specified for writing",
-            ));
-        };
-        let file = std::fs::File::create(filename)?;
+        let file = std::fs::File::create(&self.filename)?;
         let mut file = std::io::LineWriter::new(file);
 
         // Write BOM
@@ -144,23 +111,26 @@ impl IniFile {
             }
         }
         // Reached the end for some reason? Add it.
-        // Also add an empty line to the previous section.
-        if let Some(last) = self.sections.last_mut() {
-            last.lines.push("".into());
-        }
         self.sections.push(section.clone());
         true
     }
 
     pub fn get_section_mut(&mut self, section_name: &str) -> Option<&mut Section> {
-        self.sections
-            .iter_mut()
-            .find(|section| section.name == section_name)
+        for section in &mut self.sections {
+            if section.name == section_name {
+                return Some(section);
+            }
+        }
+        None
     }
+}
 
-    pub fn get_section(&self, section_name: &str) -> Option<&Section> {
-        self.sections
-            .iter()
-            .find(|section| section.name == section_name)
-    }
+// Grabbed from a sample, a fast line reader iterator.
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+where
+    P: AsRef<Path>,
+{
+    let file = File::open(filename)?;
+    use std::io::BufRead;
+    Ok(io::BufReader::new(file).lines())
 }

@@ -46,11 +46,16 @@ u32 __AudioEnqueue(AudioChannel &chan, int chanNum, bool blocking);
 void __AudioWakeThreads(AudioChannel &chan, int result, int step);
 void __AudioWakeThreads(AudioChannel &chan, int result);
 
-// AUDIO Dumping stuff
+int __AudioMix(short *outstereo, int numSamples, int sampleRate);
+void __AudioGetDebugStats(char *buf, size_t bufSize);
+void __PushExternalAudio(const s32 *audio, int numSamples);  // Should not be used in-game, only at the menu!
+
+// Audio Dumping stuff
 void __StartLogAudio(const Path &filename);
 void __StopLogAudio();
 
-class WAVDump {
+class WAVDump
+{
 public:
 	static void Reset();
 };

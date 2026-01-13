@@ -25,7 +25,6 @@
 #include <vector>
 #include <queue>
 #include <thread>
-#include <wrl/client.h>
 
 #include "Core/HLE/sceUsbMic.h"
 
@@ -51,7 +50,7 @@ struct AudioFormatTransform {
 
 enum class CAPTUREDEVIDE_TYPE {
 	VIDEO,
-	Audio
+	AUDIO
 };
 
 enum class CAPTUREDEVIDE_STATE {
@@ -117,12 +116,12 @@ class WindowsCaptureDevice;
 class ReaderCallback final : public IMFSourceReaderCallback {
 public:
 	ReaderCallback(WindowsCaptureDevice *device);
-	virtual ~ReaderCallback();
+	~ReaderCallback();
 
 	// IUnknown methods.
-	STDMETHODIMP QueryInterface(REFIID iid, void** ppv) override;
-	STDMETHODIMP_(ULONG) AddRef() override { return 0; }  // Unused, just define.
-	STDMETHODIMP_(ULONG) Release() override { return 0; } // Unused, just define.
+	STDMETHODIMP QueryInterface(REFIID iid, void** ppv);
+	STDMETHODIMP_(ULONG) AddRef() { return 0; }  // Unused, just define.
+	STDMETHODIMP_(ULONG) Release() { return 0; } // Unused, just define.
 
 	// IMFSourceReaderCallback methods.
 	STDMETHODIMP OnReadSample(
@@ -131,10 +130,10 @@ public:
 		DWORD dwStreamFlags,
 		LONGLONG llTimestamp,
 		IMFSample *pSample   // Can be null,even if hrStatus is success.
-	) override;
+	);
 
-	STDMETHODIMP OnEvent(DWORD, IMFMediaEvent *) override { return S_OK; }
-	STDMETHODIMP OnFlush(DWORD) override { return S_OK; }
+	STDMETHODIMP OnEvent(DWORD, IMFMediaEvent *) { return S_OK; }
+	STDMETHODIMP OnFlush(DWORD) { return S_OK; }
 
 	AVPixelFormat getAVVideoFormatbyMFVideoFormat(const GUID &MFVideoFormat);
 	AVSampleFormat getAVAudioFormatbyMFAudioFormat(const GUID &MFAudioFormat, const u32 &bitsPerSample);
@@ -194,7 +193,7 @@ public:
 	std::vector<std::string> getDeviceList(bool forceEnum = false, int *pActuallCount = nullptr);
 
 	void setError(const CAPTUREDEVIDE_ERROR &newError, const std::string &newErrorMessage) { error = newError; errorMessage = newErrorMessage; }
-	void setSelection(const UINT32 &selection) { param.selection = selection; }
+	void setSelction(const UINT32 &selection) { param.selection = selection; }
 	HRESULT setDeviceParam(IMFMediaType *pType);
 
 	bool isShutDown() const { return state == CAPTUREDEVIDE_STATE::SHUTDOWN; }
@@ -227,9 +226,9 @@ protected:
 	bool isDeviceChanged = false;
 
 // MF interface.
-	Microsoft::WRL::ComPtr<ReaderCallback> m_pCallback;
-	Microsoft::WRL::ComPtr<IMFSourceReader> m_pReader;
-	Microsoft::WRL::ComPtr<IMFMediaSource> m_pSource;
+	ReaderCallback *m_pCallback = nullptr;
+	IMFSourceReader *m_pReader = nullptr;
+	IMFMediaSource *m_pSource = nullptr;
 
 // Message loop.
 	std::mutex mutex;

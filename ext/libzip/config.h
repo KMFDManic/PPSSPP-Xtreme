@@ -27,17 +27,13 @@
 #endif
 #ifndef MS_UWP
 #define HAVE_FILENO
+#define HAVE_FSEEKO
+#define HAVE_FTELLO
 #define HAVE_GETPROGNAME
 #endif
 #ifndef _WIN32
-#define HAVE_FSEEKO
-#define HAVE_FTELLO
 #define HAVE_LOCALTIME_R
 #define HAVE_MKSTEMP 1
-#endif
-#ifdef __MINGW32__
-#define HAVE_FSEEKO
-#define HAVE_FTELLO
 #endif
 #define HAVE_SNPRINTF
 #define HAVE_STRDUP

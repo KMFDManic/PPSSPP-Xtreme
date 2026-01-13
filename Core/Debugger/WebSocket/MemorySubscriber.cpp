@@ -21,13 +21,12 @@
 #include "Common/Data/Encoding/Base64.h"
 #include "Common/StringUtils.h"
 #include "Core/Core.h"
-#include "Core/Debugger/WebSocket/MemorySubscriber.h"
-#include "Core/Debugger/WebSocket/WebSocketUtils.h"
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSDebugInterface.h"
-#include "Core/Reporting.h"
 #include "Core/System.h"
+#include "Core/Debugger/WebSocket/MemorySubscriber.h"
+#include "Core/Debugger/WebSocket/WebSocketUtils.h"
 
 DebuggerSubscriber *WebSocketMemoryInit(DebuggerEventHandlerMap &map) {
 	// No need to bind or alloc state, these are all global.
@@ -45,10 +44,6 @@ DebuggerSubscriber *WebSocketMemoryInit(DebuggerEventHandlerMap &map) {
 }
 
 struct AutoDisabledReplacements {
-	AutoDisabledReplacements() {}
-	AutoDisabledReplacements(AutoDisabledReplacements &&other);
-	AutoDisabledReplacements(const AutoDisabledReplacements &) = delete;
-	AutoDisabledReplacements &operator =(const AutoDisabledReplacements &) = delete;
 	~AutoDisabledReplacements();
 
 	Memory::MemoryInitedLock *lock = nullptr;
@@ -61,14 +56,10 @@ struct AutoDisabledReplacements {
 // Important: Only use keepReplacements when reading, not writing.
 static AutoDisabledReplacements LockMemoryAndCPU(uint32_t addr, bool keepReplacements) {
 	AutoDisabledReplacements result;
-	CoreState state = coreState;
 	if (Core_IsStepping()) {
 		result.wasStepping = true;
 	} else {
-		while (state != CoreState::CORE_RUNNING_CPU) {
-			state = coreState;
-		}
-		Core_Break(BreakReason::MemoryAccess, addr);
+		Core_EnableStepping(true, "memory.access", addr);
 		Core_WaitInactive();
 	}
 
@@ -84,17 +75,6 @@ static AutoDisabledReplacements LockMemoryAndCPU(uint32_t addr, bool keepReplace
 	return result;
 }
 
-AutoDisabledReplacements::AutoDisabledReplacements(AutoDisabledReplacements &&other) {
-	lock = other.lock;
-	other.lock = nullptr;
-	replacements = std::move(other.replacements);
-	emuhacks = std::move(other.emuhacks);
-	saved = other.saved;
-	other.saved = false;
-	wasStepping = other.wasStepping;
-	other.wasStepping = true;
-}
-
 AutoDisabledReplacements::~AutoDisabledReplacements() {
 	if (saved) {
 		std::lock_guard<std::recursive_mutex> guard(MIPSComp::jitLock);
@@ -103,7 +83,7 @@ AutoDisabledReplacements::~AutoDisabledReplacements() {
 		RestoreSavedReplacements(replacements);
 	}
 	if (!wasStepping)
-		Core_Resume();
+		Core_EnableStepping(false);
 	delete lock;
 }
 
@@ -261,7 +241,7 @@ void WebSocketMemoryReadString(DebuggerRequest &req) {
 
 	// Let's try to avoid crashing and get a safe length.
 	const uint8_t *p = Memory::GetPointerUnchecked(addr);
-	size_t longest = Memory::ClampValidSizeAt(addr, Memory::g_MemorySize);
+	size_t longest = Memory::ValidSize(addr, Memory::g_MemorySize);
 	size_t len = strnlen((const char *)p, longest);
 
 	JsonWriter &json = req.Respond();
@@ -299,7 +279,6 @@ void WebSocketMemoryWriteU8(DebuggerRequest &req) {
 	}
 	currentMIPS->InvalidateICache(addr, 1);
 	Memory::Write_U8(val, addr);
-	Reporting::NotifyDebugger();
 
 	JsonWriter &json = req.Respond();
 	json.writeUint("value", Memory::Read_U8(addr));
@@ -332,7 +311,6 @@ void WebSocketMemoryWriteU16(DebuggerRequest &req) {
 	}
 	currentMIPS->InvalidateICache(addr, 2);
 	Memory::Write_U16(val, addr);
-	Reporting::NotifyDebugger();
 
 	JsonWriter &json = req.Respond();
 	json.writeUint("value", Memory::Read_U16(addr));
@@ -365,7 +343,6 @@ void WebSocketMemoryWriteU32(DebuggerRequest &req) {
 	}
 	currentMIPS->InvalidateICache(addr, 4);
 	Memory::Write_U32(val, addr);
-	Reporting::NotifyDebugger();
 
 	JsonWriter &json = req.Respond();
 	json.writeUint("value", Memory::Read_U32(addr));
@@ -400,6 +377,5 @@ void WebSocketMemoryWrite(DebuggerRequest &req) {
 
 	currentMIPS->InvalidateICache(addr, size);
 	Memory::MemcpyUnchecked(addr, &value[0], size);
-	Reporting::NotifyDebugger();
 	req.Respond();
 }

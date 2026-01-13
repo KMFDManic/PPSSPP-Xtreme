@@ -6,16 +6,17 @@
 
 #include "Common/CommonFuncs.h"
 
-// VS_BIT_LIGHT_UBERSHADER indicates that some groups of these will be
-// sent to the shader and processed there. This cuts down the number of shaders ("ubershader approach").
+// TODO: There will be additional bits, indicating that groups of these will be
+// sent to the shader and processed there. This will cut down the number of shaders ("ubershader approach")
+// This is probably only really worth doing for lighting and bones.
 enum VShaderBit : uint8_t {
 	VS_BIT_LMODE = 0,
 	VS_BIT_IS_THROUGH = 1,
-	// bit 2 is free.
+	VS_BIT_ENABLE_FOG = 2,
 	VS_BIT_HAS_COLOR = 3,
-	// bit 4 is free.
+	VS_BIT_DO_TEXTURE = 4,
 	VS_BIT_VERTEX_RANGE_CULLING = 5,
-	VS_BIT_SIMPLE_STEREO = 6,
+	// 6 is free,
 	// 7 is free.
 	VS_BIT_USE_HW_TRANSFORM = 8,
 	VS_BIT_HAS_NORMAL = 9,  // conditioned on hw transform
@@ -32,11 +33,7 @@ enum VShaderBit : uint8_t {
 	VS_BIT_BONES = 22,  // 3 should be enough, not 8
 	// 25 - 29 are free.
 	VS_BIT_ENABLE_BONES = 30,
-
-	// If this is set along with LIGHTING_ENABLE, all other lighting bits below
-	// are passed to the shader directly instead.
-	VS_BIT_LIGHT_UBERSHADER = 31,
-
+	// 31 is free.
 	VS_BIT_LIGHT0_COMP = 32,  // 2 bits
 	VS_BIT_LIGHT0_TYPE = 34,  // 2 bits
 	VS_BIT_LIGHT1_COMP = 36,  // 2 bits
@@ -68,12 +65,12 @@ enum FShaderBit : uint8_t {
 	FS_BIT_CLEARMODE = 0,
 	FS_BIT_DO_TEXTURE = 1,
 	FS_BIT_TEXFUNC = 2,  // 3 bits
-	FS_BIT_DOUBLE_COLOR = 5,  // Not used with FS_BIT_UBERSHADER
-	FS_BIT_3D_TEXTURE = 6,
+	FS_BIT_TEXALPHA = 5,
+	FS_BIT_SHADER_DEPAL = 6,
 	FS_BIT_SHADER_TEX_CLAMP = 7,
 	FS_BIT_CLAMP_S = 8,
 	FS_BIT_CLAMP_T = 9,
-	FS_BIT_TEXALPHA = 10,  // Not used with FS_BIT_UBERSHADER
+	FS_BIT_TEXTURE_AT_OFFSET = 10,
 	FS_BIT_LMODE = 11,
 	FS_BIT_ALPHA_TEST = 12,
 	FS_BIT_ALPHA_TEST_FUNC = 13,  // 3 bits
@@ -81,12 +78,12 @@ enum FShaderBit : uint8_t {
 	FS_BIT_COLOR_TEST = 17,
 	FS_BIT_COLOR_TEST_FUNC = 18,  // 2 bits
 	FS_BIT_COLOR_AGAINST_ZERO = 20,
-	FS_BIT_ENABLE_FOG = 21,  // Not used with FS_BIT_UBERSHADER
+	FS_BIT_ENABLE_FOG = 21,
 	FS_BIT_DO_TEXTURE_PROJ = 22,
-	// 1 free bit
+	FS_BIT_COLOR_DOUBLE = 23,
 	FS_BIT_STENCIL_TO_ALPHA = 24,  // 2 bits
 	FS_BIT_REPLACE_ALPHA_WITH_STENCIL_TYPE = 26,  // 4 bits    (ReplaceAlphaType)
-	FS_BIT_SIMULATE_LOGIC_OP_TYPE = 30,  // 2 bits
+	FS_BIT_REPLACE_LOGIC_OP_TYPE = 30,  // 2 bits
 	FS_BIT_REPLACE_BLEND = 32,  // 3 bits  (ReplaceBlendType)
 	FS_BIT_BLENDEQ = 35,  // 3 bits
 	FS_BIT_BLENDFUNC_A = 38,  // 4 bits
@@ -96,29 +93,10 @@ enum FShaderBit : uint8_t {
 	FS_BIT_TEST_DISCARD_TO_ZERO = 48,
 	FS_BIT_NO_DEPTH_CANNOT_DISCARD_STENCIL = 49,
 	FS_BIT_COLOR_WRITEMASK = 50,
-	FS_BIT_REPLACE_LOGIC_OP = 51,  // 4 bits. GE_LOGIC_COPY means no-op/off.
-	FS_BIT_SHADER_DEPAL_MODE = 55,  // 2 bits (ShaderDepalMode)
-	FS_BIT_SAMPLE_ARRAY_TEXTURE = 57,  // For multiview, framebuffers are array textures and we need to sample the two layers correctly.
-	FS_BIT_STEREO = 58,
-	FS_BIT_USE_FRAMEBUFFER_FETCH = 59,
-	FS_BIT_UBERSHADER = 60,
-	FS_BIT_DEPTH_TEST_NEVER = 61,  // Only used on Mali. Set when depth == NEVER. We forcibly avoid writing to depth in this case, since it crashes the driver.
 };
 
 static inline FShaderBit operator +(FShaderBit bit, int i) {
 	return FShaderBit((int)bit + i);
-}
-
-// Some of these bits are straight from FShaderBit, since they essentially enable attributes directly.
-enum GShaderBit : uint8_t {
-	GS_BIT_ENABLED = 0,     // If not set, we don't use a geo shader.
-	GS_BIT_DO_TEXTURE = 1,  // presence of texcoords
-	GS_BIT_LMODE = 2,
-	GS_BIT_CURVE = 3,       // curve, which means don't do range culling.
-};
-
-static inline GShaderBit operator +(GShaderBit bit, int i) {
-	return GShaderBit((int)bit + i);
 }
 
 struct ShaderID {
@@ -134,13 +112,6 @@ struct ShaderID {
 		for (size_t i = 0; i < ARRAY_SIZE(d); i++) {
 			d[i] = 0xFFFFFFFF;
 		}
-	}
-	bool is_invalid() const {
-		for (size_t i = 0; i < ARRAY_SIZE(d); i++) {
-			if (d[i] != 0xFFFFFFFF)
-				return false;
-		}
-		return true;
 	}
 
 	uint32_t d[2];
@@ -168,12 +139,10 @@ struct ShaderID {
 		return d[word];
 	}
 
-	// Note: This is a binary copy to string-as-bytes, not a human-readable representation.
 	void ToString(std::string *dest) const {
 		dest->resize(sizeof(d));
 		memcpy(&(*dest)[0], d, sizeof(d));
 	}
-	// Note: This is a binary copy from string-as-bytes, not a human-readable representation.
 	void FromString(std::string src) {
 		memcpy(d, &(src)[0], sizeof(d));
 	}
@@ -251,46 +220,15 @@ struct FShaderID : ShaderID {
 	}
 };
 
-struct GShaderID : ShaderID {
-	GShaderID() : ShaderID() {
-	}
-
-	explicit GShaderID(ShaderID &src) {
-		memcpy(d, src.d, sizeof(d));
-	}
-
-	bool Bit(GShaderBit bit) const {
-		return ShaderID::Bit((int)bit);
-	}
-
-	int Bits(GShaderBit bit, int count) const {
-		return ShaderID::Bits((int)bit, count);
-	}
-
-	void SetBit(GShaderBit bit, bool value = true) {
-		ShaderID::SetBit((int)bit, value);
-	}
-
-	void SetBits(GShaderBit bit, int count, int value) {
-		ShaderID::SetBits((int)bit, count, value);
-	}
-};
-
 namespace Draw {
 class Bugs;
 }
 
-void ComputeVertexShaderID(VShaderID *id, u32 vertType, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode);
+
+void ComputeVertexShaderID(VShaderID *id, uint32_t vertexType, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat);
 // Generates a compact string that describes the shader. Useful in a list to get an overview
 // of the current flora of shaders.
 std::string VertexShaderDesc(const VShaderID &id);
 
-struct ComputedPipelineState;
-void ComputeFragmentShaderID(FShaderID *id, const ComputedPipelineState &pipelineState, const Draw::Bugs &bugs);
+void ComputeFragmentShaderID(FShaderID *id, const Draw::Bugs &bugs);
 std::string FragmentShaderDesc(const FShaderID &id);
-
-void ComputeGeometryShaderID(GShaderID *id, const Draw::Bugs &bugs, int prim);
-std::string GeometryShaderDesc(const GShaderID &id);
-
-// For sanity checking.
-bool FragmentIdNeedsFramebufferRead(const FShaderID &id);

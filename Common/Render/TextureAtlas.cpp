@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <zstd.h>
 
-#include "Common/Log.h"
 #include "Common/Render/TextureAtlas.h"
 
 class ByteReader {
@@ -11,7 +10,6 @@ public:
 
 	template<class T>
 	T Read() {
-		_dbg_assert_(offset_ + sizeof(T) <= size_);
 		T x;
 		memcpy(&x, data_ + offset_, sizeof(T));
 		offset_ += sizeof(T);
@@ -20,7 +18,6 @@ public:
 
 	template<class T>
 	void ReadInto(T *t) {
-		_dbg_assert_(offset_ + sizeof(T) <= size_);
 		memcpy(t, data_ + offset_, sizeof(T));
 		offset_ += sizeof(T);
 	}
@@ -29,16 +26,13 @@ public:
 	T *ReadMultipleAlloc(size_t count, bool compressed) {
 		T *t = new T[count];
 		if (!compressed) {
-			_dbg_assert_(offset_ + sizeof(T) * count <= size_);
 			memcpy(t, data_ + offset_, sizeof(T) * count);
 			offset_ += sizeof(T) * count;
 		} else {
-			_dbg_assert_(offset_ + sizeof(uint32_t) <= size_);
 			uint32_t compressed_size = 0;
 			memcpy(&compressed_size, data_ + offset_, sizeof(uint32_t));
 			offset_ += sizeof(uint32_t);
 
-			_dbg_assert_(offset_ + compressed_size <= size_);
 			ZSTD_decompress(t, sizeof(T) * count, data_ + offset_, compressed_size);
 			offset_ += compressed_size;
 		}
@@ -51,29 +45,18 @@ private:
 	size_t size_;
 };
 
-void Atlas::Clear() {
-	num_images = 0;
-	num_fonts = 0;
-	delete[] images;
-	delete[] fonts;
-	images = nullptr;
-	fonts = nullptr;
-}
-
-bool Atlas::LoadMeta(const uint8_t *data, size_t data_size) {
+bool Atlas::Load(const uint8_t *data, size_t data_size) {
 	ByteReader reader(data, data_size);
 
 	AtlasHeader header = reader.Read<AtlasHeader>();
+	num_images = header.numImages;
+	num_fonts = header.numFonts;
 	if (header.magic != ATLAS_MAGIC) {
 		return false;
 	}
 
-	Clear();
-
-	num_images = header.numImages;
-	num_fonts = header.numFonts;
-
 	images = reader.ReadMultipleAlloc<AtlasImage>(num_images, header.version >= 1);
+
 	fonts = new AtlasFont[num_fonts];
 	for (int i = 0; i < num_fonts; i++) {
 		AtlasFontHeader font_header = reader.Read<AtlasFontHeader>();
@@ -106,7 +89,7 @@ const AtlasImage *Atlas::getImage(ImageID name) const {
 		return nullptr;
 
 	for (int i = 0; i < num_images; i++) {
-		if (name.id == images[i].name)
+		if (!strcmp(name.id, images[i].name))
 			return &images[i];
 	}
 	return nullptr;

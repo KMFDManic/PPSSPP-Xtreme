@@ -30,6 +30,7 @@ public:
 	uint32_t m_z;
 };
 
+
 // Data must consist only of the index and the twister array. This matches the PSP
 // MT context exactly.
 class MersenneTwister {

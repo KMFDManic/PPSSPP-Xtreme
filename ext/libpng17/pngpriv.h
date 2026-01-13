@@ -347,8 +347,7 @@
 #  define debug_handled(cond) do {} while (0)
 #  if PNG_LIBPNG_BUILD_BASE_TYPE >= PNG_LIBPNG_BUILD_RC
      /* Make sure there are no 'UNTESTED' macros in released code: */
-// #    define UNTESTED libpng untested code
-# define UNTESTED
+#    define UNTESTED libpng untested code
 #  endif
 #  define NOT_REACHED do {} while (0)
 #else

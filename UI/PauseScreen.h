@@ -23,60 +23,77 @@
 #include "Common/File/Path.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/ViewGroup.h"
-#include "UI/BaseScreens.h"
-#include "UI/Screen.h"
-#include "UI/GameInfoCache.h"
+#include "UI/MiscScreens.h"
+#include "UI/TextureUtil.h"
 
-class GamePauseScreen : public UIBaseDialogScreen {
+class GamePauseScreen : public UIDialogScreenWithGameBackground {
 public:
-	GamePauseScreen(const Path &filename, bool bootPending);
-	~GamePauseScreen();
+	GamePauseScreen(const Path &filename) : UIDialogScreenWithGameBackground(filename), gamePath_(filename) {}
+	virtual ~GamePauseScreen();
 
-	void dialogFinished(const Screen *dialog, DialogResult dr) override;
-	bool key(const KeyInput &key) override;
-
-	const char *tag() const override { return "GamePause"; }
+	virtual void dialogFinished(const Screen *dialog, DialogResult dr) override;
 
 protected:
-	void CreateViews() override;
-	void update() override;
-	UI::Margins RootMargins() const override;
+	virtual void CreateViews() override;
+	virtual void update() override;
+	void CallbackDeleteConfig(bool yes);
 
 private:
-	void CreateSavestateControls(UI::LinearLayout *viewGroup);
+	UI::EventReturn OnGameSettings(UI::EventParams &e);
+	UI::EventReturn OnExitToMenu(UI::EventParams &e);
+	UI::EventReturn OnReportFeedback(UI::EventParams &e);
 
-	void OnGameSettings(UI::EventParams &e);
-	void OnExit(UI::EventParams &e);
-	void OnReportFeedback(UI::EventParams &e);
+	UI::EventReturn OnRewind(UI::EventParams &e);
+	UI::EventReturn OnLoadUndo(UI::EventParams &e);
+	UI::EventReturn OnLastSaveUndo(UI::EventParams &e);
 
-	void OnRewind(UI::EventParams &e);
-	void OnLoadUndo(UI::EventParams &e);
-	void OnLastSaveUndo(UI::EventParams &e);
+	UI::EventReturn OnScreenshotClicked(UI::EventParams &e);
+	UI::EventReturn OnCwCheat(UI::EventParams &e);
 
-	void OnCreateConfig(UI::EventParams &e);
-	void OnDeleteConfig(UI::EventParams &e);
+	UI::EventReturn OnCreateConfig(UI::EventParams &e);
+	UI::EventReturn OnDeleteConfig(UI::EventParams &e);
 
-	void OnState(UI::EventParams &e);
-	void ShowContextMenu(UI::View *menuButton, bool portrait);
-
-	void AddExtraOptions(UI::ViewGroup *parent);
+	UI::EventReturn OnSwitchUMD(UI::EventParams &e);
+	UI::EventReturn OnState(UI::EventParams &e);
 
 	// hack
 	bool finishNextFrame_ = false;
-	DialogResult finishNextFrameResult_ = DR_CANCEL;
-
-	UI::Choice *playButton_ = nullptr;
-
-	// State change tracking, a bit ugly heh, but works.
-	bool lastOnline_ = false;
-	bool lastNetInited_ = false;
-	bool lastNetInetInited_ = false;
-	bool lastAdhocServerConnected_ = false;
-	bool lastDNSConfigLoaded_ = false;
-
-	bool bootPending_ = false;
-
-	std::string saveStatePrefix_;
+	Path gamePath_;
 };
 
-std::string GetConfirmExitMessage();
+// AsyncImageFileView loads a texture from a file, and reloads it as necessary.
+// TODO: Actually make async, doh.
+class AsyncImageFileView : public UI::Clickable {
+public:
+	AsyncImageFileView(const Path &filename, UI::ImageSizeMode sizeMode, UI::LayoutParams *layoutParams = 0);
+	~AsyncImageFileView();
+
+	void GetContentDimensionsBySpec(const UIContext &dc, UI::MeasureSpec horiz, UI::MeasureSpec vert, float &w, float &h) const override;
+	void Draw(UIContext &dc) override;
+	std::string DescribeText() const override { return text_; }
+
+	void DeviceLost() override;
+	void DeviceRestored(Draw::DrawContext *draw) override;
+
+	void SetFilename(const Path &filename);
+	void SetColor(uint32_t color) { color_ = color; }
+	void SetOverlayText(std::string text) { text_ = text; }
+	void SetFixedSize(float fixW, float fixH) { fixedSizeW_ = fixW; fixedSizeH_ = fixH; }
+	void SetCanBeFocused(bool can) { canFocus_ = can; }
+
+	bool CanBeFocused() const override { return canFocus_; }
+
+	const Path &GetFilename() const { return filename_; }
+
+private:
+	bool canFocus_;
+	Path filename_;
+	std::string text_;
+	uint32_t color_;
+	UI::ImageSizeMode sizeMode_;
+
+	std::unique_ptr<ManagedTexture> texture_;
+	bool textureFailed_;
+	float fixedSizeW_;
+	float fixedSizeH_;
+};

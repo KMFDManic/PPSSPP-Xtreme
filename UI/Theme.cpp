@@ -21,12 +21,12 @@
 
 #include "UI/Theme.h"
 
+#include "Common/File/FileUtil.h"
+#include "Common/File/VFS/VFS.h"
 #include "Common/Data/Format/IniFile.h"
 #include "Common/File/DirListing.h"
-#include "Common/Log/LogManager.h"
-#include "Common/File/VFS/VFS.h"
-#include "Common/Data/Text/I18n.h"
-#include "Common/Render/Text/draw_text.h"
+#include "Common/LogManager.h"
+
 #include "Core/Config.h"
 
 #include "Common/UI/View.h"
@@ -46,21 +46,14 @@ struct ThemeInfo {
 	uint32_t uItemDisabledStyleBg = 0x55000000;
 
 	uint32_t uHeaderStyleFg = 0xFFFFFFFF;
-	uint32_t uHeaderStyleBg = 0x00000000;
 	uint32_t uInfoStyleFg = 0xFFFFFFFF;
 	uint32_t uInfoStyleBg = 0x00000000;
+	uint32_t uPopupTitleStyleFg = 0xFFE3BE59;
 	uint32_t uPopupStyleFg = 0xFFFFFFFF;
-	uint32_t uPopupStyleBg = 0xFF5E4D1F;
-	uint32_t uPopupTitleStyleFg = 0xFFFFFFFF;
-	uint32_t uPopupTitleStyleBg = 0x00000000;  // default to invisible
-	uint32_t uTooltipStyleFg = 0xFFFFFFFF;
-	uint32_t uTooltipStyleBg = 0xC0303030;
-	uint32_t uCollapsibleHeaderStyleFg = 0xFFFFFFFF;
-	uint32_t uCollapsibleHeaderStyleBg = 0x55000000;
+	uint32_t uPopupStyleBg = 0xFF303030;
 	uint32_t uBackgroundColor = 0xFF754D24;
-	uint32_t uScrollbarColor = 0x80FFFFFF;
-	uint32_t uPopupSliderColor = 0xFFFFFFFF;
-	uint32_t uPopupSliderFocusedColor = 0xFFEDC24C;
+
+	std::string sUIAtlas = "ui_atlas";
 
 	bool operator == (const std::string &other) {
 		return name == other;
@@ -72,6 +65,9 @@ struct ThemeInfo {
 
 static UI::Theme ui_theme;
 static std::vector<ThemeInfo> themeInfos;
+
+static Atlas ui_atlas;
+static Atlas font_atlas;
 
 static void LoadThemeInfo(const std::vector<Path> &directories) {
 	themeInfos.clear();
@@ -90,7 +86,7 @@ static void LoadThemeInfo(const std::vector<Path> &directories) {
 
 	for (size_t d = 0; d < directories.size(); d++) {
 		std::vector<File::FileInfo> fileInfo;
-		g_VFS.GetFileListing(directories[d].c_str(), &fileInfo, "ini:");
+		VFSGetFileListing(directories[d].c_str(), &fileInfo, "ini:");
 
 		if (fileInfo.empty()) {
 			File::GetFilesInDir(directories[d], &fileInfo, "ini:");
@@ -110,53 +106,47 @@ static void LoadThemeInfo(const std::vector<Path> &directories) {
 			if (path.ToString().substr(0, 7) == "assets/")
 				path = Path(path.ToString().substr(7));
 
-			if (ini.LoadFromVFS(g_VFS, name.ToString()) || ini.Load(fileInfo[f].fullName)) {
+			if (ini.LoadFromVFS(name.ToString()) || ini.Load(fileInfo[f].fullName)) {
 				success = true;
+				// vsh load. meh.
 			}
 
 			if (!success)
 				continue;
 
-			// Alright, let's loop through the sections and see if any is a theme.
+			// Alright, let's loop through the sections and see if any is a themes.
 			for (size_t i = 0; i < ini.Sections().size(); i++) {
-				Section &section = *(ini.Sections()[i].get());
-
-				if (section.name().empty()) {
-					continue;
-				}
-
+				Section &section = ini.Sections()[i];
 				ThemeInfo info;
-				info.name = section.name();
-				section.Get("Name", &info.name);
+				section.Get("Name", &info.name, section.name().c_str());
 
-				section.Get("ItemStyleFg", &info.uItemStyleFg);
-				section.Get("ItemStyleBg", &info.uItemStyleBg);
-				section.Get("ItemFocusedStyleFg", &info.uItemFocusedStyleFg);
-				section.Get("ItemFocusedStyleBg", &info.uItemFocusedStyleBg);
-				section.Get("ItemDownStyleFg", &info.uItemDownStyleFg);
-				section.Get("ItemDownStyleBg", &info.uItemDownStyleBg);
-				section.Get("ItemDisabledStyleFg", &info.uItemDisabledStyleFg);
-				section.Get("ItemDisabledStyleBg", &info.uItemDisabledStyleBg);
+				section.Get("ItemStyleFg", &info.uItemStyleFg, info.uItemStyleFg);
+				section.Get("ItemStyleBg", &info.uItemStyleBg, info.uItemStyleBg);
+				section.Get("ItemFocusedStyleFg", &info.uItemFocusedStyleFg, info.uItemFocusedStyleFg);
+				section.Get("ItemFocusedStyleBg", &info.uItemFocusedStyleBg, info.uItemFocusedStyleBg);
+				section.Get("ItemDownStyleFg", &info.uItemDownStyleFg, info.uItemDownStyleFg);
+				section.Get("ItemDownStyleBg", &info.uItemDownStyleBg, info.uItemDownStyleBg);
+				section.Get("ItemDisabledStyleFg", &info.uItemDisabledStyleFg, info.uItemDisabledStyleFg);
+				section.Get("ItemDisabledStyleBg", &info.uItemDisabledStyleBg, info.uItemDisabledStyleBg);
 
-				section.Get("HeaderStyleFg", &info.uHeaderStyleFg);
-				section.Get("HeaderStyleBg", &info.uHeaderStyleBg);
-				section.Get("InfoStyleFg", &info.uInfoStyleFg);
-				section.Get("InfoStyleBg", &info.uInfoStyleBg);
-				section.Get("PopupStyleFg", &info.uPopupStyleFg);  // Backwards compat
-				section.Get("PopupStyleBg", &info.uPopupStyleBg);
-				section.Get("TooltipStyleFg", &info.uTooltipStyleFg);  // Backwards compat
-				section.Get("TooltipStyleBg", &info.uTooltipStyleBg);
-				info.uPopupTitleStyleFg = info.uItemStyleFg;
-				section.Get("PopupTitleStyleFg", &info.uPopupTitleStyleFg);
-				section.Get("PopupTitleStyleBg", &info.uPopupTitleStyleBg);
-				info.uCollapsibleHeaderStyleFg = info.uInfoStyleFg;
-				info.uCollapsibleHeaderStyleBg = info.uInfoStyleBg;
-				section.Get("CollapsibleHeaderStyleFg", &info.uCollapsibleHeaderStyleFg);  // Backwards compat
-				section.Get("CollapsibleHeaderStyleBg", &info.uCollapsibleHeaderStyleBg);
-				section.Get("BackgroundColor", &info.uBackgroundColor);
-				section.Get("ScrollbarColor", &info.uScrollbarColor);
-				section.Get("PopupSliderColor", &info.uPopupSliderColor);
-				section.Get("PopupSliderFocusedColor", &info.uPopupSliderFocusedColor);
+				section.Get("HeaderStyleFg", &info.uHeaderStyleFg, info.uHeaderStyleFg);
+				section.Get("InfoStyleFg", &info.uInfoStyleFg, info.uInfoStyleFg);
+				section.Get("InfoStyleBg", &info.uInfoStyleBg, info.uInfoStyleBg);
+				section.Get("PopupTitleStyleFg", &info.uPopupTitleStyleFg, info.uPopupTitleStyleFg);
+				section.Get("PopupStyleFg", &info.uPopupStyleFg, info.uPopupStyleFg);
+				section.Get("PopupStyleBg", &info.uPopupStyleBg, info.uPopupStyleBg);
+				section.Get("BackgroundColor", &info.uBackgroundColor, info.uBackgroundColor);
+
+				std::string tmpPath;
+				section.Get("UIAtlas", &tmpPath, "");
+				if (tmpPath != "") {
+					tmpPath = (path / tmpPath).ToString();
+
+					File::FileInfo tmpInfo;
+					if (VFSGetFileInfo((tmpPath+".meta").c_str(), &tmpInfo) && VFSGetFileInfo((tmpPath+".zim").c_str(), &tmpInfo)) {
+						info.sUIAtlas = tmpPath;
+					}
+				}
 
 				appendTheme(info);
 			}
@@ -171,82 +161,89 @@ static UI::Style MakeStyle(uint32_t fg, uint32_t bg) {
 	return s;
 }
 
-void UpdateTheme() {
+static void LoadAtlasMetadata(Atlas &metadata, const char *filename, bool required) {
+	size_t atlas_data_size = 0;
+	const uint8_t *atlas_data = VFSReadFile(filename, &atlas_data_size);
+	bool load_success = atlas_data != nullptr && metadata.Load(atlas_data, atlas_data_size);
+	if (!load_success) {
+		if (required)
+			ERROR_LOG(G3D, "Failed to load %s - graphics will be broken", filename);
+		else
+			WARN_LOG(G3D, "Failed to load %s", filename);
+		// Stumble along with broken visuals instead of dying...
+	}
+	delete[] atlas_data;
+}
+
+void UpdateTheme(UIContext *ctx) {
 	// First run, get the default in at least
 	if (themeInfos.empty()) {
 		ReloadAllThemeInfo();
 	}
 
-	int defaultThemeIndex = -1;
-	int selectedThemeIndex = -1;
-	for (int i = 0; i < themeInfos.size(); ++i) {
-		if (themeInfos[i].name == "Default") {
-			defaultThemeIndex = i;
-		}
+	size_t i;
+	for (i = 0; i < themeInfos.size(); ++i) {
 		if (themeInfos[i].name == g_Config.sThemeName) {
-			selectedThemeIndex = i;
+			break;
 		}
 	}
 
 	// Reset to Default if not found
-	if (selectedThemeIndex < 0 || selectedThemeIndex >= themeInfos.size()) {
+	if (i >= themeInfos.size()) {
 		g_Config.sThemeName = "Default";
-		selectedThemeIndex = defaultThemeIndex;
-		if (selectedThemeIndex < 0) {
-			_dbg_assert_(false);
-			// No themes? Bad.
-			return;
-		}
+		i = 0;
 	}
 
-	// Desktop font override support
-	auto des = GetI18NCategory(I18NCat::DESKTOPUI);
-	std::string_view fontOverride = des->T("Font", "");
-	if (fontOverride == "Font") {
-		fontOverride = "";
-	}
-	if (!fontOverride.empty()) {
-		SetFontNameOverride(FontFamily::SansSerif, fontOverride);
-	}
-
-	ui_theme.uiFontTiny = FontStyle(FontFamily::SansSerif, 14, FontStyleFlags::Default);
-	ui_theme.uiFontSmall = FontStyle(FontFamily::SansSerif, 17, FontStyleFlags::Default);
-	ui_theme.uiFont = FontStyle(FontFamily::SansSerif, 22, FontStyleFlags::Default);
-	ui_theme.uiFontBig = FontStyle(FontFamily::SansSerif, 28, FontStyleFlags::Bold);
-	ui_theme.uiFontCode = FontStyle(FontFamily::Fixed, 14, FontStyleFlags::Default);
+#if defined(USING_WIN_UI) || PPSSPP_PLATFORM(UWP) || defined(USING_QT_UI)
+	ui_theme.uiFont = UI::FontStyle(FontID("UBUNTU24"), g_Config.sFont.c_str(), 22);
+	ui_theme.uiFontSmall = UI::FontStyle(FontID("UBUNTU24"), g_Config.sFont.c_str(), 15);
+	ui_theme.uiFontSmaller = UI::FontStyle(FontID("UBUNTU24"), g_Config.sFont.c_str(), 12);
+#else
+	ui_theme.uiFont = UI::FontStyle(FontID("UBUNTU24"), "", 20);
+	ui_theme.uiFontSmall = UI::FontStyle(FontID("UBUNTU24"), "", 14);
+	ui_theme.uiFontSmaller = UI::FontStyle(FontID("UBUNTU24"), "", 11);
+#endif
 
 	ui_theme.checkOn = ImageID("I_CHECKEDBOX");
-	ui_theme.checkOff = ImageID("I_UNCHECKEDBOX");
+	ui_theme.checkOff = ImageID("I_SQUARE");
 	ui_theme.whiteImage = ImageID("I_SOLIDWHITE");
 	ui_theme.sliderKnob = ImageID("I_CIRCLE");
 	ui_theme.dropShadow4Grid = ImageID("I_DROP_SHADOW");
 
-	const ThemeInfo &themeInfo = themeInfos[selectedThemeIndex];
-
 	// Actual configurable themes setting start here
-	ui_theme.itemStyle = MakeStyle(themeInfo.uItemStyleFg, themeInfo.uItemStyleBg);
-	ui_theme.itemFocusedStyle = MakeStyle(themeInfo.uItemFocusedStyleFg, themeInfo.uItemFocusedStyleBg);
-	ui_theme.itemDownStyle = MakeStyle(themeInfo.uItemDownStyleFg, themeInfo.uItemDownStyleBg);
-	ui_theme.itemDisabledStyle = MakeStyle(themeInfo.uItemDisabledStyleFg, themeInfo.uItemDisabledStyleBg);
+	ui_theme.itemStyle = MakeStyle(themeInfos[i].uItemStyleFg, themeInfos[i].uItemStyleBg);
+	ui_theme.itemFocusedStyle = MakeStyle(themeInfos[i].uItemFocusedStyleFg, themeInfos[i].uItemFocusedStyleBg);
+	ui_theme.itemDownStyle = MakeStyle(themeInfos[i].uItemDownStyleFg, themeInfos[i].uItemDownStyleBg);
+	ui_theme.itemDisabledStyle = MakeStyle(themeInfos[i].uItemDisabledStyleFg, themeInfos[i].uItemDisabledStyleBg);
 
-	ui_theme.headerStyle = MakeStyle(themeInfo.uHeaderStyleFg, themeInfo.uHeaderStyleBg);
-	ui_theme.collapsibleHeaderStyle = MakeStyle(themeInfo.uCollapsibleHeaderStyleFg, themeInfo.uCollapsibleHeaderStyleBg);
-	ui_theme.infoStyle = MakeStyle(themeInfo.uInfoStyleFg, themeInfo.uInfoStyleBg);
+	ui_theme.headerStyle.fgColor = themeInfos[i].uHeaderStyleFg;
+	ui_theme.infoStyle = MakeStyle(themeInfos[i].uInfoStyleFg, themeInfos[i].uInfoStyleBg);
 
-	ui_theme.popupStyle = MakeStyle(themeInfo.uPopupStyleFg, themeInfo.uPopupStyleBg);
-	ui_theme.popupTitleStyle = MakeStyle(themeInfo.uPopupTitleStyleFg, themeInfo.uPopupTitleStyleBg);
+	ui_theme.popupTitle.fgColor = themeInfos[i].uPopupTitleStyleFg;
+	ui_theme.popupStyle = MakeStyle(themeInfos[i].uPopupStyleFg, themeInfos[i].uPopupStyleBg);
+	ui_theme.backgroundColor = themeInfos[i].uBackgroundColor;
 
-	ui_theme.tooltipStyle = MakeStyle(themeInfo.uTooltipStyleFg, themeInfo.uTooltipStyleBg);
+	// Load any missing atlas metadata (the images are loaded from UIContext).
+	LoadAtlasMetadata(ui_atlas, (themeInfos[i].sUIAtlas + ".meta").c_str(), true);
+#if !(PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(ANDROID))
+	LoadAtlasMetadata(font_atlas, "font_atlas.meta", ui_atlas.num_fonts == 0);
+#else
+	LoadAtlasMetadata(font_atlas, "asciifont_atlas.meta", ui_atlas.num_fonts == 0);
+#endif
 
-	ui_theme.backgroundColor = themeInfo.uBackgroundColor;
-	ui_theme.scrollbarColor = themeInfo.uScrollbarColor;
-
-	ui_theme.popupSliderColor = themeInfo.uPopupSliderColor;
-	ui_theme.popupSliderFocusedColor = themeInfo.uPopupSliderFocusedColor;
+	ctx->setUIAtlas(themeInfos[i].sUIAtlas + ".zim");
 }
 
 UI::Theme *GetTheme() {
 	return &ui_theme;
+}
+
+Atlas *GetFontAtlas() {
+	return &font_atlas;
+}
+
+Atlas *GetUIAtlas() {
+	return &ui_atlas;
 }
 
 void ReloadAllThemeInfo() {
@@ -258,8 +255,8 @@ void ReloadAllThemeInfo() {
 
 std::vector<std::string> GetThemeInfoNames() {
 	std::vector<std::string> names;
-	for (const auto &info : themeInfos) {
-		names.push_back(info.name);
-	}
+	for (auto& i : themeInfos)
+		names.push_back(i.name);
+
 	return names;
 }

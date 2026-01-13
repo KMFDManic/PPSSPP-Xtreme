@@ -2,16 +2,12 @@
 
 #include <cstdint>
 #include <vector>
-#include <set>
 #include <unordered_map>
 
 #include "Common/GPU/OpenGL/GLCommon.h"
-#include "Common/GPU/OpenGL/GLFrameData.h"
 #include "Common/GPU/DataFormat.h"
 #include "Common/GPU/Shader.h"
-#include "Common/GPU/thin3d.h"
 #include "Common/Data/Collections/TinySet.h"
-#include "Common/Data/Collections/FastVec.h"
 
 struct GLRViewport {
 	float x, y, w, h, minZ, maxZ;
@@ -25,7 +21,7 @@ struct GLOffset2D {
 	int x, y;
 };
 
-enum class GLRAllocType : uint8_t {
+enum class GLRAllocType {
 	NONE,
 	NEW,
 	ALIGNED,
@@ -40,7 +36,8 @@ class GLRInputLayout;
 
 enum class GLRRenderCommand : uint8_t {
 	DEPTH,
-	STENCIL,
+	STENCILFUNC,
+	STENCILOP,
 	BLEND,
 	BLENDCOLOR,
 	LOGICOP,
@@ -48,7 +45,6 @@ enum class GLRRenderCommand : uint8_t {
 	UNIFORM4UI,
 	UNIFORM4F,
 	UNIFORMMATRIX,
-	UNIFORMSTEREOMATRIX,
 	TEXTURESAMPLER,
 	TEXTURELOD,
 	VIEWPORT,
@@ -60,8 +56,11 @@ enum class GLRRenderCommand : uint8_t {
 	BINDTEXTURE,
 	BIND_FB_TEXTURE,
 	BIND_VERTEX_BUFFER,
+	BIND_BUFFER,
 	GENMIPS,
 	DRAW,
+	DRAW_INDEXED,
+	PUSH_CONSTANTS,
 	TEXTURE_SUBIMAGE,
 };
 
@@ -69,7 +68,6 @@ enum class GLRRenderCommand : uint8_t {
 // type field, smashed right after each other?)
 // Also, all GLenums are really only 16 bits.
 struct GLRRenderData {
-	GLRRenderData(GLRRenderCommand _cmd) : cmd(_cmd) {}
 	GLRRenderCommand cmd;
 	union {
 		struct {
@@ -95,27 +93,30 @@ struct GLRRenderData {
 			GLenum func;
 		} depth;
 		struct {
+			GLboolean enabled;
 			GLenum func;
+			uint8_t ref;
+			uint8_t compareMask;
+		} stencilFunc;
+		struct {
 			GLenum sFail;
 			GLenum zFail;
 			GLenum pass;
-			GLboolean enabled;
-			uint8_t ref;
-			uint8_t compareMask;
 			uint8_t writeMask;
-		} stencil;
+		} stencilOp;  // also write mask
 		struct {
-			GLRInputLayout *inputLayout;
-			GLRBuffer *vertexBuffer;
-			GLRBuffer *indexBuffer;
-			uint32_t vertexOffset;
-			uint32_t indexOffset;
 			GLenum mode;  // primitive
+			GLint buffer;
 			GLint first;
 			GLint count;
-			GLint indexType;
-			GLint instances;
 		} draw;
+		struct {
+			GLenum mode;  // primitive
+			GLint count;
+			GLint instances;
+			GLint indexType;
+			void *indices;
+		} drawIndexed;
 		struct {
 			const char *name;  // if null, use loc
 			const GLint *loc; // NOTE: This is a pointer so we can immediately use things that are "queried" during program creation.
@@ -127,11 +128,6 @@ struct GLRRenderData {
 			const GLint *loc;
 			float m[16];
 		} uniformMatrix4;
-		struct {
-			const char *name;  // if null, use loc
-			const GLint *loc;
-			float *mData;  // new'd, 32 entries
-		} uniformStereoMatrix4;
 		struct {
 			uint32_t clearColor;
 			float clearZ;
@@ -150,18 +146,17 @@ struct GLRRenderData {
 		struct {
 			GLRTexture *texture;
 			Draw::DataFormat format;
-			uint8_t slot;
-			uint8_t level;
-			uint16_t width;
-			uint16_t height;
-			uint16_t x;
-			uint16_t y;
+			int level;
+			int x;
+			int y;
+			int width;
+			int height;
 			GLRAllocType allocType;
 			uint8_t *data;  // owned, delete[]-d
 		} texture_subimage;
 		struct {
-			GLRFramebuffer* framebuffer;
 			int slot;
+			GLRFramebuffer *framebuffer;
 			int aspect;
 		} bind_fb_texture;
 		struct {
@@ -171,6 +166,11 @@ struct GLRRenderData {
 		struct {
 			GLRProgram *program;
 		} program;
+		struct {
+			GLRInputLayout *inputLayout;
+			GLRBuffer *buffer;
+			size_t offset;
+		} bindVertexBuffer;
 		struct {
 			int slot;
 			GLenum wrapS;
@@ -192,9 +192,9 @@ struct GLRRenderData {
 			GLRect2D rc;
 		} scissor;
 		struct {
+			GLboolean cullEnable;
 			GLenum frontFace;
 			GLenum cullFace;
-			GLboolean cullEnable;
 			GLboolean ditherEnable;
 			GLboolean depthClampEnable;
 		} raster;
@@ -223,6 +223,7 @@ struct GLRInitStep {
 	union {
 		struct {
 			GLRTexture *texture;
+			GLenum target;
 		} create_texture;
 		struct {
 			GLRShader *shader;
@@ -258,16 +259,15 @@ struct GLRInitStep {
 			GLRTexture *texture;
 			Draw::DataFormat format;
 			int level;
-			uint16_t width;
-			uint16_t height;
-			uint16_t depth;
+			int width;
+			int height;
 			GLRAllocType allocType;
 			bool linearFilter;
 			uint8_t *data;  // owned, delete[]-d
 		} texture_image;
 		struct {
 			GLRTexture *texture;
-			int loadedLevels;
+			int maxLevel;
 			bool genMips;
 		} texture_finalize;
 	};
@@ -290,17 +290,16 @@ enum class GLRRenderPassAction {
 
 class GLRFramebuffer;
 
-enum GLRAspect {
+enum {
 	GLR_ASPECT_COLOR = 1,
 	GLR_ASPECT_DEPTH = 2,
 	GLR_ASPECT_STENCIL = 3,
 };
-const char *GLRAspectToString(GLRAspect aspect);
 
 struct GLRStep {
-	GLRStep(GLRStepType _type) : stepType(_type), tag() {}
+	GLRStep(GLRStepType _type) : stepType(_type) {}
 	GLRStepType stepType;
-	FastVec<GLRRenderData> commands;
+	std::vector<GLRRenderData> commands;
 	TinySet<const GLRFramebuffer *, 8> dependencies;
 	const char *tag;
 	union {
@@ -309,6 +308,8 @@ struct GLRStep {
 			GLRRenderPassAction color;
 			GLRRenderPassAction depth;
 			GLRRenderPassAction stencil;
+			// Note: not accurate.
+			int numDraws;
 		} render;
 		struct {
 			GLRFramebuffer *src;
@@ -326,9 +327,9 @@ struct GLRStep {
 			GLboolean filter;
 		} blit;
 		struct {
-			GLRFramebuffer* src;
-			GLRect2D srcRect;
 			int aspectMask;
+			GLRFramebuffer *src;
+			GLRect2D srcRect;
 			Draw::DataFormat dstFormat;
 		} readback;
 		struct {
@@ -348,18 +349,19 @@ public:
 		errorCallbackUserData_ = userdata;
 	}
 
-	void SetDeviceCaps(const Draw::DeviceCaps &caps) {
-		caps_ = caps;
-	}
+	void RunInitSteps(const std::vector<GLRInitStep> &steps, bool skipGLCalls);
 
-	void RunInitSteps(const FastVec<GLRInitStep> &steps, bool skipGLCalls);
-
-	void RunSteps(const std::vector<GLRStep *> &steps, GLFrameData &frameData, bool skipGLCalls, bool keepSteps, bool useVR);
+	void RunSteps(const std::vector<GLRStep *> &steps, bool skipGLCalls);
+	void LogSteps(const std::vector<GLRStep *> &steps);
 
 	void CreateDeviceObjects();
 	void DestroyDeviceObjects();
 
-	void CopyFromReadbackBuffer(GLRFramebuffer *framebuffer, int width, int height, Draw::DataFormat srcFormat, Draw::DataFormat destFormat, int pixelStride, uint8_t *pixels);
+	inline int RPIndex(GLRRenderPassAction color, GLRRenderPassAction depth) {
+		return (int)depth * 3 + (int)color;
+	}
+
+	void CopyReadbackBuffer(int width, int height, Draw::DataFormat srcFormat, Draw::DataFormat destFormat, int pixelStride, uint8_t *pixels);
 
 	void Resize(int width, int height) {
 		targetWidth_ = width;
@@ -379,24 +381,28 @@ private:
 	void InitCreateFramebuffer(const GLRInitStep &step);
 
 	void PerformBindFramebufferAsRenderTarget(const GLRStep &pass);
-	void PerformRenderPass(const GLRStep &pass, bool first, bool last, GLQueueProfileContext &profile);
+	void PerformRenderPass(const GLRStep &pass, bool first, bool last);
 	void PerformCopy(const GLRStep &pass);
 	void PerformBlit(const GLRStep &pass);
 	void PerformReadback(const GLRStep &pass);
 	void PerformReadbackImage(const GLRStep &pass);
 
-	void fbo_ext_create(const GLRInitStep &step);  // Unused on some platforms
+	void LogRenderPass(const GLRStep &pass);
+	void LogCopy(const GLRStep &pass);
+	void LogBlit(const GLRStep &pass);
+	void LogReadback(const GLRStep &pass);
+	void LogReadbackImage(const GLRStep &pass);
+
+	void ResizeReadbackBuffer(size_t requiredSize);
+
+	void fbo_ext_create(const GLRInitStep &step);
 	void fbo_bind_fb_target(bool read, GLuint name);
 	GLenum fbo_get_fb_target(bool read, GLuint **cached);
 	void fbo_unbind();
 
-	std::string StepToString(const GLRStep &step) const;
-
 	GLRFramebuffer *curFB_ = nullptr;
 
 	GLuint globalVAO_ = 0;
-
-	Draw::DeviceCaps caps_{};  // For sanity checks.
 
 	int curFBWidth_ = 0;
 	int curFBHeight_ = 0;
@@ -407,7 +413,9 @@ private:
 	// We size it generously.
 	uint8_t *readbackBuffer_ = nullptr;
 	int readbackBufferSize_ = 0;
-	uint32_t readbackAspectMask_ = 0;
+	// Temp buffer for color conversion
+	uint8_t *tempBuffer_ = nullptr;
+	int tempBufferSize_ = 0;
 
 	float maxAnisotropyLevel_ = 0.0f;
 
@@ -415,6 +423,10 @@ private:
 	GLuint currentDrawHandle_ = 0;
 	GLuint currentReadHandle_ = 0;
 
+	GLuint AllocTextureName();
+
+	// Texture name cache. Ripped straight from TextureCacheGLES.
+	std::vector<GLuint> nameCache_;
 	std::unordered_map<int, std::string> glStrings_;
 
 	bool sawOutOfMemory_ = false;
@@ -423,5 +435,3 @@ private:
 	ErrorCallbackFn errorCallback_ = nullptr;
 	void *errorCallbackUserData_ = nullptr;
 };
-
-const char *RenderCommandToString(GLRRenderCommand cmd);

@@ -69,7 +69,6 @@ public:
 
 	void DeviceLost() {
 		Clear(false);
-		render_ = nullptr;
 	}
 	void DeviceRestore(Draw::DrawContext *draw);
 	void Clear(bool deleteThem = true);
@@ -78,7 +77,7 @@ public:
 private:
 
 	GLRTexture *CreateTestTexture(const GEComparison funcs[4], const u8 refs[4], const u8 masks[4], const bool valid[4]);
-	static FragmentTestID GenerateTestID() ;
+	FragmentTestID GenerateTestID() const;
 
 	GLRenderManager *render_;
 	TextureCacheGLES *textureCache_;

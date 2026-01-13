@@ -15,87 +15,77 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#pragma once
-
 #include <functional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "Common/File/Path.h"
 #include "Common/Serialize/Serializer.h"
 
-class ParamSFOData;
-#undef Process
-
-namespace SaveState {
+namespace SaveState
+{
 	enum class Status {
 		FAILURE,
 		WARNING,
 		SUCCESS,
 	};
-	typedef std::function<void(Status status, std::string_view message)> Callback;
+	typedef std::function<void(Status status, const std::string &message, void *cbUserData)> Callback;
 
-	static const char * const SCREENSHOT_EXTENSION = "jpg";
+	static const int NUM_SLOTS = 5;
+	static const char *STATE_EXTENSION = "ppst";
+	static const char *SCREENSHOT_EXTENSION = "jpg";
+	static const char *UNDO_STATE_EXTENSION = "undo.ppst";
+	static const char *UNDO_SCREENSHOT_EXTENSION = "undo.jpg";
+
+	static const char *LOAD_UNDO_NAME = "load_undo.ppst";
 
 	void Init();
 	void Shutdown();
 
 	// Cycle through the 5 savestate slots
-	void PrevSlot();
 	void NextSlot();
-
-	std::string GetGamePrefix(const ParamSFOData &paramSFO);
-
-	// Run the various actions directly.
-	void SaveSlot(std::string_view gamePrefix, int slot, Callback callback);
-	void LoadSlot(std::string_view gamePrefix, int slot, Callback callback);
-	bool UndoSaveSlot(std::string_view gamePrefix, int slot);
-	bool UndoLastSave(std::string_view gamePrefix);
-	bool UndoLoad(std::string_view gamePrefix, Callback callback);
-	void DeleteSlot(std::string_view gamePrefix, int slot);
-
-	// This will rescan the save state directory for files associated with the specified game.
-	// Note that when we have many save states, this is really important on Android.
-	void Rescan(std::string_view gamePrefix);
-
+	void SaveSlot(const Path &gameFilename, int slot, Callback callback, void *cbUserData = 0);
+	void LoadSlot(const Path &gameFilename, int slot, Callback callback, void *cbUserData = 0);
+	bool UndoSaveSlot(const Path &gameFilename, int slot);
+	bool UndoLastSave(const Path &gameFilename);
+	bool UndoLoad(const Path &gameFilename, Callback callback, void *cbUserData = 0);
 	// Checks whether there's an existing save in the specified slot.
-	bool HasSaveInSlot(std::string_view gamePrefix, int slot);
-	bool HasUndoSaveInSlot(std::string_view gamePrefix, int slot);
-	bool HasUndoLastSave(std::string_view gamePrefix);
-	bool HasUndoLoad(std::string_view gamePrefix);
-	bool HasScreenshotInSlot(std::string_view gamePrefix, int slot);
+	bool HasSaveInSlot(const Path &gameFilename, int slot);
+	bool HasUndoSaveInSlot(const Path &gameFilename, int slot);
+	bool HasUndoLastSave(const Path &gameFilename);
+	bool HasUndoLoad(const Path &gameFilename);
+	bool HasScreenshotInSlot(const Path &gameFilename, int slot);
 
-	// Just returns the current slot from config.
 	int GetCurrentSlot();
 
 	// Returns -1 if there's no oldest/newest slot.
-	int GetNewestSlot(std::string_view gamePrefix);
-	int GetOldestSlot(std::string_view gamePrefix);
+	int GetNewestSlot(const Path &gameFilename);
+	int GetOldestSlot(const Path &gameFilename);
 	
-	std::string GetSlotDateAsString(std::string_view gamePrefix, int slot);
-	Path GenerateSaveSlotPath(std::string_view gamePrefix, int slot, const char *extension);
+	std::string GetSlotDateAsString(const Path &gameFilename, int slot);
+	std::string GenerateFullDiscId(const Path &gameFilename);
+	Path GenerateSaveSlotFilename(const Path &gameFilename, int slot, const char *extension);
 
 	std::string GetTitle(const Path &filename);
 
 	// Load the specified file into the current state (async.)
 	// Warning: callback will be called on a different thread.
-	void Load(const Path &filename, int slot, Callback callback = Callback());
+	void Load(const Path &filename, int slot, Callback callback = Callback(), void *cbUserData = 0);
 
 	// Save the current state to the specified file (async.)
 	// Warning: callback will be called on a different thread.
-	void Save(const Path &filename, int slot, Callback callback = Callback());
+	void Save(const Path &filename, int slot, Callback callback = Callback(), void *cbUserData = 0);
 
 	CChunkFileReader::Error SaveToRam(std::vector<u8> &state);
 	CChunkFileReader::Error LoadFromRam(std::vector<u8> &state, std::string *errorString);
 
 	// For testing / automated tests.  Runs a save state verification pass (async.)
 	// Warning: callback will be called on a different thread.
-	void Verify(Callback callback = Callback());
+	void Verify(Callback callback = Callback(), void *cbUserData = 0);
 
 	// To go back to a previous snapshot (only if enabled.)
 	// Warning: callback will be called on a different thread.
-	void Rewind(Callback callback = Callback());
+	void Rewind(Callback callback = Callback(), void *cbUserData = 0);
 
 	// Returns true if there are rewind snapshots available.
 	bool CanRewind();
@@ -110,14 +100,11 @@ namespace SaveState {
 	bool IsOldVersion();
 
 	// Check if there's any save stating needing to be done.  Normally called once per frame.
-	bool Process();
+	void Process();
 
 	// Notify save state code that new save data has been written.
 	void NotifySaveData();
 
-	// Checks whether a bad load required the caller to trigger a restart (and if returns true, resets the flag internally).
-	bool PollRestartNeeded();
-
-	// Returns the time since last save. -1 if N/A.
-	double SecondsSinceLastSavestate();
-}  // namespace SaveState
+	// Cleanup by triggering a restart if needed.
+	void Cleanup();
+};

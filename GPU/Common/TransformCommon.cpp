@@ -15,8 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <stdio.h>
+
 #include "Common/CPUDetect.h"
-#include "GPU/ge_constants.h"
 #include "GPU/GPUState.h"
 #include "GPU/Common/TransformCommon.h"
 
@@ -147,7 +148,7 @@ void Lighter::Light(float colorOut0[4], float colorOut1[4], const float colorIn[
 		Color4 diff = (lightDiff * *diffuse) * dot;
 
 		// Real PSP specular
-		static const Vec3f toViewer(0, 0, 1);
+		Vec3f toViewer(0, 0, 1);
 		// Better specular
 		// Vec3f toViewer = (viewer - pos).NormalizedOr001(cpu_info.bSSE4_1);
 

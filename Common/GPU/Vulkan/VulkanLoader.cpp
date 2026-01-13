@@ -16,32 +16,19 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-
 #include <vector>
 #include <string>
 #include <cstring>
 
-#include "Core/Config.h"
-#include "Common/Data/Format/JSONReader.h"
 #include "Common/GPU/Vulkan/VulkanLoader.h"
 #include "Common/Log.h"
-#include "Common/StringUtils.h"
 #include "Common/System/System.h"
-#include "Common/VR/PPSSPPVR.h"
-#include "Common/File/FileUtil.h"
 
 #if !PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(SWITCH)
 #include <dlfcn.h>
 #endif
 
-#if PPSSPP_PLATFORM(ANDROID) && PPSSPP_ARCH(ARM64)
-#include "File/AndroidStorage.h"
-
-#include <adrenotools/driver.h>
-#endif
-
 namespace PPSSPP_VK {
-#if !PPSSPP_PLATFORM(IOS_APP_STORE)
 PFN_vkCreateInstance vkCreateInstance;
 PFN_vkDestroyInstance vkDestroyInstance;
 PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices;
@@ -77,9 +64,9 @@ PFN_vkBindBufferMemory2 vkBindBufferMemory2;
 PFN_vkBindImageMemory vkBindImageMemory;
 PFN_vkBindImageMemory2 vkBindImageMemory2;
 PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements;
-PFN_vkGetDeviceBufferMemoryRequirements vkGetDeviceBufferMemoryRequirements;
+PFN_vkGetBufferMemoryRequirements2 vkGetBufferMemoryRequirements2;
 PFN_vkGetImageMemoryRequirements vkGetImageMemoryRequirements;
-PFN_vkGetDeviceImageMemoryRequirements vkGetDeviceImageMemoryRequirements;
+PFN_vkGetImageMemoryRequirements2 vkGetImageMemoryRequirements2;
 PFN_vkCreateFence vkCreateFence;
 PFN_vkDestroyFence vkDestroyFence;
 PFN_vkGetFenceStatus vkGetFenceStatus;
@@ -205,11 +192,6 @@ PFN_vkCreateWaylandSurfaceKHR vkCreateWaylandSurfaceKHR;
 #endif
 #if defined(VK_USE_PLATFORM_DISPLAY_KHR)
 PFN_vkCreateDisplayPlaneSurfaceKHR vkCreateDisplayPlaneSurfaceKHR;
-PFN_vkGetPhysicalDeviceDisplayPropertiesKHR vkGetPhysicalDeviceDisplayPropertiesKHR;
-PFN_vkGetPhysicalDeviceDisplayPlanePropertiesKHR vkGetPhysicalDeviceDisplayPlanePropertiesKHR;
-PFN_vkGetDisplayModePropertiesKHR vkGetDisplayModePropertiesKHR;
-PFN_vkGetDisplayPlaneSupportedDisplaysKHR vkGetDisplayPlaneSupportedDisplaysKHR;
-PFN_vkGetDisplayPlaneCapabilitiesKHR vkGetDisplayPlaneCapabilitiesKHR;
 #endif
 
 PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR;
@@ -233,24 +215,16 @@ PFN_vkCmdInsertDebugUtilsLabelEXT	 vkCmdInsertDebugUtilsLabelEXT;
 PFN_vkSetDebugUtilsObjectNameEXT     vkSetDebugUtilsObjectNameEXT;
 PFN_vkSetDebugUtilsObjectTagEXT      vkSetDebugUtilsObjectTagEXT;
 
-// Assorted other extensions.
-PFN_vkGetBufferMemoryRequirements2 vkGetBufferMemoryRequirements2;
-PFN_vkGetImageMemoryRequirements2 vkGetImageMemoryRequirements2;
-PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
-PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
-PFN_vkCreateRenderPass2 vkCreateRenderPass2;
-
-PFN_vkWaitForPresentKHR vkWaitForPresentKHR;
-PFN_vkGetPastPresentationTimingGOOGLE vkGetPastPresentationTimingGOOGLE;
-PFN_vkGetRefreshCycleDurationGOOGLE vkGetRefreshCycleDurationGOOGLE;
-#endif
+PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT;
+PFN_vkGetBufferMemoryRequirements2KHR vkGetBufferMemoryRequirements2KHR;
+PFN_vkGetImageMemoryRequirements2KHR vkGetImageMemoryRequirements2KHR;
+PFN_vkGetPhysicalDeviceProperties2KHR vkGetPhysicalDeviceProperties2KHR;
+PFN_vkGetPhysicalDeviceFeatures2KHR vkGetPhysicalDeviceFeatures2KHR;
 } // namespace PPSSPP_VK
 
 using namespace PPSSPP_VK;
 
-#if PPSSPP_PLATFORM(IOS_APP_STORE)
-// Statically linked MoltenVK
-#elif PPSSPP_PLATFORM(SWITCH)
+#if PPSSPP_PLATFORM(SWITCH)
 typedef void *VulkanLibraryHandle;
 static VulkanLibraryHandle vulkanLibrary;
 #define dlsym(x, y) nullptr
@@ -262,88 +236,28 @@ static VulkanLibraryHandle vulkanLibrary;
 typedef void *VulkanLibraryHandle;
 static VulkanLibraryHandle vulkanLibrary;
 #endif
+const char *VulkanResultToString(VkResult res);
 
 bool g_vulkanAvailabilityChecked = false;
 bool g_vulkanMayBeAvailable = false;
 
-static PFN_vkVoidFunction LoadInstanceFunc(VkInstance instance, const char *name) {
-	PFN_vkVoidFunction funcPtr = vkGetInstanceProcAddr(instance, name);
-	if (!funcPtr) {
-		INFO_LOG(Log::G3D, "Missing function (instance): %s", name);
-	}
-	return funcPtr;
-}
-#define LOAD_INSTANCE_FUNC(instance, x) x = (PFN_ ## x)LoadInstanceFunc(instance, #x);
+#define LOAD_INSTANCE_FUNC(instance, x) x = (PFN_ ## x)vkGetInstanceProcAddr(instance, #x); if (!x) {INFO_LOG(G3D, "Missing (instance): %s", #x);}
+#define LOAD_DEVICE_FUNC(instance, x) x = (PFN_ ## x)vkGetDeviceProcAddr(instance, #x); if (!x) {INFO_LOG(G3D, "Missing (device): %s", #x);}
+#define LOAD_GLOBAL_FUNC(x) x = (PFN_ ## x)dlsym(vulkanLibrary, #x); if (!x) {INFO_LOG(G3D,"Missing (global): %s", #x);}
 
-static PFN_vkVoidFunction LoadInstanceFuncCore(VkInstance instance, const char *name, const char *extName, u32 min_core, u32 vulkanInstanceApiVersion) {
-	PFN_vkVoidFunction funcPtr = vkGetInstanceProcAddr(instance, vulkanInstanceApiVersion >= min_core ? name : extName);
-	if (vulkanInstanceApiVersion >= min_core && !funcPtr) {
-		// Try the ext name.
-		funcPtr = vkGetInstanceProcAddr(instance, extName);
-	}
-	if (!funcPtr) {
-		INFO_LOG(Log::G3D, "Missing (instance): %s (%s)", name, extName);
-	}
-	return funcPtr;
-}
-#define LOAD_INSTANCE_FUNC_CORE(instance, x, ext_x, min_core) \
-    x = (PFN_ ## x)LoadInstanceFuncCore(instance, #x, #ext_x, min_core, vulkanInstanceApiVersion);
-
-static PFN_vkVoidFunction LoadDeviceFunc(VkDevice device, const char *name) {
-	PFN_vkVoidFunction funcPtr = vkGetDeviceProcAddr(device, name);
-	if (!funcPtr) {
-		INFO_LOG(Log::G3D, "Missing function (device): %s", name);
-	}
-	return funcPtr;
-}
-#define LOAD_DEVICE_FUNC(device, x) x = (PFN_ ## x)LoadDeviceFunc(device, #x);
-
-static PFN_vkVoidFunction LoadDeviceFuncCore(VkDevice device, const char *name, const char *extName, u32 min_core, u32 vulkanDeviceApiVersion) {
-	PFN_vkVoidFunction funcPtr = vkGetDeviceProcAddr(device, vulkanDeviceApiVersion >= min_core ? name : extName);
-	if (vulkanDeviceApiVersion >= min_core && !funcPtr) {
-		funcPtr = vkGetDeviceProcAddr(device, extName);
-	}
-	if (!funcPtr) {
-		INFO_LOG(Log::G3D, "Missing (device): %s (%s)", name, extName);
-	}
-	return funcPtr;
-}
-#define LOAD_DEVICE_FUNC_CORE(device, x, ext_x, min_core) \
-    x = (PFN_ ## x)LoadDeviceFuncCore(device, #x, #ext_x, min_core, vulkanDeviceApiVersion);
-
-#define LOAD_GLOBAL_FUNC(x) x = (PFN_ ## x)dlsym(vulkanLibrary, #x); if (!x) {INFO_LOG(Log::G3D,"Missing (global): %s", #x);}
 #define LOAD_GLOBAL_FUNC_LOCAL(lib, x) (PFN_ ## x)dlsym(lib, #x);
 
-static const char * const g_deviceNameBlacklist[] = {
+static const char *device_name_blacklist[] = {
 	"NVIDIA:SHIELD Tablet K1",
 	"SDL:Horizon",
 };
 
-struct DriverBlackListEntry {
-	std::string_view deviceNamePrefix;
-	std::string_view gpuDeviceName;
-	uint32_t minOkDriverVersion;
-};
-
-static constexpr DriverBlackListEntry g_gpuNameBlacklist[] = {
-	{"motorola:moto g", "PowerVR BXM-8-256", 0x005d9576},  // avoid an empty array
-#if PPSSPP_PLATFORM(MAC)
-	{"", "Intel(R) Iris(TM) Graphics 6000"},
-	{"", "Intel(R) Iris(TM) Graphics 6100"},
-	{"", "Intel(R) Iris(TM) Pro Graphics 6200"},
-	{"", "Intel Iris Pro Graphics"},
-#endif
-};
-
 #ifndef _WIN32
-static const char * const so_names[] = {
-#if PPSSPP_PLATFORM(IOS_APP_STORE)
-#elif PPSSPP_PLATFORM(IOS)
+static const char *so_names[] = {
+#if PPSSPP_PLATFORM(IOS)
 	"@executable_path/Frameworks/libMoltenVK.dylib",
-	"MoltenVK",
 #elif PPSSPP_PLATFORM(MAC)
 	"@executable_path/../Frameworks/libMoltenVK.dylib",
-	"MoltenVK",
 #else
 	"libvulkan.so",
 #if !defined(__ANDROID__)
@@ -353,65 +267,25 @@ static const char * const so_names[] = {
 };
 #endif
 
-#if !PPSSPP_PLATFORM(IOS_APP_STORE)
-static VulkanLibraryHandle VulkanLoadLibrary(std::string *errorString) {
+static VulkanLibraryHandle VulkanLoadLibrary(const char *logname) {
 #if PPSSPP_PLATFORM(SWITCH)
 	// Always unavailable, for now.
-	return nullptr;
-#elif PPSSPP_PLATFORM(UWP)
 	return nullptr;
 #elif PPSSPP_PLATFORM(WINDOWS)
 	return LoadLibrary(L"vulkan-1.dll");
 #else
 	void *lib = nullptr;
-
-#if PPSSPP_PLATFORM(ANDROID) && PPSSPP_ARCH(ARM64)
-	if (!g_Config.sCustomDriver.empty() && g_Config.sCustomDriver != "Default") {
-		const Path driverPath = g_Config.internalDataDirectory / "drivers" / g_Config.sCustomDriver;
-
-		json::JsonReader meta = json::JsonReader((driverPath / "meta.json").c_str());
-		if (meta.ok()) {
-			std::string driverLibName = meta.root().get("libraryName")->value.toString();
-
-			Path tempDir = g_Config.internalDataDirectory / "temp";
-			Path fileRedirectDir = g_Config.internalDataDirectory / "vk_file_redirect";
-
-			File::CreateDir(tempDir);
-			File::CreateDir(fileRedirectDir);
-
-			lib = adrenotools_open_libvulkan(
-				RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_FILE_REDIRECT | ADRENOTOOLS_DRIVER_CUSTOM,
-				(std::string(tempDir.c_str()) + "/").c_str(), g_nativeLibDir.c_str(),
-				(std::string(driverPath.c_str()) + "/").c_str(), driverLibName.c_str(),
-				(std::string(fileRedirectDir.c_str()) + "/").c_str(), nullptr);
-			if (!lib) {
-				ERROR_LOG(Log::G3D, "Failed to load custom driver with AdrenoTools ('%s')", g_Config.sCustomDriver.c_str());
-				*errorString = "Failed to load custom driver";
-			} else {
-				INFO_LOG(Log::G3D, "Vulkan library loaded with AdrenoTools ('%s')", g_Config.sCustomDriver.c_str());
-			}
-		}
-	}
-#endif
-
-	if (!lib) {
-		for (int i = 0; i < ARRAY_SIZE(so_names); i++) {
-			lib = dlopen(so_names[i], RTLD_NOW | RTLD_LOCAL);
-			if (lib) {
-				INFO_LOG(Log::G3D, "Vulkan library loaded ('%s')", so_names[i]);
-				break;
-			}
-		}
-		if (!lib) {
-			*errorString = "No vulkan library found";
+	for (int i = 0; i < ARRAY_SIZE(so_names); i++) {
+		lib = dlopen(so_names[i], RTLD_NOW | RTLD_LOCAL);
+		if (lib) {
+			INFO_LOG(G3D, "%s: Library loaded ('%s')", logname, so_names[i]);
+			break;
 		}
 	}
 	return lib;
 #endif
 }
-#endif
 
-#if !PPSSPP_PLATFORM(IOS_APP_STORE)
 static void VulkanFreeLibrary(VulkanLibraryHandle &h) {
 	if (h) {
 #if PPSSPP_PLATFORM(SWITCH)
@@ -424,47 +298,31 @@ static void VulkanFreeLibrary(VulkanLibraryHandle &h) {
 		h = nullptr;
 	}
 }
-#endif
 
 void VulkanSetAvailable(bool available) {
-	INFO_LOG(Log::G3D, "Setting Vulkan availability to true");
 	g_vulkanAvailabilityChecked = true;
 	g_vulkanMayBeAvailable = available;
 }
 
 bool VulkanMayBeAvailable() {
-#if PPSSPP_PLATFORM(IOS)
-	g_vulkanAvailabilityChecked = true;
-	// MoltenVK does no longer seem to support iOS <= 12, despite what the docs say.
-	g_vulkanMayBeAvailable = System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 13;
-	return g_vulkanMayBeAvailable;
-#else
-	// Unsupported in VR at the moment
-	if (IsVREnabled()) {
-		return false;
-	}
-
 	if (g_vulkanAvailabilityChecked) {
 		return g_vulkanMayBeAvailable;
 	}
 
-	// Note: Here it's device name as in the entire physical device, not GPU device.
-	const std::string hwDeviceName = System_GetProperty(SYSPROP_NAME);
-	for (std::string_view blacklisted_name : g_deviceNameBlacklist) {
-		if (equals(hwDeviceName, blacklisted_name)) {
-			INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Device blacklisted ('%s')", hwDeviceName.c_str());
+	std::string name = System_GetProperty(SYSPROP_NAME);
+	for (const char *blacklisted_name : device_name_blacklist) {
+		if (!strcmp(name.c_str(), blacklisted_name)) {
+			INFO_LOG(G3D, "VulkanMayBeAvailable: Device blacklisted ('%s')", name.c_str());
 			g_vulkanAvailabilityChecked = true;
 			g_vulkanMayBeAvailable = false;
 			return false;
 		}
 	}
+	INFO_LOG(G3D, "VulkanMayBeAvailable: Device allowed ('%s')", name.c_str());
 
-	INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Device allowed ('%s')", hwDeviceName.c_str());
-
-	std::string errorStr;
-	VulkanLibraryHandle lib = VulkanLoadLibrary(&errorStr);
+	VulkanLibraryHandle lib = VulkanLoadLibrary("VulkanMayBeAvailable");
 	if (!lib) {
-		INFO_LOG(Log::G3D, "Vulkan loader: Library not available: %s", errorStr.c_str());
+		INFO_LOG(G3D, "Vulkan loader: Library not available");
 		g_vulkanAvailabilityChecked = true;
 		g_vulkanMayBeAvailable = false;
 		return false;
@@ -500,36 +358,36 @@ bool VulkanMayBeAvailable() {
 #elif defined(VK_USE_PLATFORM_METAL_EXT)
 	const char * const platformSurfaceExtension = VK_EXT_METAL_SURFACE_EXTENSION_NAME;
 #else
-	const char *platformSurfaceExtension = nullptr;
+	const char *platformSurfaceExtension = 0;
 #endif
 
 	if (!localEnumerateInstanceExtensionProperties || !localCreateInstance || !localEnumerate || !localDestroyInstance || !localGetPhysicalDeviceProperties) {
-		WARN_LOG(Log::G3D, "VulkanMayBeAvailable: Function pointer missing, bailing");
+		WARN_LOG(G3D, "VulkanMayBeAvailable: Function pointer missing, bailing");
 		goto bail;
 	}
 
-	INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Enumerating instance extensions");
+	INFO_LOG(G3D, "VulkanMayBeAvailable: Enumerating instance extensions");
 	res = localEnumerateInstanceExtensionProperties(nullptr, &instanceExtCount, nullptr);
 	// Maximum paranoia.
 	if (res != VK_SUCCESS) {
-		ERROR_LOG(Log::G3D, "Enumerating VK extensions failed (%s)", VulkanResultToString(res));
+		ERROR_LOG(G3D, "Enumerating VK extensions failed (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	if (instanceExtCount == 0) {
-		ERROR_LOG(Log::G3D, "No VK instance extensions - won't be able to present.");
+		ERROR_LOG(G3D, "No VK instance extensions - won't be able to present.");
 		goto bail;
 	}
-	INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Instance extension count: %d", instanceExtCount);
+	INFO_LOG(G3D, "VulkanMayBeAvailable: Instance extension count: %d", instanceExtCount);
 	instanceExts.resize(instanceExtCount);
 	res = localEnumerateInstanceExtensionProperties(nullptr, &instanceExtCount, instanceExts.data());
 	if (res != VK_SUCCESS) {
-		ERROR_LOG(Log::G3D, "Enumerating VK extensions failed (%s)", VulkanResultToString(res));
+		ERROR_LOG(G3D, "Enumerating VK extensions failed (%s)", VulkanResultToString(res));
 		goto bail;
 	}
-	for (const auto &iter : instanceExts) {
-		INFO_LOG(Log::G3D, "VulkanMaybeAvailable: Instance extension found: %s (%08x)", iter.extensionName, iter.specVersion);
+	for (auto iter : instanceExts) {
+		INFO_LOG(G3D, "VulkanMaybeAvailable: Instance extension found: %s (%08x)", iter.extensionName, iter.specVersion);
 		if (platformSurfaceExtension && !strcmp(iter.extensionName, platformSurfaceExtension)) {
-			INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Found platform surface extension '%s'", platformSurfaceExtension);
+			INFO_LOG(G3D, "VulkanMayBeAvailable: Found platform surface extension '%s'", platformSurfaceExtension);
 			instanceExtensions[ci.enabledExtensionCount++] = platformSurfaceExtension;
 			platformSurfaceExtensionFound = true;
 			break;
@@ -540,19 +398,19 @@ bool VulkanMayBeAvailable() {
 	}
 	if (platformSurfaceExtension) {
 		if (!platformSurfaceExtensionFound || !surfaceExtensionFound) {
-			ERROR_LOG(Log::G3D, "Platform surface extension not found");
+			ERROR_LOG(G3D, "Platform surface extension not found");
 			goto bail;
 		}
 	} else {
 		if (!surfaceExtensionFound) {
-			ERROR_LOG(Log::G3D, "Surface extension not found");
+			ERROR_LOG(G3D, "Surface extension not found");
 			goto bail;
 		}
 	}
 
 	// This can't happen unless the driver is double-reporting a surface extension.
 	if (ci.enabledExtensionCount > 2) {
-		ERROR_LOG(Log::G3D, "Unexpected number of enabled instance extensions");
+		ERROR_LOG(G3D, "Unexpected number of enabled instance extensions");
 		goto bail;
 	}
 
@@ -565,27 +423,27 @@ bool VulkanMayBeAvailable() {
 	info.pEngineName = "VulkanCheckerEngine";
 	ci.pApplicationInfo = &info;
 	ci.flags = 0;
-	INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Calling vkCreateInstance");
+	INFO_LOG(G3D, "VulkanMayBeAvailable: Calling vkCreateInstance");
 	res = localCreateInstance(&ci, nullptr, &instance);
 	if (res != VK_SUCCESS) {
 		instance = nullptr;
-		ERROR_LOG(Log::G3D, "VulkanMayBeAvailable: Failed to create vulkan instance (%s)", VulkanResultToString(res));
+		ERROR_LOG(G3D, "VulkanMayBeAvailable: Failed to create vulkan instance (%s)", VulkanResultToString(res));
 		goto bail;
 	}
-	INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Vulkan test instance created successfully.");
+	INFO_LOG(G3D, "VulkanMayBeAvailable: Vulkan test instance created successfully.");
 	res = localEnumerate(instance, &physicalDeviceCount, nullptr);
 	if (res != VK_SUCCESS) {
-		ERROR_LOG(Log::G3D, "VulkanMayBeAvailable: Failed to count physical devices (%s)", VulkanResultToString(res));
+		ERROR_LOG(G3D, "VulkanMayBeAvailable: Failed to count physical devices (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	if (physicalDeviceCount == 0) {
-		ERROR_LOG(Log::G3D, "VulkanMayBeAvailable: No physical Vulkan devices (count = 0).");
+		ERROR_LOG(G3D, "VulkanMayBeAvailable: No physical Vulkan devices (count = 0).");
 		goto bail;
 	}
 	devices.resize(physicalDeviceCount);
 	res = localEnumerate(instance, &physicalDeviceCount, devices.data());
 	if (res != VK_SUCCESS) {
-		ERROR_LOG(Log::G3D, "VulkanMayBeAvailable: Failed to enumerate physical devices (%s)", VulkanResultToString(res));
+		ERROR_LOG(G3D, "VulkanMayBeAvailable: Failed to enumerate physical devices (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	anyGood = false;
@@ -596,70 +454,40 @@ bool VulkanMayBeAvailable() {
 		case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
 		case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
 		case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
-		case VK_PHYSICAL_DEVICE_TYPE_CPU:
-		{
-			// Check with the device blacklist.
-			bool blacklisted = false;
-			for (size_t i = 0; i < ARRAY_SIZE(g_gpuNameBlacklist); i++) {
-				if (startsWith(hwDeviceName, g_gpuNameBlacklist[i].deviceNamePrefix)) {
-					if (equals(props.deviceName, g_gpuNameBlacklist[i].gpuDeviceName)) {
-						if (g_gpuNameBlacklist[i].minOkDriverVersion != 0) {
-							if (props.driverVersion < g_gpuNameBlacklist[i].minOkDriverVersion) {
-								blacklisted = true;
-							}
-						} else {
-							blacklisted = true;
-						}
-					}
-				}
-			}
-			anyGood = !blacklisted;
-			if (anyGood) {
-				INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Eligible device found: '%s'", props.deviceName);
-			} else {
-				INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Blacklisted device found and ignored: '%s'", props.deviceName);
-			}
+			anyGood = true;
 			break;
-		}
 		default:
-			INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Ineligible device found and ignored: '%s'", props.deviceName);
+			INFO_LOG(G3D, "VulkanMayBeAvailable: Ineligible device found and ignored: '%s'", props.deviceName);
 			break;
 		}
 		// TODO: Should also check queuefamilyproperties for a GRAPHICS queue family? Oh well.
 	}
 
 	if (!anyGood) {
-		WARN_LOG(Log::G3D, "VulkanMayBeAvailable: Found Vulkan API, but no good Vulkan device!");
+		WARN_LOG(G3D, "VulkanMayBeAvailable: Found Vulkan API, but no good Vulkan device!");
 		g_vulkanMayBeAvailable = false;
 	} else {
-		INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Found working Vulkan API!");
+		INFO_LOG(G3D, "VulkanMayBeAvailable: Found working Vulkan API!");
 		g_vulkanMayBeAvailable = true;
 	}
 
 bail:
 	g_vulkanAvailabilityChecked = true;
 	if (instance) {
-		INFO_LOG(Log::G3D, "VulkanMayBeAvailable: Destroying instance");
+		INFO_LOG(G3D, "VulkanMayBeAvailable: Destroying instance");
 		localDestroyInstance(instance, nullptr);
 	}
 	if (lib) {
 		VulkanFreeLibrary(lib);
-	}
-	if (!g_vulkanMayBeAvailable) {
-		WARN_LOG(Log::G3D, "Vulkan with working device not detected.");
+	} else {
+		ERROR_LOG(G3D, "Vulkan with working device not detected.");
 	}
 	return g_vulkanMayBeAvailable;
-#endif
 }
 
-bool VulkanLoad(std::string *errorStr) {
-#if PPSSPP_PLATFORM(IOS_APP_STORE)
-	INFO_LOG(Log::G3D, "iOS: Vulkan doesn't need loading");
-	return true;
-#else
-
+bool VulkanLoad() {
 	if (!vulkanLibrary) {
-		vulkanLibrary = VulkanLoadLibrary(errorStr);
+		vulkanLibrary = VulkanLoadLibrary("VulkanLoad");
 		if (!vulkanLibrary) {
 			return false;
 		}
@@ -674,21 +502,16 @@ bool VulkanLoad(std::string *errorStr) {
 	LOAD_GLOBAL_FUNC(vkEnumerateInstanceLayerProperties);
 
 	if (vkCreateInstance && vkGetInstanceProcAddr && vkGetDeviceProcAddr && vkEnumerateInstanceExtensionProperties && vkEnumerateInstanceLayerProperties) {
-		INFO_LOG(Log::G3D, "VulkanLoad: Base functions loaded.");
-		// NOTE: It's ok if vkEnumerateInstanceVersion is missing.
+		INFO_LOG(G3D, "VulkanLoad: Base functions loaded.");
 		return true;
 	} else {
-		*errorStr = "Failed to load Vulkan base functions";
-		ERROR_LOG(Log::G3D, "VulkanLoad: %s", errorStr->c_str());
+		ERROR_LOG(G3D, "VulkanLoad: Failed to load Vulkan base functions.");
 		VulkanFreeLibrary(vulkanLibrary);
 		return false;
 	}
-#endif
 }
 
-void VulkanLoadInstanceFunctions(VkInstance instance, const VulkanExtensions &enabledExtensions, uint32_t vulkanInstanceApiVersion) {
-#if !PPSSPP_PLATFORM(IOS_APP_STORE)
-	INFO_LOG(Log::G3D, "Loading Vulkan instance functions. Instance API version: %08x (%d.%d.%d)", vulkanInstanceApiVersion, VK_API_VERSION_MAJOR(vulkanInstanceApiVersion), VK_API_VERSION_MINOR(vulkanInstanceApiVersion), VK_API_VERSION_PATCH(vulkanInstanceApiVersion));
+void VulkanLoadInstanceFunctions(VkInstance instance, const VulkanExtensions &enabledExtensions) {
 	// OK, let's use the above functions to get the rest.
 	LOAD_INSTANCE_FUNC(instance, vkDestroyInstance);
 	LOAD_INSTANCE_FUNC(instance, vkEnumeratePhysicalDevices);
@@ -731,18 +554,13 @@ void VulkanLoadInstanceFunctions(VkInstance instance, const VulkanExtensions &en
 #endif
 #if defined(VK_USE_PLATFORM_DISPLAY_KHR)
 	LOAD_INSTANCE_FUNC(instance, vkCreateDisplayPlaneSurfaceKHR);
-	LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceDisplayPropertiesKHR);
-	LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceDisplayPlanePropertiesKHR);
-	LOAD_INSTANCE_FUNC(instance, vkGetDisplayModePropertiesKHR);
-	LOAD_INSTANCE_FUNC(instance, vkGetDisplayPlaneSupportedDisplaysKHR);
-	LOAD_INSTANCE_FUNC(instance, vkGetDisplayPlaneCapabilitiesKHR);
 #endif
 
 	LOAD_INSTANCE_FUNC(instance, vkDestroySurfaceKHR);
 
 	if (enabledExtensions.KHR_get_physical_device_properties2) {
-		LOAD_INSTANCE_FUNC_CORE(instance, vkGetPhysicalDeviceProperties2, vkGetPhysicalDeviceProperties2KHR, VK_API_VERSION_1_1);
-		LOAD_INSTANCE_FUNC_CORE(instance, vkGetPhysicalDeviceFeatures2, vkGetPhysicalDeviceFeatures2KHR, VK_API_VERSION_1_1);
+		LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceProperties2KHR);
+		LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceFeatures2KHR);
 	}
 
 	if (enabledExtensions.EXT_debug_utils) {
@@ -755,16 +573,14 @@ void VulkanLoadInstanceFunctions(VkInstance instance, const VulkanExtensions &en
 		LOAD_INSTANCE_FUNC(instance, vkSetDebugUtilsObjectTagEXT);
 	}
 
-	INFO_LOG(Log::G3D, "Vulkan instance functions loaded.");
-#endif
+	INFO_LOG(G3D, "Vulkan instance functions loaded.");
 }
 
 // On some implementations, loading functions (that have Device as their first parameter) via vkGetDeviceProcAddr may
 // increase performance - but then these function pointers will only work on that specific device. Thus, this loader is not very
 // good for multi-device - not likely we'll ever try that anyway though.
-void VulkanLoadDeviceFunctions(VkDevice device, const VulkanExtensions &enabledExtensions, uint32_t vulkanDeviceApiVersion) {
-#if !PPSSPP_PLATFORM(IOS_APP_STORE)
-	INFO_LOG(Log::G3D, "Loading Vulkan device functions. Device API version: %08x (%d.%d.%d)", vulkanDeviceApiVersion, VK_API_VERSION_MAJOR(vulkanDeviceApiVersion), VK_API_VERSION_MINOR(vulkanDeviceApiVersion), VK_API_VERSION_PATCH(vulkanDeviceApiVersion));
+void VulkanLoadDeviceFunctions(VkDevice device, const VulkanExtensions &enabledExtensions) {
+	INFO_LOG(G3D, "Vulkan device functions loaded.");
 
 	LOAD_DEVICE_FUNC(device, vkQueueSubmit);
 	LOAD_DEVICE_FUNC(device, vkQueueWaitIdle);
@@ -886,76 +702,15 @@ void VulkanLoadDeviceFunctions(VkDevice device, const VulkanExtensions &enabledE
 	LOAD_DEVICE_FUNC(device, vkCmdEndRenderPass);
 	LOAD_DEVICE_FUNC(device, vkCmdExecuteCommands);
 
-	if (enabledExtensions.KHR_present_wait) {
-		LOAD_DEVICE_FUNC(device, vkWaitForPresentKHR);
-	}
-	if (enabledExtensions.GOOGLE_display_timing) {
-		LOAD_DEVICE_FUNC(device, vkGetPastPresentationTimingGOOGLE);
-		LOAD_DEVICE_FUNC(device, vkGetRefreshCycleDurationGOOGLE);
+	if (enabledExtensions.EXT_external_memory_host) {
+		LOAD_DEVICE_FUNC(device, vkGetMemoryHostPointerPropertiesEXT);
 	}
 	if (enabledExtensions.KHR_dedicated_allocation) {
-		LOAD_DEVICE_FUNC_CORE(device, vkGetBufferMemoryRequirements2, vkGetBufferMemoryRequirements2KHR, VK_API_VERSION_1_1);
-		LOAD_DEVICE_FUNC_CORE(device, vkGetImageMemoryRequirements2, vkGetImageMemoryRequirements2KHR, VK_API_VERSION_1_1);
+		LOAD_DEVICE_FUNC(device, vkGetBufferMemoryRequirements2KHR);
+		LOAD_DEVICE_FUNC(device, vkGetImageMemoryRequirements2KHR);
 	}
-	if (enabledExtensions.KHR_create_renderpass2) {
-		LOAD_DEVICE_FUNC_CORE(device, vkCreateRenderPass2, vkCreateRenderPass2KHR, VK_API_VERSION_1_2);
-	}
-	if (enabledExtensions.KHR_maintenance4) {
-		LOAD_DEVICE_FUNC_CORE(device, vkGetDeviceBufferMemoryRequirements, vkGetDeviceBufferMemoryRequirementsKHR, VK_API_VERSION_1_3);
-		LOAD_DEVICE_FUNC_CORE(device, vkGetDeviceImageMemoryRequirements, vkGetDeviceImageMemoryRequirementsKHR, VK_API_VERSION_1_3);
-	}
-#endif
 }
 
 void VulkanFree() {
-#if !PPSSPP_PLATFORM(IOS_APP_STORE)
 	VulkanFreeLibrary(vulkanLibrary);
-#endif
-}
-
-const char *VulkanResultToString(VkResult res) {
-	static char temp[128]{};
-	switch (res) {
-	case VK_NOT_READY: return "VK_NOT_READY";
-	case VK_TIMEOUT: return "VK_TIMEOUT";
-	case VK_EVENT_SET: return "VK_EVENT_SET";
-	case VK_EVENT_RESET: return "VK_EVENT_RESET";
-	case VK_INCOMPLETE: return "VK_INCOMPLETE";
-	case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
-	case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
-	case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
-	case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
-	case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
-	case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
-	case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
-	case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
-	case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
-	case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
-	case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
-	case VK_ERROR_SURFACE_LOST_KHR: return "VK_ERROR_SURFACE_LOST_KHR";
-	case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
-	case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
-	case VK_ERROR_INCOMPATIBLE_DISPLAY_KHR: return "VK_ERROR_INCOMPATIBLE_DISPLAY_KHR";
-	case VK_ERROR_NATIVE_WINDOW_IN_USE_KHR: return "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR";
-	case VK_ERROR_OUT_OF_POOL_MEMORY: return "VK_ERROR_OUT_OF_POOL_MEMORY_KHR";
-	case VK_ERROR_INVALID_EXTERNAL_HANDLE: return "VK_ERROR_INVALID_EXTERNAL_HANDLE_KHR";
-	case VK_ERROR_FRAGMENTED_POOL: return "VK_ERROR_FRAGMENTED_POOL";
-	case VK_ERROR_UNKNOWN: return "VK_ERROR_UNKNOWN (-13)";
-	case VK_ERROR_FRAGMENTATION: return "VK_ERROR_FRAGMENTATION";
-	case VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS: return "VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS";
-	case VK_PIPELINE_COMPILE_REQUIRED: return "VK_PIPELINE_COMPILE_REQUIRED";
-	case VK_ERROR_VALIDATION_FAILED_EXT: return "VK_ERROR_VALIDATION_FAILED_EXT";
-	case VK_ERROR_INVALID_SHADER_NV: return "VK_ERROR_INVALID_SHADER_NV";
-	case VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT: return "VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT";
-	case VK_ERROR_NOT_PERMITTED_KHR: return "VK_ERROR_NOT_PERMITTED_KHR";
-	case VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT: return "VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT";
-	case VK_THREAD_IDLE_KHR: return "VK_THREAD_IDLE_KHR";
-	case VK_THREAD_DONE_KHR: return "VK_THREAD_DONE_KHR";
-	case VK_OPERATION_DEFERRED_KHR: return "VK_OPERATION_DEFERRED_KHR";
-	case VK_OPERATION_NOT_DEFERRED_KHR: return "VK_OPERATION_NOT_DEFERRED_KHR";
-	default:
-		// This isn't thread safe, but this should be rare, and at worst, we'll get a jumble of two messages.
-		snprintf(temp, sizeof(temp), "VK_ERROR_???: 0x%08x", (u32)res);
-		return temp;
-	}
 }

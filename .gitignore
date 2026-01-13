@@ -57,7 +57,6 @@ include/glslang/build_info.h
 
 # For ppsspp.ini, etc.
 ppsspp.ini
-imgui.ini
 PPSSPPControls.dat
 
 # Qt Linguist files
@@ -94,6 +93,7 @@ GameLogNotes.txt
 screenshots
 android/assets/lang
 android/assets/flash0
+ui_atlas.zim.png
 font_atlas.zim.png
 asciifont_atlas.zim.png
 ppge_atlas.zim.png
@@ -101,17 +101,10 @@ local.properties
 r.sh
 Windows/compileData*
 Windows/*.ipch
-Windows/imgui.ini
-imgui.ini
-
-# debug file
-ui_atlas_gen.png
-buttons_rasterized.png
 
 # For vim
 *.swp
 tags
-*.ctags
 
 # Other VCS
 .bzr/
@@ -124,8 +117,6 @@ debian/ppsspp/
 
 # Libretro build
 *.o
-*.tmp
-*.a
 
 # YouCompleteMe file
 .ycm_extra_conf.pyc
@@ -135,19 +126,6 @@ debian/ppsspp/
 
 # CMake stuff
 CMakeFiles
-CMakeUserPresets.json
-compile_commands.json
 
 # Clangd 
 .cache/
-build
-libretro/obj/local
-
-ppsspp_retroachievements.dat
-RACache
-RAPrefs_PPSSPP.cfg
-
-# For CLion
-cmake-build-*/
-
-/.vscode/

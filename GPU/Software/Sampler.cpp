@@ -20,22 +20,26 @@
 #include <mutex>
 #include "Common/Common.h"
 #include "Common/Data/Convert/ColorConv.h"
-#include "Common/LogReporting.h"
-#include "Common/Math/SIMDHeaders.h"
+#include "Common/StringUtils.h"
 #include "Core/Config.h"
+#include "Core/Reporting.h"
 #include "GPU/Common/TextureDecoder.h"
-#include "GPU/Software/BinManager.h"
+#include "GPU/GPUState.h"
 #include "GPU/Software/Rasterizer.h"
 #include "GPU/Software/RasterizerRegCache.h"
 #include "GPU/Software/Sampler.h"
+
+#if defined(_M_SSE)
+#include <emmintrin.h>
+#endif
 
 using namespace Math3D;
 using namespace Rasterizer;
 
 namespace Sampler {
 
-static Vec4IntResult SOFTRAST_CALL SampleNearest(float s, float t, Vec4IntArg prim_color, const u8 *const *tptr, const uint16_t *bufw, int level, int levelFrac, const SamplerID &samplerID);
-static Vec4IntResult SOFTRAST_CALL SampleLinear(float s, float t, Vec4IntArg prim_color, const u8 *const *tptr, const uint16_t *bufw, int level, int levelFrac, const SamplerID &samplerID);
+static Vec4IntResult SOFTRAST_CALL SampleNearest(float s, float t, int x, int y, Vec4IntArg prim_color, const u8 *const *tptr, const int *bufw, int level, int levelFrac, const SamplerID &samplerID);
+static Vec4IntResult SOFTRAST_CALL SampleLinear(float s, float t, int x, int y, Vec4IntArg prim_color, const u8 *const *tptr, const int *bufw, int level, int levelFrac, const SamplerID &samplerID);
 static Vec4IntResult SOFTRAST_CALL SampleFetch(int u, int v, const u8 *tptr, int bufw, int level, const SamplerID &samplerID);
 
 std::mutex jitCacheLock;
@@ -43,10 +47,6 @@ SamplerJitCache *jitCache = nullptr;
 
 void Init() {
 	jitCache = new SamplerJitCache();
-}
-
-void FlushJit() {
-	jitCache->Flush();
 }
 
 void Shutdown() {
@@ -63,9 +63,9 @@ bool DescribeCodePtr(const u8 *ptr, std::string &name) {
 	return true;
 }
 
-NearestFunc GetNearestFunc(SamplerID id, BinManager *binner) {
+NearestFunc GetNearestFunc(SamplerID id) {
 	id.linear = false;
-	NearestFunc jitted = jitCache->GetNearest(id, binner);
+	NearestFunc jitted = jitCache->GetNearest(id);
 	if (jitted) {
 		return jitted;
 	}
@@ -73,9 +73,9 @@ NearestFunc GetNearestFunc(SamplerID id, BinManager *binner) {
 	return &SampleNearest;
 }
 
-LinearFunc GetLinearFunc(SamplerID id, BinManager *binner) {
+LinearFunc GetLinearFunc(SamplerID id) {
 	id.linear = true;
-	LinearFunc jitted = jitCache->GetLinear(id, binner);
+	LinearFunc jitted = jitCache->GetLinear(id);
 	if (jitted) {
 		return jitted;
 	}
@@ -83,9 +83,9 @@ LinearFunc GetLinearFunc(SamplerID id, BinManager *binner) {
 	return &SampleLinear;
 }
 
-FetchFunc GetFetchFunc(SamplerID id, BinManager *binner) {
+FetchFunc GetFetchFunc(SamplerID id) {
 	id.fetch = true;
-	FetchFunc jitted = jitCache->GetFetch(id, binner);
+	FetchFunc jitted = jitCache->GetFetch(id);
 	if (jitted) {
 		return jitted;
 	}
@@ -93,23 +93,13 @@ FetchFunc GetFetchFunc(SamplerID id, BinManager *binner) {
 	return &SampleFetch;
 }
 
-thread_local SamplerJitCache::LastCache SamplerJitCache::lastFetch_;
-thread_local SamplerJitCache::LastCache SamplerJitCache::lastNearest_;
-thread_local SamplerJitCache::LastCache SamplerJitCache::lastLinear_;
-int SamplerJitCache::clearGen_ = 0;
-
 // 256k should be enough.
-SamplerJitCache::SamplerJitCache() : Rasterizer::CodeBlock(1024 * 64 * 4), cache_(64) {
-	lastFetch_.gen = -1;
-	lastNearest_.gen = -1;
-	lastLinear_.gen = -1;
-	clearGen_++;
+SamplerJitCache::SamplerJitCache() : Rasterizer::CodeBlock(1024 * 64 * 4) {
 }
 
 void SamplerJitCache::Clear() {
-	clearGen_++;
 	CodeBlock::Clear();
-	cache_.Clear();
+	cache_.clear();
 	addresses_.clear();
 
 	const10All16_ = nullptr;
@@ -148,91 +138,52 @@ std::string SamplerJitCache::DescribeCodePtr(const u8 *ptr) {
 	return CodeBlock::DescribeCodePtr(ptr);
 }
 
-void SamplerJitCache::Flush() {
-	std::unique_lock<std::mutex> guard(jitCacheLock);
-	for (const auto &queued : compileQueue_) {
-		// Might've been compiled after enqueue, but before now.
-		size_t queuedKey = std::hash<SamplerID>()(queued);
-		if (!cache_.ContainsKey(queuedKey))
-			Compile(queued);
-	}
-	compileQueue_.clear();
-}
+NearestFunc SamplerJitCache::GetNearest(const SamplerID &id) {
+	std::lock_guard<std::mutex> guard(jitCacheLock);
 
-NearestFunc SamplerJitCache::GetByID(const SamplerID &id, size_t key, BinManager *binner) {
-	std::unique_lock<std::mutex> guard(jitCacheLock);
-	
-	NearestFunc func;
-	if (cache_.Get(key, &func)) {
-		return func;
-	}
+	auto it = cache_.find(id);
+	if (it != cache_.end())
+		return (NearestFunc)it->second;
 
-	if (!binner) {
-		// Can't compile, let's try to do it later when there's an opportunity.
-		compileQueue_.insert(id);
-		return nullptr;
-	}
-
-	guard.unlock();
-	binner->Flush("compile");
-	guard.lock();
-
-	for (const auto &queued : compileQueue_) {
-		// Might've been compiled after enqueue, but before now.
-		size_t queuedKey = std::hash<SamplerID>()(queued);
-		if (!cache_.ContainsKey(queuedKey))
-			Compile(queued);
-	}
-	compileQueue_.clear();
-
-	if (!cache_.ContainsKey(key))
-		Compile(id);
+	Compile(id);
 
 	// Okay, should be there now.
-	if (cache_.Get(key, &func)) {
-		return func;
-	} else {
-		return nullptr;
-	}
+	it = cache_.find(id);
+	if (it != cache_.end())
+		return (NearestFunc)it->second;
+	return nullptr;
 }
 
-NearestFunc SamplerJitCache::GetNearest(const SamplerID &id, BinManager *binner) {
-	if (!g_Config.bSoftwareRenderingJit)
-		return nullptr;
+LinearFunc SamplerJitCache::GetLinear(const SamplerID &id) {
+	std::lock_guard<std::mutex> guard(jitCacheLock);
 
-	const size_t key = std::hash<SamplerID>()(id);
-	if (lastNearest_.Match(key, clearGen_))
-		return (NearestFunc)lastNearest_.func;
+	auto it = cache_.find(id);
+	if (it != cache_.end())
+		return (LinearFunc)it->second;
 
-	auto func = GetByID(id, key, binner);
-	lastNearest_.Set(key, func, clearGen_);
-	return (NearestFunc)func;
+	Compile(id);
+
+	// Okay, should be there now.
+	it = cache_.find(id);
+	if (it != cache_.end())
+		return (LinearFunc)it->second;
+	return nullptr;
 }
 
-LinearFunc SamplerJitCache::GetLinear(const SamplerID &id, BinManager *binner) {
-	if (!g_Config.bSoftwareRenderingJit)
-		return nullptr;
+FetchFunc SamplerJitCache::GetFetch(const SamplerID &id) {
+	std::lock_guard<std::mutex> guard(jitCacheLock);
 
-	const size_t key = std::hash<SamplerID>()(id);
-	if (lastLinear_.Match(key, clearGen_))
-		return (LinearFunc)lastLinear_.func;
+	auto it = cache_.find(id);
+	if (it != cache_.end())
+		return (FetchFunc)it->second;
 
-	auto func = GetByID(id, key, binner);
-	lastLinear_.Set(key, func, clearGen_);
-	return (LinearFunc)func;
-}
+	Compile(id);
 
-FetchFunc SamplerJitCache::GetFetch(const SamplerID &id, BinManager *binner) {
-	if (!g_Config.bSoftwareRenderingJit)
-		return nullptr;
-
-	const size_t key = std::hash<SamplerID>()(id);
-	if (lastFetch_.Match(key, clearGen_))
-		return (FetchFunc)lastFetch_.func;
-
-	auto func = GetByID(id, key, binner);
-	lastFetch_.Set(key, func, clearGen_);
-	return (FetchFunc)func;
+	// Okay, should be there now.
+	it = cache_.find(id);
+	if (it != cache_.end())
+		return (FetchFunc)it->second;
+	return nullptr;
 }
 
 void SamplerJitCache::Compile(const SamplerID &id) {
@@ -244,23 +195,25 @@ void SamplerJitCache::Compile(const SamplerID &id) {
 	// We compile them together so the cache can't possibly be cleared in between.
 	// We might vary between nearest and linear, so we can't clear between.
 #if PPSSPP_ARCH(AMD64) && !PPSSPP_PLATFORM(UWP)
-	SamplerID fetchID = id;
-	fetchID.linear = false;
-	fetchID.fetch = true;
-	addresses_[fetchID] = GetCodePointer();
-	cache_.Insert(std::hash<SamplerID>()(fetchID), (NearestFunc)CompileFetch(fetchID));
+	if (g_Config.bSoftwareRenderingJit) {
+		SamplerID fetchID = id;
+		fetchID.linear = false;
+		fetchID.fetch = true;
+		addresses_[fetchID] = GetCodePointer();
+		cache_[fetchID] = (NearestFunc)CompileFetch(fetchID);
 
-	SamplerID nearestID = id;
-	nearestID.linear = false;
-	nearestID.fetch = false;
-	addresses_[nearestID] = GetCodePointer();
-	cache_.Insert(std::hash<SamplerID>()(nearestID), (NearestFunc)CompileNearest(nearestID));
+		SamplerID nearestID = id;
+		nearestID.linear = false;
+		nearestID.fetch = false;
+		addresses_[nearestID] = GetCodePointer();
+		cache_[nearestID] = (NearestFunc)CompileNearest(nearestID);
 
-	SamplerID linearID = id;
-	linearID.linear = true;
-	linearID.fetch = false;
-	addresses_[linearID] = GetCodePointer();
-	cache_.Insert(std::hash<SamplerID>()(linearID), (NearestFunc)CompileLinear(linearID));
+		SamplerID linearID = id;
+		linearID.linear = true;
+		linearID.fetch = false;
+		addresses_[linearID] = GetCodePointer();
+		cache_[linearID] = (NearestFunc)CompileLinear(linearID);
+	}
 #endif
 }
 
@@ -269,13 +222,13 @@ static inline int GetPixelDataOffset(uint32_t row_pitch_pixels, uint32_t u, uint
 	if (!swizzled)
 		return (v * (row_pitch_pixels * texel_size_bits >> 3)) + (u * texel_size_bits >> 3);
 
-	const uint32_t tile_size_bits = 32;
-	const uint32_t tiles_in_block_horizontal = 4;
-	const uint32_t tiles_in_block_vertical = 8;
+	const int tile_size_bits = 32;
+	const int tiles_in_block_horizontal = 4;
+	const int tiles_in_block_vertical = 8;
 
-	constexpr uint32_t texels_per_tile = tile_size_bits / texel_size_bits;
-	uint32_t tile_u = u / texels_per_tile;
-	uint32_t tile_idx = (v % tiles_in_block_vertical) * (tiles_in_block_horizontal) +
+	int texels_per_tile = tile_size_bits / texel_size_bits;
+	int tile_u = u / texels_per_tile;
+	int tile_idx = (v % tiles_in_block_vertical) * (tiles_in_block_horizontal) +
 	// TODO: not sure if the *texel_size_bits/8 factor is correct
 					(v / tiles_in_block_vertical) * ((row_pitch_pixels*texel_size_bits/(tile_size_bits))*tiles_in_block_vertical) +
 					(tile_u % tiles_in_block_horizontal) +
@@ -301,7 +254,7 @@ static inline u32 LookupColor(unsigned int index, unsigned int level, const Samp
 		return samplerID.cached.clut32[index + clutSharingOffset];
 
 	default:
-		ERROR_LOG_REPORT(Log::G3D, "Software: Unsupported palette format: %x", samplerID.ClutFmt());
+		ERROR_LOG_REPORT(G3D, "Software: Unsupported palette format: %x", samplerID.ClutFmt());
 		return 0;
 	}
 }
@@ -328,7 +281,7 @@ struct Nearest4 {
 };
 
 template <int N>
-inline static Nearest4 SOFTRAST_CALL SampleNearest(const int u[N], const int v[N], const u8 *srcptr, uint16_t texbufw, int level, const SamplerID &samplerID) {
+inline static Nearest4 SOFTRAST_CALL SampleNearest(const int u[N], const int v[N], const u8 *srcptr, int texbufw, int level, const SamplerID &samplerID) {
 	Nearest4 res;
 	if (!srcptr) {
 		memset(res.v, 0, sizeof(res.v));
@@ -401,27 +354,27 @@ inline static Nearest4 SOFTRAST_CALL SampleNearest(const int u[N], const int v[N
 
 	case GE_TFMT_DXT1:
 		for (int i = 0; i < N; ++i) {
-			const DXT1Block *block = (const DXT1Block *)srcptr + (v[i] >> 2) * (texbufw >> 2) + (u[i] >> 2);
-			res.v[i] = GetDXT1Texel(block, u[i] & 3, v[i] & 3);
+			const DXT1Block *block = (const DXT1Block *)srcptr + (v[i] / 4) * (texbufw / 4) + (u[i] / 4);
+			res.v[i] = GetDXT1Texel(block, u[i] % 4, v[i] % 4);
 		}
 		return res;
 
 	case GE_TFMT_DXT3:
 		for (int i = 0; i < N; ++i) {
-			const DXT3Block *block = (const DXT3Block *)srcptr + (v[i] >> 2) * (texbufw >> 2) + (u[i] >> 2);
-			res.v[i] = GetDXT3Texel(block, u[i] & 3, v[i] & 3);
+			const DXT3Block *block = (const DXT3Block *)srcptr + (v[i] / 4) * (texbufw / 4) + (u[i] / 4);
+			res.v[i] = GetDXT3Texel(block, u[i] % 4, v[i] % 4);
 		}
 		return res;
 
 	case GE_TFMT_DXT5:
 		for (int i = 0; i < N; ++i) {
-			const DXT5Block *block = (const DXT5Block *)srcptr + (v[i] >> 2) * (texbufw >> 2) + (u[i] >> 2);
-			res.v[i] = GetDXT5Texel(block, u[i] & 3, v[i] & 3);
+			const DXT5Block *block = (const DXT5Block *)srcptr + (v[i] / 4) * (texbufw / 4) + (u[i] / 4);
+			res.v[i] = GetDXT5Texel(block, u[i] % 4, v[i] % 4);
 		}
 		return res;
 
 	default:
-		ERROR_LOG_REPORT(Log::G3D, "Software: Unsupported texture format: %x", samplerID.TexFmt());
+		ERROR_LOG_REPORT(G3D, "Software: Unsupported texture format: %x", samplerID.TexFmt());
 		memset(res.v, 0, sizeof(res.v));
 		return res;
 	}
@@ -430,15 +383,13 @@ inline static Nearest4 SOFTRAST_CALL SampleNearest(const int u[N], const int v[N
 static inline int ClampUV(int v, int height) {
 	if (v >= height - 1)
 		return height - 1;
-	if (v >= 511)
-		return 511;
 	else if (v < 0)
 		return 0;
 	return v;
 }
 
 static inline int WrapUV(int v, int height) {
-	return v & (height - 1) & 511;
+	return v & (height - 1);
 }
 
 template <int N>
@@ -463,7 +414,7 @@ static inline void ApplyTexelClamp(int out_u[N], int out_v[N], const int u[N], c
 	}
 }
 
-static inline void GetTexelCoordinates(int level, float s, float t, int &out_u, int &out_v, const SamplerID &samplerID) {
+static inline void GetTexelCoordinates(int level, float s, float t, int &out_u, int &out_v, int x, int y, const SamplerID &samplerID) {
 	int width = samplerID.cached.sizes[level].w;
 	int height = samplerID.cached.sizes[level].h;
 
@@ -507,19 +458,6 @@ Vec4IntResult SOFTRAST_CALL GetTextureFunctionOutput(Vec4IntArg prim_color_in, V
 		} else {
 			out_a = prim_color.a();
 		}
-#elif PPSSPP_ARCH(ARM64_NEON)
-		int32x4_t pboost = vaddq_s32(prim_color.ivec, vdupq_n_s32(1));
-		int32x4_t t = texcolor.ivec;
-		if (samplerID.useColorDoubling) {
-			static const int32_t rgbDouble[4] = { 1, 1, 1, 0 };
-			t = vshlq_s32(t, vld1q_s32(rgbDouble));
-		}
-		out_rgb.ivec = vshrq_n_s32(vmulq_s32(pboost, t), 8);
-
-		if (rgba) {
-			return ToVec4IntResult(Vec4<int>(out_rgb.ivec));
-		}
-		out_a = prim_color.a();
 #else
 		if (samplerID.useColorDoubling) {
 			out_rgb = ((prim_color.rgb() + Vec3<int>::AssignToAll(1)) * texcolor.rgb() * 2) / 256;
@@ -595,18 +533,18 @@ Vec4IntResult SOFTRAST_CALL GetTextureFunctionOutput(Vec4IntArg prim_color_in, V
 	return ToVec4IntResult(Vec4<int>(out_rgb, out_a));
 }
 
-static Vec4IntResult SOFTRAST_CALL SampleNearest(float s, float t, Vec4IntArg prim_color, const u8 *const *tptr, const uint16_t *bufw, int level, int levelFrac, const SamplerID &samplerID) {
+static Vec4IntResult SOFTRAST_CALL SampleNearest(float s, float t, int x, int y, Vec4IntArg prim_color, const u8 *const *tptr, const int *bufw, int level, int levelFrac, const SamplerID &samplerID) {
 	int u, v;
 
 	// Nearest filtering only.  Round texcoords.
-	GetTexelCoordinates(level, s, t, u, v, samplerID);
+	GetTexelCoordinates(level, s, t, u, v, x, y, samplerID);
 	Vec4<int> c0 = Vec4<int>::FromRGBA(SampleNearest<1>(&u, &v, tptr[0], bufw[0], level, samplerID).v[0]);
 
 	if (levelFrac) {
-		GetTexelCoordinates(level + 1, s, t, u, v, samplerID);
+		GetTexelCoordinates(level + 1, s, t, u, v, x, y, samplerID);
 		Vec4<int> c1 = Vec4<int>::FromRGBA(SampleNearest<1>(&u, &v, tptr[1], bufw[1], level + 1, samplerID).v[0]);
 
-		c0 = (c1 * levelFrac + c0 * (16 - levelFrac)) >> 4;
+		c0 = (c1 * levelFrac + c0 * (16 - levelFrac)) / 16;
 	}
 
 	return GetTextureFunctionOutput(prim_color, ToVec4IntArg(c0), samplerID);
@@ -626,22 +564,13 @@ static inline Vec4IntResult SOFTRAST_CALL ApplyTexelClampQuad(bool clamp, Vec4In
 		result.ivec = _mm_andnot_si128(negmask, result.ivec);
 
 		// Now the high bound.
-		__m128i bound = _mm_set1_epi32(width > 512 ? 511 : width - 1);
+		__m128i bound = _mm_set1_epi32(width - 1);
 		__m128i goodmask = _mm_cmpgt_epi32(bound, result.ivec);
 		// Clear the ones that were too high, then or in the high bound to those.
 		result.ivec = _mm_and_si128(goodmask, result.ivec);
 		result.ivec = _mm_or_si128(result.ivec, _mm_andnot_si128(goodmask, bound));
 	} else {
-		result.ivec = _mm_and_si128(result.ivec, _mm_set1_epi32((width - 1) & 511));
-	}
-#elif PPSSPP_ARCH(ARM64_NEON)
-	if (clamp) {
-		// Let's start by clamping to the maximum.
-		result.ivec = vminq_s32(result.ivec, vdupq_n_s32(width > 512 ? 511 : width - 1));
-		// And then to zero.
-		result.ivec = vmaxq_s32(result.ivec, vdupq_n_s32(0));
-	} else {
-		result.ivec = vandq_s32(result.ivec, vdupq_n_s32((width - 1) & 511));
+		result.ivec = _mm_and_si128(result.ivec, _mm_set1_epi32(width - 1));
 	}
 #else
 	if (clamp) {
@@ -662,10 +591,6 @@ static inline Vec4IntResult SOFTRAST_CALL ApplyTexelClampQuadS(bool clamp, int u
 #ifdef _M_SSE
 	__m128i uvec = _mm_add_epi32(_mm_set1_epi32(u), _mm_set_epi32(1, 0, 1, 0));
 	return ApplyTexelClampQuad(clamp, uvec, width);
-#elif PPSSPP_ARCH(ARM64_NEON)
-	static const int32_t u2[4] = { 0, 1, 0, 1 };
-	int32x4_t uvec = vaddq_s32(vdupq_n_s32(u), vld1q_s32(u2));
-	return ApplyTexelClampQuad(clamp, uvec, width);
 #else
 	Vec4<int> result = Vec4<int>::AssignToAll(u) + Vec4<int>(0, 1, 0, 1);
 	return ApplyTexelClampQuad(clamp, ToVec4IntArg(result), width);
@@ -676,17 +601,13 @@ static inline Vec4IntResult SOFTRAST_CALL ApplyTexelClampQuadT(bool clamp, int v
 #ifdef _M_SSE
 	__m128i vvec = _mm_add_epi32(_mm_set1_epi32(v), _mm_set_epi32(1, 1, 0, 0));
 	return ApplyTexelClampQuad(clamp, vvec, height);
-#elif PPSSPP_ARCH(ARM64_NEON)
-	static const int32_t v2[4] = { 0, 0, 1, 1 };
-	int32x4_t vvec = vaddq_s32(vdupq_n_s32(v), vld1q_s32(v2));
-	return ApplyTexelClampQuad(clamp, vvec, height);
 #else
 	Vec4<int> result = Vec4<int>::AssignToAll(v) + Vec4<int>(0, 0, 1, 1);
 	return ApplyTexelClampQuad(clamp, ToVec4IntArg(result), height);
 #endif
 }
 
-static inline Vec4IntResult SOFTRAST_CALL GetTexelCoordinatesQuadS(int level, float in_s, int &frac_u, const SamplerID &samplerID) {
+static inline Vec4IntResult SOFTRAST_CALL GetTexelCoordinatesQuadS(int level, float in_s, int &frac_u, int x, const SamplerID &samplerID) {
 	int width = samplerID.cached.sizes[level].w;
 
 	int base_u = (int)(in_s * width * 256) - 128;
@@ -697,7 +618,7 @@ static inline Vec4IntResult SOFTRAST_CALL GetTexelCoordinatesQuadS(int level, fl
 	return ApplyTexelClampQuadS(samplerID.clampS, base_u, width);
 }
 
-static inline Vec4IntResult SOFTRAST_CALL GetTexelCoordinatesQuadT(int level, float in_t, int &frac_v, const SamplerID &samplerID) {
+static inline Vec4IntResult SOFTRAST_CALL GetTexelCoordinatesQuadT(int level, float in_t, int &frac_v, int y, const SamplerID &samplerID) {
 	int height = samplerID.cached.sizes[level].h;
 
 	int base_v = (int)(in_t * height * 256) - 128;
@@ -708,48 +629,26 @@ static inline Vec4IntResult SOFTRAST_CALL GetTexelCoordinatesQuadT(int level, fl
 	return ApplyTexelClampQuadT(samplerID.clampT, base_v, height);
 }
 
-static Vec4IntResult SOFTRAST_CALL SampleLinearLevel(float s, float t, const u8 *const *tptr, const uint16_t *bufw, int texlevel, const SamplerID &samplerID) {
+static Vec4IntResult SOFTRAST_CALL SampleLinearLevel(float s, float t, int x, int y, const u8 *const *tptr, const int *bufw, int texlevel, const SamplerID &samplerID) {
 	int frac_u, frac_v;
-	const Vec4<int> u = GetTexelCoordinatesQuadS(texlevel, s, frac_u, samplerID);
-	const Vec4<int> v = GetTexelCoordinatesQuadT(texlevel, t, frac_v, samplerID);
+	const Vec4<int> u = GetTexelCoordinatesQuadS(texlevel, s, frac_u, x, samplerID);
+	const Vec4<int> v = GetTexelCoordinatesQuadT(texlevel, t, frac_v, y, samplerID);
 	Nearest4 c = SampleNearest<4>(u.AsArray(), v.AsArray(), tptr[0], bufw[0], texlevel, samplerID);
-#ifdef _M_SSE
-	__m128i zero = _mm_setzero_si128();
-	__m128i samples = _mm_loadu_si128((const __m128i*)(c.v));
-	__m128i top = _mm_unpacklo_epi8(samples, zero);
-	__m128i bot = _mm_unpackhi_epi8(samples, zero);
-	// I just a want reasonably efficient
-	// __m128i mul_u = _mm_setr_epi16(0x10 - frac_u, 0x10 - frac_u, 0x10 - frac_u, 0x10 - frac_u, frac_u, frac_u, frac_u, frac_u);
-	// GCC/clang do something decent for that, MSVC - not so much.
-	// Hence this. (0x10 - frac_u) is expressed as (frac_u ^ 0xF) + 1,
-	// which REQUIRES 0 <= frac_u < 0x10.
-	__m128i mul_u =	_mm_set1_epi16(frac_u);
-	mul_u = _mm_xor_si128(mul_u, _mm_setr_epi16(0xF, 0xF, 0xF, 0xF, 0x0, 0x0, 0x0, 0x0));
-	mul_u = _mm_add_epi16(mul_u, _mm_setr_epi16(0x1, 0x1, 0x1, 0x1, 0x0, 0x0, 0x0, 0x0));
-	top = _mm_mullo_epi16(top, _mm_set1_epi16(0x10 - frac_v));
-	bot = _mm_mullo_epi16(bot, _mm_set1_epi16(frac_v));
-	__m128i sum = _mm_add_epi16(top, bot);
-	sum = _mm_mullo_epi16(sum, mul_u);
-	sum = _mm_add_epi16(sum, _mm_shuffle_epi32(sum, _MM_SHUFFLE(3, 2, 3, 2)));
-	sum = _mm_srli_epi16(sum, 8);
-	sum = _mm_unpacklo_epi16(sum, zero);
-	return sum;
-#else
+
 	Vec4<int> texcolor_tl = Vec4<int>::FromRGBA(c.v[0]);
 	Vec4<int> texcolor_tr = Vec4<int>::FromRGBA(c.v[1]);
 	Vec4<int> texcolor_bl = Vec4<int>::FromRGBA(c.v[2]);
 	Vec4<int> texcolor_br = Vec4<int>::FromRGBA(c.v[3]);
 	Vec4<int> top = texcolor_tl * (0x10 - frac_u) + texcolor_tr * frac_u;
 	Vec4<int> bot = texcolor_bl * (0x10 - frac_u) + texcolor_br * frac_u;
-	return ToVec4IntResult((top * (0x10 - frac_v) + bot * frac_v) >> (4 + 4));
-#endif
+	return ToVec4IntResult((top * (0x10 - frac_v) + bot * frac_v) / (16 * 16));
 }
 
-static Vec4IntResult SOFTRAST_CALL SampleLinear(float s, float t, Vec4IntArg prim_color, const u8 *const *tptr, const uint16_t *bufw, int texlevel, int levelFrac, const SamplerID &samplerID) {
-	Vec4<int> c0 = SampleLinearLevel(s, t, tptr, bufw, texlevel, samplerID);
+static Vec4IntResult SOFTRAST_CALL SampleLinear(float s, float t, int x, int y, Vec4IntArg prim_color, const u8 *const *tptr, const int *bufw, int texlevel, int levelFrac, const SamplerID &samplerID) {
+	Vec4<int> c0 = SampleLinearLevel(s, t, x, y, tptr, bufw, texlevel, samplerID);
 	if (levelFrac) {
-		const Vec4<int> c1 = SampleLinearLevel(s, t, tptr + 1, bufw + 1, texlevel + 1, samplerID);
-		c0 = (c1 * levelFrac + c0 * (16 - levelFrac)) >> 4;
+		const Vec4<int> c1 = SampleLinearLevel(s, t, x, y, tptr + 1, bufw + 1, texlevel + 1, samplerID);
+		c0 = (c1 * levelFrac + c0 * (16 - levelFrac)) / 16;
 	}
 	return GetTextureFunctionOutput(prim_color, ToVec4IntArg(c0), samplerID);
 }

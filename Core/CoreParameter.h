@@ -19,15 +19,14 @@
 
 #include <string>
 
-#include "Common/File/Path.h"
 #include "Core/Compatibility.h"
-#include "Core/Loaders.h"
 
-enum GPUCore : int {
-	GPUCORE_GLES = 0,
-	GPUCORE_SOFTWARE = 1,
-	GPUCORE_DIRECTX11 = 3,
-	GPUCORE_VULKAN = 4,
+enum GPUCore {
+	GPUCORE_GLES,
+	GPUCORE_SOFTWARE,
+	GPUCORE_DIRECTX9,
+	GPUCORE_DIRECTX11,
+	GPUCORE_VULKAN,
 };
 
 enum class FPSLimit {
@@ -48,31 +47,34 @@ enum class CPUCore;
 
 // PSP_CoreParameter()
 struct CoreParameter {
+	CoreParameter() {}
+
 	CPUCore cpuCore;
 	GPUCore gpuCore;
 
 	GraphicsContext *graphicsContext = nullptr;  // TODO: Find a better place.
-	bool enableSound = true;  // there aren't multiple sound cores.
+	bool enableSound;  // there aren't multiple sound cores.
 
 	Path fileToStart;
 	Path mountIso;  // If non-empty, and fileToStart is an ELF or PBP, will mount this ISO in the background to umd1:.
 	Path mountRoot;  // If non-empty, and fileToStart is an ELF or PBP, mount this as host0: / umd0:.
 	std::string errorString;
 
-	bool startBreak = false;
-	std::string *collectDebugOutput = nullptr;
-	bool headLess = false;   // Try to avoid messageboxes etc
+	bool startBreak;
+	bool printfEmuLog;  // writes "emulator:" logging to stdout
+	std::string *collectEmuLog = nullptr;
+	bool headLess;   // Try to avoid messageboxes etc
 
 	// Internal PSP rendering resolution and scale factor.
-	int renderScaleFactor = 1;
-	int renderWidth = 0;
-	int renderHeight = 0;
+	int renderScaleFactor;
+	int renderWidth;
+	int renderHeight;
 
 	// Actual output resolution in pixels.
-	int pixelWidth = 0;
-	int pixelHeight = 0;
+	int pixelWidth;
+	int pixelHeight;
 
-	// Can be modified at runtime. Do not belong here.
+	// Can be modified at runtime.
 	bool fastForward = false;
 	FPSLimit fpsLimit = FPSLimit::NORMAL;
 	int analogFpsLimit = 0;
@@ -84,7 +86,6 @@ struct CoreParameter {
 	bool frozen = false;
 
 	FileLoader *mountIsoLoader = nullptr;
-	IdentifiedFileType fileType = IdentifiedFileType::UNKNOWN;
 
 	Compatibility compat;
 };

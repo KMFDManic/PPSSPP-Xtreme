@@ -27,31 +27,31 @@
 // All the decompress functions are identical with only differing window bits.
 static int CommonDecompress(int windowBits, u32 OutBuffer, int OutBufferLength, u32 InBuffer, u32 Crc32Addr) {
 	if (!Memory::IsValidAddress(OutBuffer) || !Memory::IsValidAddress(InBuffer)) {
-		return hleLogError(Log::HLE, 0, "bad address");
+		return hleLogError(HLE, 0, "bad address");
 	}
 
 	auto crc32Addr = PSPPointer<u32_le>::Create(Crc32Addr);
 	if (Crc32Addr && !crc32Addr.IsValid()) {
-		return hleLogError(Log::HLE, 0, "bad crc32 address");
+		return hleLogError(HLE, 0, "bad crc32 address");
 	}
 
 	z_stream stream{};
 	u8 *outBufferPtr = Memory::GetPointerWrite(OutBuffer);
 	stream.next_in = (Bytef*)Memory::GetPointer(InBuffer);
 	// We don't know the available length, just let it use as much as it wants.
-	stream.avail_in = (uInt)Memory::ClampValidSizeAt(InBuffer, Memory::g_MemorySize);
+	stream.avail_in = (uInt)Memory::ValidSize(InBuffer, Memory::g_MemorySize);
 	stream.next_out = outBufferPtr;
 	stream.avail_out = (uInt)OutBufferLength;
 
 	int err = inflateInit2(&stream, windowBits);
 	if (err != Z_OK) {
-		return hleLogError(Log::HLE, 0, "inflateInit2 failed %08x", err);
+		return hleLogError(HLE, 0, "inflateInit2 failed %08x", err);
 	}
 	err = inflate(&stream, Z_FINISH);
 	inflateEnd(&stream);
 
 	if (err != Z_STREAM_END) {
-		return hleLogError(Log::HLE, 0, "inflate failed %08x", err);
+		return hleLogError(HLE, 0, "inflate failed %08x", err);
 	}
 	if (crc32Addr.IsValid()) {
 		uLong crc = crc32(0L, Z_NULL, 0);
@@ -59,13 +59,12 @@ static int CommonDecompress(int windowBits, u32 OutBuffer, int OutBufferLength, 
 	}
 
 	if (MemBlockInfoDetailed(stream.total_in, stream.total_out)) {
-		char tagData[128];
-		size_t tagSize = FormatMemWriteTagAt(tagData, sizeof(tagData), "sceDeflt/", InBuffer, stream.total_in);
-		NotifyMemInfo(MemBlockFlags::READ, InBuffer, stream.total_in, tagData, tagSize);
-		NotifyMemInfo(MemBlockFlags::WRITE, OutBuffer, stream.total_out, tagData, tagSize);
+		const std::string tag = "sceDeflt/" + GetMemWriteTagAt(InBuffer, stream.total_in);
+		NotifyMemInfo(MemBlockFlags::READ, InBuffer, stream.total_in, tag.c_str(), tag.size());
+		NotifyMemInfo(MemBlockFlags::WRITE, OutBuffer, stream.total_out, tag.c_str(), tag.size());
 	}
 
-	return hleLogDebug(Log::HLE, stream.total_out);
+	return hleLogSuccessI(HLE, stream.total_out);
 }
 
 static int sceDeflateDecompress(u32 OutBuffer, int OutBufferLength, u32 InBuffer, u32 Crc32Addr) {
@@ -96,5 +95,5 @@ const HLEFunction sceDeflt[] = {
 };
 
 void Register_sceDeflt() {
-	RegisterHLEModule("sceDeflt", ARRAY_SIZE(sceDeflt), sceDeflt);
+	RegisterModule("sceDeflt", ARRAY_SIZE(sceDeflt), sceDeflt);
 }

@@ -13,7 +13,7 @@
 // Put the whole thing in a FrameData to allow for overlap.
 
 struct ProfilerScope {
-	char name[52];  // to make a struct size of 64, just because
+	std::string name;
 	int startQueryId;
 	int endQueryId;
 	int level;
@@ -47,7 +47,6 @@ private:
 	int numQueries_ = 0;
 	bool firstFrame_ = true;
 	bool *enabledPtr_ = nullptr;
-	int validBits_ = 0;
 
 	std::vector<size_t> scopeStack_;
 

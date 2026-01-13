@@ -22,13 +22,9 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <unordered_set>
-#include "Common/Data/Collections/Hashmaps.h"
 #include "GPU/Math3D.h"
 #include "GPU/Software/FuncId.h"
 #include "GPU/Software/RasterizerRegCache.h"
-
-class BinManager;
 
 namespace Rasterizer {
 
@@ -40,13 +36,10 @@ namespace Rasterizer {
 #endif
 
 typedef void (SOFTRAST_CALL *SingleFunc)(int x, int y, int z, int fog, Vec4IntArg color_in, const PixelFuncID &pixelID);
-SingleFunc GetSingleFunc(const PixelFuncID &id, BinManager *binner);
+SingleFunc GetSingleFunc(const PixelFuncID &id);
 
 void Init();
-void FlushJit();
 void Shutdown();
-
-bool CheckDepthTestPassed(GEComparison func, int x, int y, int stride, u16 z);
 
 bool DescribeCodePtr(const u8 *ptr, std::string &name);
 
@@ -56,7 +49,6 @@ struct PixelBlendState {
 	bool dstFactorIsInverse = false;
 	bool srcColorAsFactor = false;
 	bool dstColorAsFactor = false;
-	bool readsDstPixel = true;
 };
 void ComputePixelBlendState(PixelBlendState &state, const PixelFuncID &id);
 
@@ -65,15 +57,13 @@ public:
 	PixelJitCache();
 
 	// Returns a pointer to the code to run.
-	SingleFunc GetSingle(const PixelFuncID &id, BinManager *binner);
-	static SingleFunc GenericSingle(const PixelFuncID &id);
+	SingleFunc GetSingle(const PixelFuncID &id);
+	SingleFunc GenericSingle(const PixelFuncID &id);
 	void Clear() override;
-	void Flush();
 
 	std::string DescribeCodePtr(const u8 *ptr) override;
 
 private:
-	void Compile(const PixelFuncID &id);
 	SingleFunc CompileSingle(const PixelFuncID &id);
 
 	RegCache::Reg GetPixelID();
@@ -109,30 +99,13 @@ private:
 	bool Jit_ConvertFrom5551(const PixelFuncID &id, RegCache::Reg colorReg, RegCache::Reg temp1Reg, RegCache::Reg temp2Reg, bool keepAlpha);
 	bool Jit_ConvertFrom4444(const PixelFuncID &id, RegCache::Reg colorReg, RegCache::Reg temp1Reg, RegCache::Reg temp2Reg, bool keepAlpha);
 
-	struct LastCache {
-		size_t key;
-		SingleFunc func;
-		int gen = -1;
-
-		bool Match(size_t k, int g) const {
-			return key == k && gen == g;
-		}
-
-		void Set(size_t k, SingleFunc f, int g) {
-			key = k;
-			func = f;
-			gen = g;
-		}
-	};
-
-	DenseHashMap<size_t, SingleFunc> cache_;
+	std::unordered_map<PixelFuncID, SingleFunc> cache_;
 	std::unordered_map<PixelFuncID, const u8 *> addresses_;
-	std::unordered_set<PixelFuncID> compileQueue_;
-	static int clearGen_;
-	static thread_local LastCache lastSingle_;
 
 	const u8 *constBlendHalf_11_4s_ = nullptr;
 	const u8 *constBlendInvert_11_4s_ = nullptr;
+	const u8 *const255_16s_ = nullptr;
+	const u8 *constBy255i_ = nullptr;
 
 #if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
 	void Discard();

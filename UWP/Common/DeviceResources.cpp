@@ -3,15 +3,14 @@
 #include "DeviceResources.h"
 #include "DirectXHelper.h"
 
-#include "Core/Config.h"
-#include "Common/StringUtils.h"
-#include "Common/Data/Encoding/Utf8.h"
-
 using namespace D2D1;
 using namespace DirectX;
-using namespace winrt::Windows::Foundation;
-using namespace winrt::Windows::Graphics::Display;
-using namespace winrt::Windows::UI::Core;
+using namespace Microsoft::WRL;
+using namespace Windows::Foundation;
+using namespace Windows::Graphics::Display;
+using namespace Windows::UI::Core;
+using namespace Windows::UI::Xaml::Controls;
+using namespace Platform;
 
 namespace DisplayMetrics
 {
@@ -101,7 +100,7 @@ void DX::DeviceResources::CreateDeviceIndependentResources()
 			D2D1_FACTORY_TYPE_SINGLE_THREADED,
 			__uuidof(ID2D1Factory3),
 			&options,
-			m_d2dFactory.put_void()
+			&m_d2dFactory
 			)
 		);
 
@@ -110,7 +109,7 @@ void DX::DeviceResources::CreateDeviceIndependentResources()
 		DWriteCreateFactory(
 			DWRITE_FACTORY_TYPE_SHARED,
 			__uuidof(IDWriteFactory3),
-			reinterpret_cast<::IUnknown**>(m_dwriteFactory.put())
+			&m_dwriteFactory
 			)
 		);
 
@@ -120,13 +119,13 @@ void DX::DeviceResources::CreateDeviceIndependentResources()
 			CLSID_WICImagingFactory2,
 			nullptr,
 			CLSCTX_INPROC_SERVER,
-			IID_PPV_ARGS(m_wicFactory.put())
+			IID_PPV_ARGS(&m_wicFactory)
 			)
 		);
 }
 
 // Configures the Direct3D device, and stores handles to it and the device context.
-void DX::DeviceResources::CreateDeviceResources(IDXGIAdapter* vAdapter)
+void DX::DeviceResources::CreateDeviceResources() 
 {
 	// This flag adds support for surfaces with a different color channel ordering
 	// than the API default. It is required for compatibility with Direct2D.
@@ -158,20 +157,20 @@ void DX::DeviceResources::CreateDeviceResources(IDXGIAdapter* vAdapter)
 	};
 
 	// Create the Direct3D 11 API device object and a corresponding context.
-	winrt::com_ptr<ID3D11Device> device;
-	winrt::com_ptr<ID3D11DeviceContext> context;
-	auto hardwareType = (vAdapter != nullptr ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE);
+	ComPtr<ID3D11Device> device;
+	ComPtr<ID3D11DeviceContext> context;
+
 	HRESULT hr = D3D11CreateDevice(
-		vAdapter,					// Specify nullptr to use the default adapter.
-		hardwareType,				// Create a device using the hardware graphics driver.
+		nullptr,					// Specify nullptr to use the default adapter.
+		D3D_DRIVER_TYPE_HARDWARE,	// Create a device using the hardware graphics driver.
 		0,							// Should be 0 unless the driver is D3D_DRIVER_TYPE_SOFTWARE.
 		creationFlags,				// Set debug and Direct2D compatibility flags.
 		featureLevels,				// List of feature levels this app can support.
 		ARRAYSIZE(featureLevels),	// Size of the list above.
 		D3D11_SDK_VERSION,			// Always set this to D3D11_SDK_VERSION for Windows Store apps.
-		device.put(),				// Returns the Direct3D device created.
+		&device,					// Returns the Direct3D device created.
 		&m_d3dFeatureLevel,			// Returns feature level of device created.
-		context.put()				// Returns the device immediate context.
+		&context					// Returns the device immediate context.
 		);
 
 	if (FAILED(hr))
@@ -188,112 +187,43 @@ void DX::DeviceResources::CreateDeviceResources(IDXGIAdapter* vAdapter)
 				featureLevels,
 				ARRAYSIZE(featureLevels),
 				D3D11_SDK_VERSION,
-				device.put(),
+				&device,
 				&m_d3dFeatureLevel,
-				context.put()
+				&context
 				)
 			);
 	}
 
-	if (!vAdapter && CreateAdaptersList(device)) {
-		// While fetching the adapters list
-		// we will check if the configs has custom adapter
-		// then will recall this function to create device with custom adapter
-		// so we have to stop here, if the `CreateAdaptersList` return true
-		return;
-	}
-
 	// Store pointers to the Direct3D 11.3 API device and immediate context.
-	m_d3dDevice = device.as<ID3D11Device3>();
-	m_d3dContext = context.as<ID3D11DeviceContext3>();
-	m_dxgiDevice = m_d3dDevice.as<IDXGIDevice3>();
+	DX::ThrowIfFailed(
+		device.As(&m_d3dDevice)
+		);
 
 	DX::ThrowIfFailed(
-		m_dxgiDevice->GetAdapter(m_dxgiAdapter.put())
-	);
-
-	winrt::com_ptr<IDXGIObject> adapterParent;
-	DX::ThrowIfFailed(
-		m_dxgiAdapter->GetParent(IID_PPV_ARGS(adapterParent.put()))
-	);
-	m_dxgiFactory = adapterParent.as<IDXGIFactory4>();
+		context.As(&m_d3dContext)
+		);
 
 	// Create the Direct2D device object and a corresponding context.
+	ComPtr<IDXGIDevice3> dxgiDevice;
 	DX::ThrowIfFailed(
-		m_d2dFactory->CreateDevice(m_dxgiDevice.get(), m_d2dDevice.put())
+		m_d3dDevice.As(&dxgiDevice)
+		);
+
+	DX::ThrowIfFailed(
+		m_d2dFactory->CreateDevice(dxgiDevice.Get(), &m_d2dDevice)
 		);
 
 	DX::ThrowIfFailed(
 		m_d2dDevice->CreateDeviceContext(
 			D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-			m_d2dContext.put()
+			&m_d2dContext
 			)
 		);
-}
-
-bool DX::DeviceResources::CreateAdaptersList(winrt::com_ptr<ID3D11Device> device) {
-	auto dxgi_device = device.as<IDXGIDevice3>();
-
-	winrt::com_ptr<IDXGIAdapter> deviceAdapter;
-	dxgi_device->GetAdapter(deviceAdapter.put());
-
-	winrt::com_ptr<IDXGIObject> adapterParent;
-	deviceAdapter->GetParent(IID_PPV_ARGS(adapterParent.put()));
-	auto deviceFactory = adapterParent.as<IDXGIFactory4>();
-
-	// Current adapter (Get current adapter name) 
-	DXGI_ADAPTER_DESC currentDefaultAdapterDesc;
-	deviceAdapter->GetDesc(&currentDefaultAdapterDesc);
-	std::string currentDefaultAdapterName = ConvertWStringToUTF8(currentDefaultAdapterDesc.Description);
-
-	UINT i = 0;
-	IDXGIAdapter* pAdapter;
-	IDXGIAdapter* customAdapter = nullptr;
-	auto deviceInfo = winrt::Windows::System::Profile::AnalyticsInfo::VersionInfo();
-	bool isXbox = deviceInfo.DeviceFamily() == L"Windows.Xbox";
-	while (deviceFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)
-	{
-		++i;
-		DXGI_ADAPTER_DESC vAdapterDesc;
-		pAdapter->GetDesc(&vAdapterDesc);
-		auto adapterDescription = ConvertWStringToUTF8(vAdapterDesc.Description);
-		if (isXbox && adapterDescription == "Microsoft Basic Render Driver") {
-			// Skip, very slow and not usefull for Xbox
-			continue;
-		}
-		m_vAdapters.push_back(adapterDescription);
-		if (!g_Config.sD3D11Device.empty() && g_Config.sD3D11Device == adapterDescription) {
-			// Double check if it's the same default adapter
-			if (adapterDescription != currentDefaultAdapterName) {
-				customAdapter = pAdapter;
-			}
-		}
-	}
-
-	if (m_vAdapters.size() == 1) {
-		// Only one (default) adapter, clear the list to hide device option from settings
-		m_vAdapters.clear();
-	}
-
-	bool reCreateDevice = false;
-	if (customAdapter) {
-		reCreateDevice = true;
-		// Recreate device with custom adapter
-		CreateDeviceResources(customAdapter);
-	}
-
-	return reCreateDevice;
 }
 
 // These resources need to be recreated every time the window size is changed.
 void DX::DeviceResources::CreateWindowSizeDependentResources() 
 {
-	// Window pointer was previously submited by `SetWindow` called from (App.cpp)
-	// we don't have to do that since we can easily get the current window
-	auto coreWindow = CoreWindow::GetForCurrentThread();
-
-	SetWindow();
-
 	// Clear the previous window size specific context.
 	ID3D11RenderTargetView* nullViews[] = {nullptr};
 	m_d3dContext->OMSetRenderTargets(ARRAYSIZE(nullViews), nullViews, nullptr);
@@ -357,22 +287,40 @@ void DX::DeviceResources::CreateWindowSizeDependentResources()
 		swapChainDesc.Scaling = scaling;
 		swapChainDesc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
 
-		winrt::com_ptr<IDXGISwapChain1> swapChain;
+		// This sequence obtains the DXGI factory that was used to create the Direct3D device above.
+		ComPtr<IDXGIDevice3> dxgiDevice;
 		DX::ThrowIfFailed(
-			m_dxgiFactory->CreateSwapChainForCoreWindow(
-				m_d3dDevice.get(),
-				winrt::get_unknown(coreWindow),
+			m_d3dDevice.As(&dxgiDevice)
+			);
+
+		ComPtr<IDXGIAdapter> dxgiAdapter;
+		DX::ThrowIfFailed(
+			dxgiDevice->GetAdapter(&dxgiAdapter)
+			);
+
+		ComPtr<IDXGIFactory4> dxgiFactory;
+		DX::ThrowIfFailed(
+			dxgiAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory))
+			);
+
+		ComPtr<IDXGISwapChain1> swapChain;
+		DX::ThrowIfFailed(
+			dxgiFactory->CreateSwapChainForCoreWindow(
+				m_d3dDevice.Get(),
+				reinterpret_cast<IUnknown*>(m_window.Get()),
 				&swapChainDesc,
 				nullptr,
-				swapChain.put()
+				&swapChain
 				)
 			);
-		m_swapChain = swapChain.as<IDXGISwapChain3>();
+		DX::ThrowIfFailed(
+			swapChain.As(&m_swapChain)
+			);
 
 		// Ensure that DXGI does not queue more than one frame at a time. This both reduces latency and
 		// ensures that the application will only render after each VSync, minimizing power consumption.
 		DX::ThrowIfFailed(
-			m_dxgiDevice->SetMaximumFrameLatency(1)
+			dxgiDevice->SetMaximumFrameLatency(1)
 			);
 	}
 
@@ -411,7 +359,7 @@ void DX::DeviceResources::CreateWindowSizeDependentResources()
 		break;
 
 	default:
-		winrt::throw_hresult(E_FAIL);
+		throw ref new FailureException();
 	}
 
 	DX::ThrowIfFailed(
@@ -419,16 +367,16 @@ void DX::DeviceResources::CreateWindowSizeDependentResources()
 		);
 
 	// Create a render target view of the swap chain back buffer.
-	winrt::com_ptr<ID3D11Texture2D1> backBuffer;
+	ComPtr<ID3D11Texture2D1> backBuffer;
 	DX::ThrowIfFailed(
-		m_swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.put()))
+		m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))
 		);
 
 	DX::ThrowIfFailed(
 		m_d3dDevice->CreateRenderTargetView1(
-			backBuffer.get(),
+			backBuffer.Get(),
 			nullptr,
-			m_d3dRenderTargetView.put()
+			&m_d3dRenderTargetView
 			)
 		);
 
@@ -452,20 +400,20 @@ void DX::DeviceResources::CreateWindowSizeDependentResources()
 			m_dpi
 			);
 
-	winrt::com_ptr<IDXGISurface2> dxgiBackBuffer;
+	ComPtr<IDXGISurface2> dxgiBackBuffer;
 	DX::ThrowIfFailed(
-		m_swapChain->GetBuffer(0, IID_PPV_ARGS(dxgiBackBuffer.put()))
+		m_swapChain->GetBuffer(0, IID_PPV_ARGS(&dxgiBackBuffer))
 		);
 
 	DX::ThrowIfFailed(
 		m_d2dContext->CreateBitmapFromDxgiSurface(
-			dxgiBackBuffer.get(),
+			dxgiBackBuffer.Get(),
 			&bitmapProperties,
-			m_d2dTargetBitmap.put()
+			&m_d2dTargetBitmap
 			)
 		);
 
-	m_d2dContext->SetTarget(m_d2dTargetBitmap.get());
+	m_d2dContext->SetTarget(m_d2dTargetBitmap.Get());
 	m_d2dContext->SetDpi(m_effectiveDpi, m_effectiveDpi);
 
 	// Grayscale text anti-aliasing is recommended for all Windows Store apps.
@@ -476,7 +424,7 @@ void DX::DeviceResources::CreateWindowSizeDependentResources()
 void DX::DeviceResources::UpdateRenderTargetSize()
 {
 	m_effectiveDpi = m_dpi;
-	if (winrt::Windows::System::Profile::AnalyticsInfo::VersionInfo().DeviceFamily() == L"Windows.Xbox")
+	if (Windows::System::Profile::AnalyticsInfo::VersionInfo->DeviceFamily == L"Windows.Xbox")
 	{
 		m_effectiveDpi = 96.0f / static_cast<float>(m_logicalSize.Height) * 1080.0f;
 	}
@@ -509,47 +457,49 @@ void DX::DeviceResources::UpdateRenderTargetSize()
 }
 
 // This method is called when the CoreWindow is created (or re-created).
-void DX::DeviceResources::SetWindow()
+void DX::DeviceResources::SetWindow(CoreWindow^ window)
 {
-	auto window = CoreWindow::GetForCurrentThread();
-	DisplayInformation currentDisplayInformation = DisplayInformation::GetForCurrentView();
+	DisplayInformation^ currentDisplayInformation = DisplayInformation::GetForCurrentView();
 
-	if (winrt::Windows::System::Profile::AnalyticsInfo::VersionInfo().DeviceFamily() == L"Windows.Xbox")
+	m_window = window;
+	if (Windows::System::Profile::AnalyticsInfo::VersionInfo->DeviceFamily == L"Windows.Xbox")
 	{
-		auto hdi = winrt::Windows::Graphics::Display::Core::HdmiDisplayInformation::GetForCurrentView();
+		const auto hdi = Windows::Graphics::Display::Core::HdmiDisplayInformation::GetForCurrentView();
 		if (hdi)
 		{
 			try
 			{
-				auto dm = hdi.GetCurrentDisplayMode();
-				float hdmi_width = static_cast<float>(dm.ResolutionWidthInRawPixels());
-				float hdmi_height = static_cast<float>(dm.ResolutionHeightInRawPixels());
+				const auto dm = hdi->GetCurrentDisplayMode();
+				const unsigned int hdmi_width = dm->ResolutionWidthInRawPixels;
+				const unsigned int hdmi_height = dm->ResolutionHeightInRawPixels;
 				// If we're running on Xbox, use the HDMI mode instead of the CoreWindow size.
 				// In UWP, the CoreWindow is always 1920x1080, even when running at 4K.
 
-				m_logicalSize = winrt::Windows::Foundation::Size(hdmi_width, hdmi_height);
-				m_dpi = currentDisplayInformation.LogicalDpi() * 1.5f;
+				m_logicalSize = Windows::Foundation::Size(hdmi_width, hdmi_height);
+				m_dpi = currentDisplayInformation->LogicalDpi * 1.5;
 			}
-			catch (const winrt::hresult_error&)
+			catch (const Platform::Exception^)
 			{
-				m_logicalSize = winrt::Windows::Foundation::Size(window.Bounds().Width, window.Bounds().Height);
-				m_dpi = currentDisplayInformation.LogicalDpi();
+				m_logicalSize = Windows::Foundation::Size(window->Bounds.Width, window->Bounds.Height);
+				m_dpi = currentDisplayInformation->LogicalDpi;
 			}
 		}
 	}
 	else 
 	{
-		m_logicalSize = winrt::Windows::Foundation::Size(window.Bounds().Width, window.Bounds().Height);
-		m_dpi = currentDisplayInformation.LogicalDpi();
+		m_logicalSize = Windows::Foundation::Size(window->Bounds.Width, window->Bounds.Height);
+		m_dpi = currentDisplayInformation->LogicalDpi;
 	}
-	m_nativeOrientation = currentDisplayInformation.NativeOrientation();
-	m_currentOrientation = currentDisplayInformation.CurrentOrientation();
+	m_nativeOrientation = currentDisplayInformation->NativeOrientation;
+	m_currentOrientation = currentDisplayInformation->CurrentOrientation;
 	
 	m_d2dContext->SetDpi(m_dpi, m_dpi);
+
+	CreateWindowSizeDependentResources();
 }
 
 // This method is called in the event handler for the SizeChanged event.
-void DX::DeviceResources::SetLogicalSize(winrt::Windows::Foundation::Size logicalSize)
+void DX::DeviceResources::SetLogicalSize(Windows::Foundation::Size logicalSize)
 {
 	if (m_logicalSize != logicalSize)
 	{
@@ -565,8 +515,10 @@ void DX::DeviceResources::SetDpi(float dpi)
 	{
 		m_dpi = dpi;
 
-		// When the display DPI changes, the logical size of the window (measured in Dips) 
-		// also changes and needs to be updated.
+		// When the display DPI changes, the logical size of the window (measured in Dips) also changes and needs to be updated.
+		m_logicalSize = Windows::Foundation::Size(m_window->Bounds.Width, m_window->Bounds.Height);
+
+		m_d2dContext->SetDpi(m_dpi, m_dpi);
 		CreateWindowSizeDependentResources();
 	}
 }
@@ -588,19 +540,29 @@ void DX::DeviceResources::ValidateDevice()
 	// was created or if the device has been removed.
 
 	// First, get the information for the default adapter from when the device was created.
-	winrt::com_ptr<IDXGIAdapter1> previousDefaultAdapter;
-	DX::ThrowIfFailed(m_dxgiFactory->EnumAdapters1(0, previousDefaultAdapter.put()));
+
+	ComPtr<IDXGIDevice3> dxgiDevice;
+	DX::ThrowIfFailed(m_d3dDevice.As(&dxgiDevice));
+
+	ComPtr<IDXGIAdapter> deviceAdapter;
+	DX::ThrowIfFailed(dxgiDevice->GetAdapter(&deviceAdapter));
+
+	ComPtr<IDXGIFactory4> deviceFactory;
+	DX::ThrowIfFailed(deviceAdapter->GetParent(IID_PPV_ARGS(&deviceFactory)));
+
+	ComPtr<IDXGIAdapter1> previousDefaultAdapter;
+	DX::ThrowIfFailed(deviceFactory->EnumAdapters1(0, &previousDefaultAdapter));
 
 	DXGI_ADAPTER_DESC1 previousDesc;
 	DX::ThrowIfFailed(previousDefaultAdapter->GetDesc1(&previousDesc));
 
 	// Next, get the information for the current default adapter.
 
-	winrt::com_ptr<IDXGIFactory4> currentFactory;
-	DX::ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(currentFactory.put())));
+	ComPtr<IDXGIFactory4> currentFactory;
+	DX::ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&currentFactory)));
 
-	winrt::com_ptr<IDXGIAdapter1> currentDefaultAdapter;
-	DX::ThrowIfFailed(currentFactory->EnumAdapters1(0, currentDefaultAdapter.put()));
+	ComPtr<IDXGIAdapter1> currentDefaultAdapter;
+	DX::ThrowIfFailed(currentFactory->EnumAdapters1(0, &currentDefaultAdapter));
 
 	DXGI_ADAPTER_DESC1 currentDesc;
 	DX::ThrowIfFailed(currentDefaultAdapter->GetDesc1(&currentDesc));
@@ -613,6 +575,9 @@ void DX::DeviceResources::ValidateDevice()
 		FAILED(m_d3dDevice->GetDeviceRemovedReason()))
 	{
 		// Release references to resources related to the old device.
+		dxgiDevice = nullptr;
+		deviceAdapter = nullptr;
+		deviceFactory = nullptr;
 		previousDefaultAdapter = nullptr;
 
 		// Create a new device and swap chain.
@@ -650,7 +615,10 @@ void DX::DeviceResources::RegisterDeviceNotify(DX::IDeviceNotify* deviceNotify)
 // is entering an idle state and that temporary buffers can be reclaimed for use by other apps.
 void DX::DeviceResources::Trim()
 {
-	m_dxgiDevice->Trim();
+	ComPtr<IDXGIDevice3> dxgiDevice;
+	m_d3dDevice.As(&dxgiDevice);
+
+	dxgiDevice->Trim();
 }
 
 // Present the contents of the swap chain to the screen.
@@ -665,7 +633,7 @@ void DX::DeviceResources::Present()
 	// Discard the contents of the render target.
 	// This is a valid operation only when the existing contents will be entirely
 	// overwritten. If dirty or scroll rects are used, this call should be removed.
-	m_d3dContext->DiscardView1(m_d3dRenderTargetView.get(), nullptr, 0);
+	m_d3dContext->DiscardView1(m_d3dRenderTargetView.Get(), nullptr, 0);
 
 	// If the device was removed either by a disconnection or a driver upgrade, we 
 	// must recreate all device resources.

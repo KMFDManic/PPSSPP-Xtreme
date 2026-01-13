@@ -18,13 +18,33 @@
 #include <functional>
 #include <mutex>
 #include <set>
-#include <unordered_map>
 #include <vector>
 
 #include "Common/CommonFuncs.h"
 #include "GPU/Debugger/Breakpoints.h"
-#include "GPU/Debugger/GECommandTable.h"
 #include "GPU/GPUState.h"
+
+namespace GPUBreakpoints {
+
+static std::mutex breaksLock;
+static bool breakCmds[256];
+static std::set<u32> breakPCs;
+static std::set<u32> breakTextures;
+static std::set<u32> breakRenderTargets;
+// Small optimization to avoid a lock/lookup for the common case.
+static size_t breakPCsCount = 0;
+static size_t breakTexturesCount = 0;
+static size_t breakRenderTargetsCount = 0;
+static std::function<void(bool)> notifyBreakpoints;
+
+// If these are set, the above are also, but they should be temporary.
+static bool breakCmdsTemp[256];
+static std::set<u32> breakPCsTemp;
+static std::set<u32> breakTexturesTemp;
+static std::set<u32> breakRenderTargetsTemp;
+static bool textureChangeTemp = false;
+
+static u32 lastTexture = 0xFFFFFFFF;
 
 // These are commands we run before breaking on a texture.
 // They are commands that affect the decoding of the texture.
@@ -41,8 +61,10 @@ const static u8 textureRelatedCmds[] = {
 	// Sometimes found between clut/texture params.
 	GE_CMD_TEXFLUSH, GE_CMD_TEXSYNC,
 };
+static std::vector<bool> nonTextureCmds;
 
-GPUBreakpoints::GPUBreakpoints() {
+void Init(void (*hasBreakpoints)(bool flag)) {
+	notifyBreakpoints = hasBreakpoints;
 	ClearAllBreakpoints();
 
 	nonTextureCmds.clear();
@@ -52,7 +74,7 @@ GPUBreakpoints::GPUBreakpoints() {
 	}
 }
 
-void GPUBreakpoints::AddNonTextureTempBreakpoints() {
+void AddNonTextureTempBreakpoints() {
 	for (int i = 0; i < 256; ++i) {
 		if (nonTextureCmds[i]) {
 			AddCmdBreakpoint(i, true);
@@ -60,7 +82,7 @@ void GPUBreakpoints::AddNonTextureTempBreakpoints() {
 	}
 }
 
-static u32 GetAdjustedTextureAddress(u32 op) {
+u32 GetAdjustedTextureAddress(u32 op) {
 	const u8 cmd = op >> 24;
 	bool interesting = (cmd >= GE_CMD_TEXADDR0 && cmd <= GE_CMD_TEXADDR7);
 	interesting = interesting || (cmd >= GE_CMD_TEXBUFWIDTH0 && cmd <= GE_CMD_TEXBUFWIDTH7);
@@ -82,21 +104,20 @@ static u32 GetAdjustedTextureAddress(u32 op) {
 	return addr;
 }
 
-static u32 GetAdjustedRenderTargetAddress(u32 op) {
+u32 GetAdjustedRenderTargetAddress(u32 op) {
 	const u8 cmd = op >> 24;
 	switch (cmd) {
 	case GE_CMD_FRAMEBUFPTR:
 	case GE_CMD_ZBUFPTR:
-		return op & 0x001FFFF0;
+		return op & 0x003FFFF0;
 	}
 
 	return (u32)-1;
 }
 
-// Note: this now always returns false, but still needs to be called.
-void GPUBreakpoints::CheckForTextureChange(u32 op, u32 addr) {
+bool IsTextureChangeBreakpoint(u32 op, u32 addr) {
 	if (!textureChangeTemp) {
-		return;
+		return false;
 	}
 
 	const u8 cmd = op >> 24;
@@ -108,34 +129,28 @@ void GPUBreakpoints::CheckForTextureChange(u32 op, u32 addr) {
 		if (cmd == GE_CMD_TEXTUREMAPENABLE) {
 			enabled = (op & 1) != 0;
 		} else {
-			return;
+			return false;
 		}
 	}
 	if (enabled && addr != lastTexture) {
 		textureChangeTemp = false;
 		lastTexture = addr;
-
-		// Silently convert to a primitive breakpoint, so we stop on use.
-		// Note: this may cause "spurious" breaks if the tex is changed and the changed back.
-		AddCmdBreakpoint(GE_CMD_PRIM, true);
-		AddCmdBreakpoint(GE_CMD_BEZIER, true);
-		AddCmdBreakpoint(GE_CMD_SPLINE, true);
-		AddCmdBreakpoint(GE_CMD_VAP, true);
-	}
-}
-
-bool GPUBreakpoints::IsTextureCmdBreakpoint(u32 op) {
-	const u32 addr = GetAdjustedTextureAddress(op);
-	if (addr != (u32)-1) {
-		CheckForTextureChange(op, addr);
-		return IsTextureBreakpoint(addr);
+		return true;
 	} else {
-		CheckForTextureChange(op, gstate.getTextureAddress(0));
 		return false;
 	}
 }
 
-bool GPUBreakpoints::IsRenderTargetCmdBreakpoint(u32 op) {
+bool IsTextureCmdBreakpoint(u32 op) {
+	const u32 addr = GetAdjustedTextureAddress(op);
+	if (addr != (u32)-1) {
+		return IsTextureChangeBreakpoint(op, addr) || IsTextureBreakpoint(addr);
+	} else {
+		return IsTextureChangeBreakpoint(op, gstate.getTextureAddress(0));
+	}
+}
+
+bool IsRenderTargetCmdBreakpoint(u32 op) {
 	const u32 addr = GetAdjustedRenderTargetAddress(op);
 	if (addr != (u32)-1) {
 		return IsRenderTargetBreakpoint(addr);
@@ -143,53 +158,8 @@ bool GPUBreakpoints::IsRenderTargetCmdBreakpoint(u32 op) {
 	return false;
 }
 
-static bool HitBreakpointCond(GPUBreakpoints::BreakpointInfo &bp, u32 op) {
-	u8 cmd = op >> 24;
-
-	// Temporarily set the value while running the breakpoint.
-	// It makes more intuitive sense for the referenced data to already be set.
-	// Note this won't perform actions, like matrix uploads.
-	u32 diff = gstate.cmdmem[cmd] ^ op;
-	gstate.cmdmem[cmd] ^= diff;
-
-	u32 result = 1;
-	if (!GPUDebugExecExpression(gpuDebug, bp.expression, result))
-		result = 0;
-
-	gstate.cmdmem[cmd] ^= diff;
-	return result != 0;
-}
-
-bool GPUBreakpoints::HitAddressBreakpoint(u32 pc, u32 op) {
-	if (breakPCsCount == 0)
-		return false;
-
-	std::lock_guard<std::mutex> guard(breaksLock);
-	auto entry = breakPCs.find(pc);
-	if (entry == breakPCs.end())
-		return false;
-
-	if (entry->second.isConditional) {
-		return HitBreakpointCond(entry->second, op);
-	}
-	return true;
-}
-
-bool GPUBreakpoints::HitOpBreakpoint(u32 op) {
-	u8 cmd = op >> 24;
-	if (!IsCmdBreakpoint(cmd))
-		return false;
-
-	if (breakCmdsInfo[cmd].isConditional) {
-		std::lock_guard<std::mutex> guard(breaksLock);
-		return HitBreakpointCond(breakCmdsInfo[cmd], op);
-	}
-
-	return true;
-}
-
-bool GPUBreakpoints::IsBreakpoint(u32 pc, u32 op) {
-	if (HitAddressBreakpoint(pc, op) || HitOpBreakpoint(op)) {
+bool IsBreakpoint(u32 pc, u32 op) {
+	if (IsAddressBreakpoint(pc) || IsOpBreakpoint(op)) {
 		return true;
 	}
 
@@ -204,7 +174,7 @@ bool GPUBreakpoints::IsBreakpoint(u32 pc, u32 op) {
 	return false;
 }
 
-bool GPUBreakpoints::IsAddressBreakpoint(u32 addr, bool &temp) {
+bool IsAddressBreakpoint(u32 addr, bool &temp) {
 	if (breakPCsCount == 0) {
 		temp = false;
 		return false;
@@ -215,7 +185,7 @@ bool GPUBreakpoints::IsAddressBreakpoint(u32 addr, bool &temp) {
 	return breakPCs.find(addr) != breakPCs.end();
 }
 
-bool GPUBreakpoints::IsAddressBreakpoint(u32 addr) {
+bool IsAddressBreakpoint(u32 addr) {
 	if (breakPCsCount == 0) {
 		return false;
 	}
@@ -224,7 +194,7 @@ bool GPUBreakpoints::IsAddressBreakpoint(u32 addr) {
 	return breakPCs.find(addr) != breakPCs.end();
 }
 
-bool GPUBreakpoints::IsTextureBreakpoint(u32 addr, bool &temp) {
+bool IsTextureBreakpoint(u32 addr, bool &temp) {
 	if (breakTexturesCount == 0) {
 		temp = false;
 		return false;
@@ -235,7 +205,7 @@ bool GPUBreakpoints::IsTextureBreakpoint(u32 addr, bool &temp) {
 	return breakTextures.find(addr) != breakTextures.end();
 }
 
-bool GPUBreakpoints::IsTextureBreakpoint(u32 addr) {
+bool IsTextureBreakpoint(u32 addr) {
 	if (breakTexturesCount == 0) {
 		return false;
 	}
@@ -244,48 +214,48 @@ bool GPUBreakpoints::IsTextureBreakpoint(u32 addr) {
 	return breakTextures.find(addr) != breakTextures.end();
 }
 
-bool GPUBreakpoints::IsRenderTargetBreakpoint(u32 addr, bool &temp) {
+bool IsRenderTargetBreakpoint(u32 addr, bool &temp) {
 	if (breakRenderTargetsCount == 0) {
 		temp = false;
 		return false;
 	}
 
-	addr &= 0x001FFFF0;
+	addr &= 0x003FFFF0;
 
 	std::lock_guard<std::mutex> guard(breaksLock);
 	temp = breakRenderTargetsTemp.find(addr) != breakRenderTargetsTemp.end();
 	return breakRenderTargets.find(addr) != breakRenderTargets.end();
 }
 
-bool GPUBreakpoints::IsRenderTargetBreakpoint(u32 addr) {
+bool IsRenderTargetBreakpoint(u32 addr) {
 	if (breakRenderTargetsCount == 0) {
 		return false;
 	}
 
-	addr &= 0x001FFFF0;
+	addr &= 0x003FFFF0;
 
 	std::lock_guard<std::mutex> guard(breaksLock);
 	return breakRenderTargets.find(addr) != breakRenderTargets.end();
 }
 
-bool GPUBreakpoints::IsOpBreakpoint(u32 op, bool &temp) const {
+bool IsOpBreakpoint(u32 op, bool &temp) {
 	return IsCmdBreakpoint(op >> 24, temp);
 }
 
-bool GPUBreakpoints::IsOpBreakpoint(u32 op) const {
+bool IsOpBreakpoint(u32 op) {
 	return IsCmdBreakpoint(op >> 24);
 }
 
-bool GPUBreakpoints::IsCmdBreakpoint(u8 cmd, bool &temp) const {
+bool IsCmdBreakpoint(u8 cmd, bool &temp) {
 	temp = breakCmdsTemp[cmd];
 	return breakCmds[cmd];
 }
 
-bool GPUBreakpoints::IsCmdBreakpoint(u8 cmd) const {
+bool IsCmdBreakpoint(u8 cmd) {
 	return breakCmds[cmd];
 }
 
-bool GPUBreakpoints::HasAnyBreakpoints() const {
+static bool HasAnyBreakpoints() {
 	if (breakPCsCount != 0 || breakTexturesCount != 0 || breakRenderTargetsCount != 0)
 		return true;
 	if (textureChangeTemp)
@@ -299,45 +269,41 @@ bool GPUBreakpoints::HasAnyBreakpoints() const {
 	return false;
 }
 
-void GPUBreakpoints::AddAddressBreakpoint(u32 addr, bool temp) {
+void AddAddressBreakpoint(u32 addr, bool temp) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	if (temp) {
 		if (breakPCs.find(addr) == breakPCs.end()) {
 			breakPCsTemp.insert(addr);
-			breakPCs[addr].isConditional = false;
+			breakPCs.insert(addr);
 		}
 		// Already normal breakpoint, let's not make it temporary.
 	} else {
 		// Remove the temporary marking.
 		breakPCsTemp.erase(addr);
-		breakPCs.emplace(addr, BreakpointInfo{});
+		breakPCs.insert(addr);
 	}
 
 	breakPCsCount = breakPCs.size();
-	hasBreakpoints_ = true;
+	notifyBreakpoints(true);
 }
 
-void GPUBreakpoints::AddCmdBreakpoint(u8 cmd, bool temp) {
+void AddCmdBreakpoint(u8 cmd, bool temp) {
 	if (temp) {
 		if (!breakCmds[cmd]) {
 			breakCmdsTemp[cmd] = true;
 			breakCmds[cmd] = true;
-			breakCmdsInfo[cmd].isConditional = false;
 		}
 		// Ignore adding a temp breakpoint when a normal one exists.
 	} else {
 		// This is no longer temporary.
 		breakCmdsTemp[cmd] = false;
-		if (!breakCmds[cmd]) {
-			breakCmds[cmd] = true;
-			breakCmdsInfo[cmd].isConditional = false;
-		}
+		breakCmds[cmd] = true;
 	}
-	hasBreakpoints_ = true;
+	notifyBreakpoints(true);
 }
 
-void GPUBreakpoints::AddTextureBreakpoint(u32 addr, bool temp) {
+void AddTextureBreakpoint(u32 addr, bool temp) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	if (temp) {
@@ -351,13 +317,13 @@ void GPUBreakpoints::AddTextureBreakpoint(u32 addr, bool temp) {
 	}
 
 	breakTexturesCount = breakTextures.size();
-	hasBreakpoints_ = true;
+	notifyBreakpoints(true);
 }
 
-void GPUBreakpoints::AddRenderTargetBreakpoint(u32 addr, bool temp) {
+void AddRenderTargetBreakpoint(u32 addr, bool temp) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
-	addr &= 0x001FFFF0;
+	addr &= 0x003FFFF0;
 
 	if (temp) {
 		if (breakRenderTargets.find(addr) == breakRenderTargets.end()) {
@@ -370,130 +336,73 @@ void GPUBreakpoints::AddRenderTargetBreakpoint(u32 addr, bool temp) {
 	}
 
 	breakRenderTargetsCount = breakRenderTargets.size();
-	hasBreakpoints_ = true;
+	notifyBreakpoints(true);
 }
 
-void GPUBreakpoints::AddTextureChangeTempBreakpoint() {
+void AddTextureChangeTempBreakpoint() {
 	textureChangeTemp = true;
-	hasBreakpoints_ = true;
+	notifyBreakpoints(true);
 }
 
-void GPUBreakpoints::AddAnyTempBreakpoint() {
+void AddAnyTempBreakpoint() {
 	for (int i = 0; i < 256; ++i) {
 		AddCmdBreakpoint(i, true);
 	}
-	hasBreakpoints_ = true;
+	notifyBreakpoints(true);
 }
 
-void GPUBreakpoints::RemoveAddressBreakpoint(u32 addr) {
+void RemoveAddressBreakpoint(u32 addr) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	breakPCsTemp.erase(addr);
 	breakPCs.erase(addr);
 
 	breakPCsCount = breakPCs.size();
-	hasBreakpoints_ = HasAnyBreakpoints();
+	notifyBreakpoints(HasAnyBreakpoints());
 }
 
-void GPUBreakpoints::RemoveCmdBreakpoint(u8 cmd) {
+void RemoveCmdBreakpoint(u8 cmd) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	breakCmdsTemp[cmd] = false;
 	breakCmds[cmd] = false;
-	hasBreakpoints_ = HasAnyBreakpoints();
+	notifyBreakpoints(HasAnyBreakpoints());
 }
 
-void GPUBreakpoints::RemoveTextureBreakpoint(u32 addr) {
+void RemoveTextureBreakpoint(u32 addr) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	breakTexturesTemp.erase(addr);
 	breakTextures.erase(addr);
 
 	breakTexturesCount = breakTextures.size();
-	hasBreakpoints_ = HasAnyBreakpoints();
+	notifyBreakpoints(HasAnyBreakpoints());
 }
 
-void GPUBreakpoints::RemoveRenderTargetBreakpoint(u32 addr) {
+void RemoveRenderTargetBreakpoint(u32 addr) {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
-	addr &= 0x001FFFF0;
+	addr &= 0x003FFFF0;
 
 	breakRenderTargetsTemp.erase(addr);
 	breakRenderTargets.erase(addr);
 
 	breakRenderTargetsCount = breakRenderTargets.size();
-	hasBreakpoints_ = HasAnyBreakpoints();
+	notifyBreakpoints(HasAnyBreakpoints());
 }
 
-void GPUBreakpoints::RemoveTextureChangeTempBreakpoint() {
+void RemoveTextureChangeTempBreakpoint() {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	textureChangeTemp = false;
-	hasBreakpoints_ = HasAnyBreakpoints();
+	notifyBreakpoints(HasAnyBreakpoints());
 }
 
-static bool SetupCond(GPUBreakpoints::BreakpointInfo &bp, const std::string &expression, std::string *error) {
-	bool success = true;
-	if (expression.length() != 0) {
-		if (GPUDebugInitExpression(gpuDebug, expression.c_str(), bp.expression)) {
-			bp.isConditional = true;
-			bp.expressionString = expression;
-		} else {
-			// Don't change if it failed.
-			if (error)
-				*error = getExpressionError();
-			success = false;
-		}
-	} else {
-		bp.isConditional = false;
-	}
-	return success;
-}
-
-bool GPUBreakpoints::SetAddressBreakpointCond(u32 addr, const std::string &expression, std::string *error) {
-	// Must have one in the first place, make sure it's not temporary.
-	AddAddressBreakpoint(addr);
-
-	std::lock_guard<std::mutex> guard(breaksLock);
-	auto &bp = breakPCs[addr];
-	return SetupCond(breakPCs[addr], expression, error);
-}
-
-bool GPUBreakpoints::GetAddressBreakpointCond(u32 addr, std::string *expression) {
-	std::lock_guard<std::mutex> guard(breaksLock);
-	auto entry = breakPCs.find(addr);
-	if (entry != breakPCs.end() && entry->second.isConditional) {
-		if (expression)
-			*expression = entry->second.expressionString;
-		return true;
-	}
-	return false;
-}
-
-bool GPUBreakpoints::SetCmdBreakpointCond(u8 cmd, const std::string &expression, std::string *error) {
-	// Must have one in the first place, make sure it's not temporary.
-	AddCmdBreakpoint(cmd);
-
-	std::lock_guard<std::mutex> guard(breaksLock);
-	return SetupCond(breakCmdsInfo[cmd], expression, error);
-}
-
-bool GPUBreakpoints::GetCmdBreakpointCond(u8 cmd, std::string *expression) {
-	if (breakCmds[cmd] && breakCmdsInfo[cmd].isConditional) {
-		if (expression) {
-			std::lock_guard<std::mutex> guard(breaksLock);
-			*expression = breakCmdsInfo[cmd].expressionString;
-		}
-		return true;
-	}
-	return false;
-}
-
-void GPUBreakpoints::UpdateLastTexture(u32 addr) {
+void UpdateLastTexture(u32 addr) {
 	lastTexture = addr;
 }
 
-void GPUBreakpoints::ClearAllBreakpoints() {
+void ClearAllBreakpoints() {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	for (int i = 0; i < 256; ++i) {
@@ -513,10 +422,10 @@ void GPUBreakpoints::ClearAllBreakpoints() {
 	breakRenderTargetsCount = breakRenderTargets.size();
 
 	textureChangeTemp = false;
-	hasBreakpoints_ = false;
+	notifyBreakpoints(false);
 }
 
-void GPUBreakpoints::ClearTempBreakpoints() {
+void ClearTempBreakpoints() {
 	std::lock_guard<std::mutex> guard(breaksLock);
 
 	// Reset ones that were temporary back to non-breakpoints in the primary arrays.
@@ -546,24 +455,7 @@ void GPUBreakpoints::ClearTempBreakpoints() {
 	breakRenderTargetsCount = breakRenderTargets.size();
 
 	textureChangeTemp = false;
-	hasBreakpoints_ = HasAnyBreakpoints();
+	notifyBreakpoints(HasAnyBreakpoints());
 }
 
-bool GPUBreakpoints::ToggleCmdBreakpoint(const GECmdInfo &info) {
-	if (IsCmdBreakpoint(info.cmd)) {
-		RemoveCmdBreakpoint(info.cmd);
-		if (info.otherCmd)
-			RemoveCmdBreakpoint(info.otherCmd);
-		if (info.otherCmd2)
-			RemoveCmdBreakpoint(info.otherCmd2);
-		return false;
-	}
-
-	AddCmdBreakpoint(info.cmd);
-	if (info.otherCmd)
-		AddCmdBreakpoint(info.otherCmd);
-	if (info.otherCmd2)
-		AddCmdBreakpoint(info.otherCmd2);
-	return true;
-}
-
+};

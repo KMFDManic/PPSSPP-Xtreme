@@ -2,20 +2,19 @@
 
 #if PPSSPP_PLATFORM(WINDOWS)
 
-#include "Common/CommonWindows.h"
+#include <windows.h>
+
+#ifdef __MINGW32__
+#include <excpt.h>
+#endif
 
 #define TLS_SUPPORTED
 
 #elif defined(__ANDROID__)
 
-#include "android/jni/app-android.h"
-
 #define TLS_SUPPORTED
 
 #endif
-
-// TODO: Many other platforms also support TLS, in fact probably nearly all that we support
-// these days.
 
 #include <cstring>
 #include <cstdint>
@@ -23,31 +22,6 @@
 #include "Common/Log.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/Data/Encoding/Utf8.h"
-
-AttachDetachFunc g_attach;
-AttachDetachFunc g_detach;
-
-void AttachThreadToJNI() {
-	if (g_attach) {
-		g_attach();
-	} else {
-#if PPSSPP_PLATFORM(ANDROID)
-		// Not relevant on other platforms.
-		ERROR_LOG(Log::System, "Couldn't attach thread - g_attach not set");
-#endif
-	}
-}
-
-void DetachThreadFromJNI() {
-	if (g_detach) {
-		g_detach();
-	}
-}
-
-void RegisterAttachDetach(AttachDetachFunc attach, AttachDetachFunc detach) {
-	g_attach = attach;
-	g_detach = detach;
-}
 
 #if (PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(LINUX)) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
@@ -88,6 +62,7 @@ static EXCEPTION_DISPOSITION NTAPI ignore_handler(EXCEPTION_RECORD *rec,
 }
 #endif
 
+
 #if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
 typedef HRESULT (WINAPI *TSetThreadDescription)(HANDLE, PCWSTR);
 
@@ -115,15 +90,7 @@ static void InitializeSetThreadDescription() {
 void SetCurrentThreadNameThroughException(const char *threadName);
 #endif
 
-const char *GetCurrentThreadName() {
-#ifdef TLS_SUPPORTED
-	return curThreadName;
-#else
-	return "";
-#endif
-}
-
-void SetCurrentThreadName(const char *threadName) {
+void SetCurrentThreadName(const char* threadName) {
 #if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
 	InitializeSetThreadDescription();
 	if (g_pSetThreadDescription) {
@@ -197,11 +164,19 @@ void SetCurrentThreadNameThroughException(const char *threadName) {
 	info.dwThreadID = -1; //dwThreadID;
 	info.dwFlags = 0;
 
+#ifdef __MINGW32__
+	__try1 (ehandler)
+#else
 	__try
+#endif
 	{
 		RaiseException(MS_VC_EXCEPTION, 0, sizeof(info)/sizeof(ULONG_PTR), (ULONG_PTR*)&info);
 	}
+#ifdef __MINGW32__
+	__except1
+#else
 	__except(EXCEPTION_CONTINUE_EXECUTION)
+#endif
 	{}
 #endif
 }
@@ -209,9 +184,8 @@ void SetCurrentThreadNameThroughException(const char *threadName) {
 
 void AssertCurrentThreadName(const char *threadName) {
 #ifdef TLS_SUPPORTED
-	if (curThreadName && strcmp(curThreadName, threadName) != 0) {
-		ERROR_LOG(Log::System, "Thread name assert failed: Expected %s, was %s", threadName, curThreadName);
-		_dbg_assert_msg_(false, "Thread name assert failed: Expected %s, was %s", threadName, curThreadName);
+	if (strcmp(curThreadName, threadName) != 0) {
+		ERROR_LOG(SYSTEM, "Thread name assert failed: Expected %s, was %s", threadName, curThreadName);
 	}
 #endif
 }

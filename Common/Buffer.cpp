@@ -7,42 +7,48 @@
 #include "Common/File/Path.h"
 #include "Common/Log.h"
 
+Buffer::Buffer() { }
+Buffer::~Buffer() { }
+
 char *Buffer::Append(size_t length) {
 	if (length > 0) {
-		return data_.push_back_write(length);
+		size_t old_size = data_.size();
+		data_.resize(old_size + length);
+		return &data_[0] + old_size;
 	} else {
 		return nullptr;
 	}
 }
 
-void Buffer::Append(std::string_view str) {
+void Buffer::Append(const std::string &str) {
 	char *ptr = Append(str.size());
-	if (ptr) {
-		memcpy(ptr, str.data(), str.size());
-	}
+	memcpy(ptr, str.data(), str.size());
+}
+
+void Buffer::Append(const char *str) {
+	size_t len = strlen(str);
+	char *dest = Append(len);
+	memcpy(dest, str, len);
 }
 
 void Buffer::Append(const Buffer &other) {
 	size_t len = other.size();
 	if (len > 0) {
-		// Append other to the current buffer.
-		other.data_.iterate_blocks([&](const char *data, size_t size) {
-			data_.push_back(data, size);
-			return true;
-		});
+		char *dest = Append(len);
+		memcpy(dest, &other.data_[0], len);
 	}
 }
 
 void Buffer::AppendValue(int value) {
 	char buf[16];
 	// This is slow.
-	snprintf(buf, sizeof(buf), "%i", value);
+	sprintf(buf, "%i", value);
 	Append(buf);
 }
 
 void Buffer::Take(size_t length, std::string *dest) {
 	if (length > data_.size()) {
-		ERROR_LOG(Log::IO, "Truncating length in Buffer::Take()");
+		ERROR_LOG(IO, "Truncating length in Buffer::Take()");
 		length = data_.size();
 	}
 	dest->resize(length);
@@ -52,8 +58,8 @@ void Buffer::Take(size_t length, std::string *dest) {
 }
 
 void Buffer::Take(size_t length, char *dest) {
-	size_t retval = data_.pop_front_bulk(dest, length);
-	_dbg_assert_(retval == length);
+	memcpy(dest, &data_[0], length);
+	data_.erase(data_.begin(), data_.begin() + length);
 }
 
 int Buffer::TakeLineCRLF(std::string *dest) {
@@ -61,9 +67,7 @@ int Buffer::TakeLineCRLF(std::string *dest) {
 	if (after_next_line < 0) {
 		return after_next_line;
 	} else {
-		_dbg_assert_(after_next_line >= 2);
-		if (after_next_line != 2)
-			Take((size_t)after_next_line - 2, dest);
+		Take(after_next_line - 2, dest);
 		Skip(2);  // Skip the CRLF
 		return after_next_line - 2;
 	}
@@ -71,10 +75,10 @@ int Buffer::TakeLineCRLF(std::string *dest) {
 
 void Buffer::Skip(size_t length) {
 	if (length > data_.size()) {
-		ERROR_LOG(Log::IO, "Truncating length in Buffer::Skip()");
+		ERROR_LOG(IO, "Truncating length in Buffer::Skip()");
 		length = data_.size();
 	}
-	data_.skip(length);
+	data_.erase(data_.begin(), data_.begin() + length);
 }
 
 int Buffer::SkipLineCRLF() {
@@ -87,46 +91,38 @@ int Buffer::SkipLineCRLF() {
 	}
 }
 
-// This relies on having buffered data!
 int Buffer::OffsetToAfterNextCRLF() {
-	int offset = data_.next_crlf_offset();
-	if (offset >= 0) {
-		return offset + 2;
-	} else {
-		return -1;
+	for (int i = 0; i < (int)data_.size() - 1; i++) {
+		if (data_[i] == '\r' && data_[i + 1] == '\n') {
+			return i + 2;
+		}
 	}
+	return -1;
 }
 
 void Buffer::Printf(const char *fmt, ...) {
-	char buffer[4096];
+	char buffer[2048];
 	va_list vl;
 	va_start(vl, fmt);
-	int retval = vsnprintf(buffer, sizeof(buffer), fmt, vl);
-	if (retval >= (int)sizeof(buffer)) {
+	size_t retval = vsnprintf(buffer, sizeof(buffer), fmt, vl);
+	if ((int)retval >= (int)sizeof(buffer)) {
 		// Output was truncated. TODO: Do something.
-		ERROR_LOG(Log::IO, "Buffer::Printf truncated output");
+		ERROR_LOG(IO, "Buffer::Printf truncated output");
+	}
+	if (retval < 0) {
+		ERROR_LOG(IO, "Buffer::Printf failed");
 	}
 	va_end(vl);
-	if (retval < 0) {
-		ERROR_LOG(Log::IO, "Buffer::Printf failed, bad args?");
-		return;
-	}
 	char *ptr = Append(retval);
 	memcpy(ptr, buffer, retval);
 }
 
-bool Buffer::FlushToFile(const Path &filename, bool clear) {
+bool Buffer::FlushToFile(const Path &filename) {
 	FILE *f = File::OpenCFile(filename, "wb");
 	if (!f)
 		return false;
-	if (!data_.empty()) {
-		// Write the buffer to the file.
-		data_.iterate_blocks([f](const char *blockData, size_t blockSize) {
-			return fwrite(blockData, 1, blockSize, f) == blockSize;
-		});
-		if (clear) {
-			data_.clear();
-		}
+	if (data_.size()) {
+		fwrite(&data_[0], 1, data_.size(), f);
 	}
 	fclose(f);
 	return true;
@@ -134,8 +130,5 @@ bool Buffer::FlushToFile(const Path &filename, bool clear) {
 
 void Buffer::PeekAll(std::string *dest) {
 	dest->resize(data_.size());
-	data_.iterate_blocks(([dest](const char *blockData, size_t blockSize) {
-		dest->append(blockData, blockSize);
-		return true;
-	}));
+	memcpy(&(*dest)[0], &data_[0], data_.size());
 }

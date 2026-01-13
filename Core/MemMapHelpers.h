@@ -20,7 +20,6 @@
 #include <cstring>
 
 #include "Common/CommonTypes.h"
-#include "Common/StringUtils.h"
 #include "Core/Debugger/MemBlockInfo.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
@@ -32,7 +31,7 @@ namespace Memory
 {
 
 inline void Memcpy(const u32 to_address, const void *from_data, const u32 len, const char *tag, size_t tagLen) {
-	u8 *to = GetPointerWriteRange(to_address, len);
+	u8 *to = GetPointerWrite(to_address);
 	if (to) {
 		memcpy(to, from_data, len);
 		if (!tag) {
@@ -45,7 +44,7 @@ inline void Memcpy(const u32 to_address, const void *from_data, const u32 len, c
 }
 
 inline void Memcpy(void *to_data, const u32 from_address, const u32 len, const char *tag, size_t tagLen) {
-	const u8 *from = GetPointerRange(from_address, len);
+	const u8 *from = GetPointer(from_address);
 	if (from) {
 		memcpy(to_data, from, len);
 		if (!tag) {
@@ -58,23 +57,25 @@ inline void Memcpy(void *to_data, const u32 from_address, const u32 len, const c
 }
 
 inline void Memcpy(const u32 to_address, const u32 from_address, const u32 len, const char *tag, size_t tagLen) {
-	u8 *to = GetPointerWriteRange(to_address, len);
+	u8 *to = GetPointerWrite(to_address);
 	// If not, GetPointer will log.
 	if (!to)
 		return;
-	const u8 *from = GetPointerRange(from_address, len);
+	const u8 *from = GetPointer(from_address);
 	if (!from)
 		return;
 
 	memcpy(to, from, len);
 
 	if (MemBlockInfoDetailed(len)) {
+		char tagData[128];
 		if (!tag) {
-			NotifyMemInfoCopy(to_address, from_address, len, "Memcpy/");
-		} else {
-			NotifyMemInfo(MemBlockFlags::READ, from_address, len, tag, tagLen);
-			NotifyMemInfo(MemBlockFlags::WRITE, to_address, len, tag, tagLen);
+			const std::string srcTag = GetMemWriteTagAt(from_address, len);
+			tag = tagData;
+			tagLen = snprintf(tagData, sizeof(tagData), "Memcpy/%s", srcTag.c_str());
 		}
+		NotifyMemInfo(MemBlockFlags::READ, from_address, len, tag, tagLen);
+		NotifyMemInfo(MemBlockFlags::WRITE, to_address, len, tag, tagLen);
 	}
 }
 
@@ -107,4 +108,31 @@ inline void Memcpy(const u32 to_address, const u32 from_address, const u32 len) 
 
 void Memset(const u32 _Address, const u8 _Data, const u32 _iLength, const char *tag = "Memset");
 
+template<class T>
+void ReadStruct(u32 address, T *ptr)
+{
+	const u32 sz = (u32)sizeof(*ptr);
+	Memcpy(ptr, address, sz);
+}
+
+template<class T>
+void ReadStructUnchecked(u32 address, T *ptr)
+{
+	const u32 sz = (u32)sizeof(*ptr);
+	MemcpyUnchecked(ptr, address, sz);
+}
+
+template<class T>
+void WriteStruct(u32 address, T *ptr)
+{
+	const u32 sz = (u32)sizeof(*ptr);
+	Memcpy(address, ptr, sz);
+}
+
+template<class T>
+void WriteStructUnchecked(u32 address, T *ptr)
+{
+	const u32 sz = (u32)sizeof(*ptr);
+	MemcpyUnchecked(address, ptr, sz);
+}
 }

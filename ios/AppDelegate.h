@@ -2,14 +2,13 @@
 
 #import <UIKit/UIKit.h>
 
-@protocol PPSSPPViewController;
+@class ViewController;
 
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 
 @property (strong, nonatomic) UIWindow *window;
 @property (strong, nonatomic) UIScreen *screen;
-@property (nonatomic, strong) NSDictionary *launchOptions;
 
-- (BOOL)launchPPSSPP:(int)argc argv:(char**)argv;
+@property (strong, nonatomic) ViewController *viewController;
 
 @end

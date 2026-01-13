@@ -20,7 +20,6 @@
 #include <map>
 
 #include <d3d11.h>
-#include <wrl/client.h>
 
 #include "Common/CommonTypes.h"
 #include "GPU/Common/ShaderCommon.h"
@@ -42,10 +41,10 @@ public:
 	bool UseHWTransform() const { return useHWTransform_; }
 
 	std::string GetShaderString(DebugShaderStringType type) const;
-	ID3D11PixelShader *GetShader() const { return module_.Get(); }
+	ID3D11PixelShader *GetShader() const { return module_; }
 
 protected:
-	Microsoft::WRL::ComPtr<ID3D11PixelShader> module_;
+	ID3D11PixelShader *module_ = nullptr;
 
 	ID3D11Device *device_;
 	std::string source_;
@@ -56,7 +55,7 @@ protected:
 
 class D3D11VertexShader {
 public:
-	D3D11VertexShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, VShaderID id, const char *code, bool useHWTransform);
+	D3D11VertexShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, VShaderID id, const char *code, int vertType, bool useHWTransform);
 	~D3D11VertexShader();
 
 	const std::string &source() const { return source_; }
@@ -65,10 +64,10 @@ public:
 	bool UseHWTransform() const { return useHWTransform_; }
 
 	std::string GetShaderString(DebugShaderStringType type) const;
-	ID3D11VertexShader *GetShader() const { return module_.Get(); }
+	ID3D11VertexShader *GetShader() const { return module_; }
 
 protected:
-	Microsoft::WRL::ComPtr<ID3D11VertexShader> module_;
+	ID3D11VertexShader *module_ = nullptr;
 
 	ID3D11Device *device_;
 	std::string source_;
@@ -86,20 +85,15 @@ public:
 	ShaderManagerD3D11(Draw::DrawContext *draw, ID3D11Device *device, ID3D11DeviceContext *context, D3D_FEATURE_LEVEL featureLevel);
 	~ShaderManagerD3D11();
 
-	void GetShaders(int prim, u32 vertexType, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, const ComputedPipelineState &pipelineState, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode);
-	void ClearShaders() override;
+	void GetShaders(int prim, u32 vertType, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat);
+	void ClearShaders();
 	void DirtyLastShader() override;
 
-	void InitDeviceObjects();
-	void DestroyDeviceObjects();
-
-	void DeviceLost() override;
-	void DeviceRestore(Draw::DrawContext *draw) override;
 	int GetNumVertexShaders() const { return (int)vsCache_.size(); }
 	int GetNumFragmentShaders() const { return (int)fsCache_.size(); }
 
-	std::vector<std::string> DebugGetShaderIDs(DebugShaderType type) override;
-	std::string DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType) override;
+	std::vector<std::string> DebugGetShaderIDs(DebugShaderType type);
+	std::string DebugGetShaderString(std::string id, DebugShaderType type, DebugShaderStringType stringType);
 
 	uint64_t UpdateUniforms(bool useBufferedRendering);
 	void BindUniforms();
@@ -131,9 +125,9 @@ private:
 	UB_VS_Bones ub_bones;
 
 	// Not actual pushbuffers, requires D3D11.1, let's try to live without that first.
-	Microsoft::WRL::ComPtr<ID3D11Buffer> push_base;
-	Microsoft::WRL::ComPtr<ID3D11Buffer> push_lights;
-	Microsoft::WRL::ComPtr<ID3D11Buffer> push_bones;
+	ID3D11Buffer *push_base;
+	ID3D11Buffer *push_lights;
+	ID3D11Buffer *push_bones;
 
 	D3D11FragmentShader *lastFShader_ = nullptr;
 	D3D11VertexShader *lastVShader_ = nullptr;

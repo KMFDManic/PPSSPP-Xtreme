@@ -1,7 +1,5 @@
 #pragma once
 
-#include <string_view>
-
 // Simple wrapper around the Discord api.
 
 // All platforms should call it, but we only actually take action on
@@ -15,11 +13,9 @@ public:
 	void Update();  // Call every frame or at least regularly. Will initialize if necessary.
 	void Shutdown();
 
-	void SetPresenceGame(std::string_view gameTitle);
+	void SetPresenceGame(const char *gameTitle);
 	void SetPresenceMenu();
 	void ClearPresence();
-
-	static bool IsAvailable();
 
 private:
 	void Init();

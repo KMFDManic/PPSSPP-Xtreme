@@ -21,7 +21,6 @@
 #include "ppsspp_config.h"
 
 #include "Common/System/System.h"
-#include "Common/System/Request.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Core/HLE/HLE.h"
@@ -114,41 +113,40 @@ static int getCameraResolution(Camera::ConfigType type, int *width, int *height)
 
 
 static int sceUsbCamSetupMic(u32 paramAddr, u32 workareaAddr, int wasize) {
-	auto param = PSPPointer<PspUsbCamSetupMicParam>::Create(paramAddr);
-	if (param.IsValid()) {
-		config->micParam = *param;
-		param.NotifyRead("UsbCamSetupMic");
+	INFO_LOG(HLE, "sceUsbCamSetupMic");
+	if (Memory::IsValidRange(paramAddr, sizeof(PspUsbCamSetupMicParam))) {
+		Memory::ReadStruct(paramAddr, &config->micParam);
 	}
-	return hleLogInfo(Log::sceMisc, 0);
+	return 0;
 }
 
 static int sceUsbCamStartMic() {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamStartMic");
+	INFO_LOG(HLE, "UNIMPL sceUsbCamStartMic");
 	return 0;
 }
 
 static int sceUsbCamStopMic() {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamStopMic");
+	INFO_LOG(HLE, "UNIMPL sceUsbCamStopMic");
 	return 0;
 }
 
 static int sceUsbCamReadMicBlocking(u32 bufAddr, u32 size) {
 	if (!Memory::IsValidAddress(bufAddr)) {
-		ERROR_LOG(Log::HLE,"sceUsbCamReadMicBlocking(%08x, %d): invalid addresses", bufAddr, size);
+		ERROR_LOG(HLE,"sceUsbCamReadMicBlocking(%08x, %d): invalid addresses", bufAddr, size);
 		return -1;
 	}
 
-	INFO_LOG(Log::HLE, "sceUsbCamReadMicBlocking: size: %d", size);
+	INFO_LOG(HLE, "sceUsbCamReadMicBlocking: size: %d", size);
 	return __MicInput(size >> 1, config->micParam.frequency, bufAddr, CAMERAMIC);
 }
 
 static int sceUsbCamReadMic(u32 bufAddr, u32 size) {
 	if (!Memory::IsValidAddress(bufAddr)) {
-		ERROR_LOG(Log::HLE, "sceUsbCamReadMic(%08x, %d): invalid addresses", bufAddr, size);
+		ERROR_LOG(HLE, "sceUsbCamReadMic(%08x, %d): invalid addresses", bufAddr, size);
 		return -1;
 	}
 
-	INFO_LOG(Log::HLE, "sceUsbCamReadMic: size: %d", size);
+	INFO_LOG(HLE, "sceUsbCamReadMic: size: %d", size);
 	return __MicInput(size >> 1, config->micParam.frequency, bufAddr, CAMERAMIC, false);
 }
 
@@ -157,20 +155,16 @@ static int sceUsbCamGetMicDataLength() {
 }
 
 static int sceUsbCamSetupVideo(u32 paramAddr, u32 workareaAddr, int wasize) {
-	auto param = PSPPointer<PspUsbCamSetupVideoParam>::Create(paramAddr);
-	if (param.IsValid()) {
-		config->videoParam = *param;
-		param.NotifyRead("UsbCamSetupVideo");
+	if (Memory::IsValidRange(paramAddr, sizeof(PspUsbCamSetupVideoParam))) {
+		Memory::ReadStruct(paramAddr, &config->videoParam);
 	}
 	config->type = Camera::ConfigType::CfVideo;
 	return 0;
 }
 
 static int sceUsbCamSetupVideoEx(u32 paramAddr, u32 workareaAddr, int wasize) {
-	auto param = PSPPointer<PspUsbCamSetupVideoExParam>::Create(paramAddr);
-	if (param.IsValid()) {
-		config->videoExParam = *param;
-		param.NotifyRead("UsbCamSetupVideoEx");
+	if (Memory::IsValidRange(paramAddr, sizeof(PspUsbCamSetupVideoExParam))) {
+		Memory::ReadStruct(paramAddr, &config->videoExParam);
 	}
 	config->type = Camera::ConfigType::CfVideoEx;
 	return 0;
@@ -222,44 +216,40 @@ static int sceUsbCamReadVideoFrame(u32 bufAddr, u32 size) {
 }
 
 static int sceUsbCamPollReadVideoFrameEnd() {
-	VERBOSE_LOG(Log::HLE, "UNIMPL sceUsbCamPollReadVideoFrameEnd: %d", nextVideoFrame);
+	VERBOSE_LOG(HLE, "UNIMPL sceUsbCamPollReadVideoFrameEnd: %d", nextVideoFrame);
 	return nextVideoFrame;
 }
 
 static int sceUsbCamSetupStill(u32 paramAddr) {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamSetupStill");
-	auto param = PSPPointer<PspUsbCamSetupStillParam>::Create(paramAddr);
-	if (param.IsValid()) {
-		config->stillParam = *param;
-		param.NotifyRead("UsbCamSetupStill");
+	INFO_LOG(HLE, "UNIMPL sceUsbCamSetupStill");
+	if (Memory::IsValidRange(paramAddr, sizeof(PspUsbCamSetupStillParam))) {
+		Memory::ReadStruct(paramAddr, &config->stillParam);
 	}
 	config->type = Camera::ConfigType::CfStill;
 	return 0;
 }
 
 static int sceUsbCamSetupStillEx(u32 paramAddr) {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamSetupStillEx");
-	auto param = PSPPointer<PspUsbCamSetupStillExParam>::Create(paramAddr);
-	if (param.IsValid()) {
-		config->stillExParam = *param;
-		param.NotifyRead("UsbCamSetupStillEx");
+	INFO_LOG(HLE, "UNIMPL sceUsbCamSetupStillEx");
+	if (Memory::IsValidRange(paramAddr, sizeof(PspUsbCamSetupStillExParam))) {
+		Memory::ReadStruct(paramAddr, &config->stillExParam);
 	}
 	config->type = Camera::ConfigType::CfStillEx;
 	return 0;
 }
 
 static int sceUsbCamAutoImageReverseSW(int on) {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamAutoImageReverseSW: %d", on);
+	INFO_LOG(HLE, "UNIMPL sceUsbCamAutoImageReverseSW: %d", on);
 	return 0;
 }
 
 static int sceUsbCamGetLensDirection() {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamGetLensDirection");
+	INFO_LOG(HLE, "UNIMPL sceUsbCamGetLensDirection");
 	return 0;
 }
 
 static int sceUsbCamSetReverseMode(int reverseflags) {
-	INFO_LOG(Log::HLE, "UNIMPL sceUsbCamSetReverseMode %d", reverseflags);
+	INFO_LOG(HLE, "UNIMPL sceUsbCamSetReverseMode %d", reverseflags);
 	return 0;
 }
 
@@ -324,7 +314,7 @@ const HLEFunction sceUsbCam[] =
 
 void Register_sceUsbCam()
 {
-	RegisterHLEModule("sceUsbCam", ARRAY_SIZE(sceUsbCam), sceUsbCam);
+	RegisterModule("sceUsbCam", ARRAY_SIZE(sceUsbCam), sceUsbCam);
 }
 
 std::vector<std::string> Camera::getDeviceList() {
@@ -332,10 +322,8 @@ std::vector<std::string> Camera::getDeviceList() {
 		if (winCamera) {
 			return winCamera->getDeviceList();
 		}
-#elif PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS)
-		return System_GetCameraDeviceList();
-#elif PPSSPP_PLATFORM(MAC)
-	return __mac_getDeviceList();
+	#elif PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS)
+		return __cameraGetDeviceList();
 	#elif defined(USING_QT_UI) // Qt:macOS / Qt:Linux
 		return __qt_getDeviceList();
 	#elif PPSSPP_PLATFORM(LINUX) // SDL:Linux
@@ -347,7 +335,7 @@ std::vector<std::string> Camera::getDeviceList() {
 int Camera::startCapture() {
 	int width, height;
 	getCameraResolution(config->type, &width, &height);
-	INFO_LOG(Log::HLE, "%s resolution: %dx%d", __FUNCTION__, width, height);
+	INFO_LOG(HLE, "%s resolution: %dx%d", __FUNCTION__, width, height);
 
 	config->mode = Camera::Mode::Video;
 	#ifdef HAVE_WIN32_CAMERA
@@ -363,31 +351,27 @@ int Camera::startCapture() {
 	#elif PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS) || defined(USING_QT_UI)
 		char command[40] = {0};
 		snprintf(command, sizeof(command), "startVideo_%dx%d", width, height);
-		System_CameraCommand(command);
-#elif PPSSPP_PLATFORM(MAC)
-	__mac_startCapture(width, height);
+		System_SendMessage("camera_command", command);
 	#elif PPSSPP_PLATFORM(LINUX)
 		__v4l_startCapture(width, height);
 	#else
-		ERROR_LOG(Log::HLE, "%s not implemented", __FUNCTION__);
+		ERROR_LOG(HLE, "%s not implemented", __FUNCTION__);
 	#endif
 	return 0;
 }
 
 int Camera::stopCapture() {
-	INFO_LOG(Log::HLE, "%s", __FUNCTION__);
+	INFO_LOG(HLE, "%s", __FUNCTION__);
 	#ifdef HAVE_WIN32_CAMERA
 		if (winCamera) {
 			winCamera->sendMessage({ CAPTUREDEVIDE_COMMAND::STOP, nullptr });
 		}
-#elif PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS) || defined(USING_QT_UI)
-		System_CameraCommand("stopVideo");
-#elif PPSSPP_PLATFORM(MAC)
-		__mac_stopCapture();
+	#elif PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS) || defined(USING_QT_UI)
+		System_SendMessage("camera_command", "stopVideo");
 	#elif PPSSPP_PLATFORM(LINUX)
 		__v4l_stopCapture();
 	#else
-		ERROR_LOG(Log::HLE, "%s not implemented", __FUNCTION__);
+		ERROR_LOG(HLE, "%s not implemented", __FUNCTION__);
 	#endif
 	config->mode = Camera::Mode::Unused;
 	return 0;
@@ -408,7 +392,7 @@ void Camera::pushCameraImage(long long length, unsigned char* image) {
 	memset(videoBuffer, 0, VIDEO_BUFFER_SIZE);
 	if (length > VIDEO_BUFFER_SIZE) {
 		videoBufferLength = 0;
-		ERROR_LOG(Log::HLE, "pushCameraImage: length error: %lld > %d", length, VIDEO_BUFFER_SIZE);
+		ERROR_LOG(HLE, "pushCameraImage: length error: %lld > %d", length, VIDEO_BUFFER_SIZE);
 	} else {
 		videoBufferLength = length;
 		memcpy(videoBuffer, image, length);

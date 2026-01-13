@@ -17,31 +17,19 @@
 
 #pragma once
 
-#include "Common/Math/math_util.h"
 #include "Common/UI/View.h"
-#include "SimpleDialogScreen.h"
+#include "MiscScreens.h"
 
-class JoystickHistoryView;
-class GamepadView;
-
-class TiltAnalogSettingsScreen : public UITwoPaneBaseDialogScreen {
+class TiltAnalogSettingsScreen : public UIDialogScreenWithBackground {
 public:
-	TiltAnalogSettingsScreen(const Path &gamePath) : UITwoPaneBaseDialogScreen(gamePath, TwoPaneFlags::SettingsCanScroll) {}
+	TiltAnalogSettingsScreen() {}
 
-	void CreateSettingsViews(UI::ViewGroup *parent) override;
-	void CreateContentViews(UI::ViewGroup*parent) override;
-	std::string_view GetTitle() const override;
-
-	void update() override;
-	const char *tag() const override { return "TiltAnalogSettings"; }
+	void CreateViews() override;
+	bool axis(const AxisInput &axis) override;
 
 private:
-	void OnCalibrate(UI::EventParams &e);
-	void CreateCalibrationView(UI::ViewGroup *parent, UI::LayoutParams *layoutParams);
-
-	Lin::Vec3 down_{};
-	JoystickHistoryView *tilt_ = nullptr;
+	UI::EventReturn OnCalibrate(UI::EventParams &e);
+	float currentTiltX_ = 0.0f;
+	float currentTiltY_ = 0.0f;
 };
 
-extern const char *g_tiltTypes[];
-extern const size_t g_numTiltTypes;

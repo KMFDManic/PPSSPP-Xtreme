@@ -1,6 +1,5 @@
 #include <thread>
 #include <vector>
-#include <cstdio>
 
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
@@ -19,7 +18,7 @@ struct ResultObject {
 };
 
 ResultObject *ResultProducer() {
-	sleep_ms(250, "test-result");
+	sleep_ms(250);
 	printf("result produced: thread %d\n", GetCurrentThreadIdForDebug());
 	return new ResultObject{ true };
 }
@@ -36,7 +35,7 @@ bool TestMailbox() {
 }
 
 void rangeFunc(int lower, int upper) {
-	sleep_ms(30, "test-range");
+	sleep_ms(30);
 	printf(" - range %d-%d (thread %d)\n", lower, upper, GetCurrentThreadIdForDebug());
 }
 
@@ -46,7 +45,7 @@ bool TestParallelLoop(ThreadManager *threadMan) {
 	printf("tester thread ID: %d\n", GetCurrentThreadIdForDebug());
 
 	printf("waitable test\n");
-	WaitableCounter *waitable = ParallelRangeLoopWaitable(threadMan, rangeFunc, 0, 7, 1, TaskPriority::HIGH);
+	WaitableCounter *waitable = ParallelRangeLoopWaitable(threadMan, rangeFunc, 0, 7, 1);
 	// Can do stuff here if we like.
 	waitable->WaitAndRelease();
 	// Now it's done.
@@ -59,7 +58,7 @@ bool TestParallelLoop(ThreadManager *threadMan) {
 	ParallelRangeLoop(threadMan, rangeFunc, 0, 100, 40);
 	// Try a loop with minimum size larger than range.
 	printf("waitable test [10-30)\n");
-	WaitableCounter *waitable2 = ParallelRangeLoopWaitable(threadMan, rangeFunc, 10, 30, 40, TaskPriority::LOW);
+	WaitableCounter *waitable2 = ParallelRangeLoopWaitable(threadMan, rangeFunc, 10, 30, 40);
 	waitable2->WaitAndRelease();
 	return true;
 }
@@ -75,11 +74,8 @@ class IncrementTask : public Task {
 public:
 	IncrementTask(TaskType type, LimitedWaitable *waitable) : type_(type), waitable_(waitable) {}
 	~IncrementTask() {}
-	TaskType Type() const override { return type_; }
-	TaskPriority Priority() const override {
-		return TaskPriority::NORMAL;
-	}
-	void Run() override {
+	virtual TaskType Type() const { return type_; }
+	virtual void Run() {
 		g_atomicCounter++;
 		waitable_->Notify();
 	}
@@ -119,7 +115,7 @@ bool TestMultithreadedScheduling() {
 
 	threads.clear();
 
-	printf("Stress test elapsed: %0.2f", start.ElapsedSeconds());
+	printf("Stress test elapsed: %0.2f", start.Elapsed());
 
 	return true;
 }
@@ -135,7 +131,7 @@ bool TestThreadManager() {
 	if (!TestParallelLoop(&manager)) {
 		return false;
 	}
-	sleep_ms(100, "test-threadman");
+	sleep_ms(100);
 
 	ResultObject *result = object->BlockUntilReady();
 	if (result) {

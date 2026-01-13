@@ -35,11 +35,11 @@ struct PostShaderUniforms {
 	float timeDelta[4];
 	float setting[4];
 	float video; float pad[3];
-	float vr;
 	// Used on Direct3D9.
 	float gl_HalfPixel[4];
 };
 
+// Could use UI::Bounds but don't want to depend on that here.
 struct FRect {
 	float x;
 	float y;
@@ -47,13 +47,8 @@ struct FRect {
 	float h;
 };
 
-struct Bounds;  // from geom2d
-struct DisplayLayoutConfig;
-
-FRect GetScreenFrame(bool ignoreInsets, float pixelWidth, float pixelHeight);
-void SetOverrideScreenFrame(const Bounds *bounds);
-struct DisplayLayoutConfig;
-void CalculateDisplayOutputRect(const DisplayLayoutConfig &config, FRect *rc, float origW, float origH, const FRect &frame, int rotation);
+FRect GetScreenFrame(float pixelWidth, float pixelHeight);
+void CenterDisplayOutputRect(FRect *rc, float origW, float origH, const FRect &frame, int rotation);
 
 namespace Draw {
 class Buffer;
@@ -72,9 +67,9 @@ enum class OutputFlags {
 	LINEAR = 0x0000,
 	NEAREST = 0x0001,
 	RB_SWIZZLE = 0x0002,
-	BACKBUFFER_FLIPPED = 0x0004,  // Viewport/scissor coordinates are y-flipped.
-	POSITION_FLIPPED = 0x0008,    // Vertex position in the shader is y-flipped relative to the screen.
-	PILLARBOX = 0x0010,           // Squeeze the image horizontally. Used for the DarkStalkers hack.
+	BACKBUFFER_FLIPPED = 0x0004,
+	POSITION_FLIPPED = 0x0008,
+	PILLARBOX = 0x0010,
 };
 ENUM_CLASS_BITOPS(OutputFlags);
 
@@ -83,13 +78,9 @@ public:
 	PresentationCommon(Draw::DrawContext *draw);
 	~PresentationCommon();
 
-	void UpdateDisplaySize(int w, int h) {
+	void UpdateSize(int w, int h, int rw, int rh) {
 		pixelWidth_ = w;
 		pixelHeight_ = h;
-	}
-
-	// NOTE: Should be un-rotated width/height.
-	void UpdateRenderSize(int rw, int rh) {
 		renderWidth_ = rw;
 		renderHeight_ = rh;
 	}
@@ -101,23 +92,7 @@ public:
 		return usePostShader_;
 	}
 
-	bool UpdatePostShader(const DisplayLayoutConfig &config);
-
-	void BeginFrame(const DisplayLayoutConfig &config) {
-		if (restorePostShader_) {
-			UpdatePostShader(config);
-			restorePostShader_ = false;
-		}
-		presentedThisFrame_ = false;
-	}
-	bool PresentedThisFrame() const {
-		return presentedThisFrame_;
-	}
-	void NotifyPresent() {
-		// Something else did the present, skipping PresentationCommon.
-		// If you haven't called BindFramebufferAsRenderTarget, you must not set this.
-		presentedThisFrame_ = true;
-	}
+	bool UpdatePostShader();
 
 	void DeviceLost();
 	void DeviceRestore(Draw::DrawContext *draw);
@@ -125,29 +100,26 @@ public:
 	void UpdateUniforms(bool hasVideo);
 	void SourceTexture(Draw::Texture *texture, int bufferWidth, int bufferHeight);
 	void SourceFramebuffer(Draw::Framebuffer *fb, int bufferWidth, int bufferHeight);
-	void CopyToOutput(const DisplayLayoutConfig &config, OutputFlags flags, int uvRotation, float u0, float v0, float u1, float v1);
+	void CopyToOutput(OutputFlags flags, int uvRotation, float u0, float v0, float u1, float v1);
 
-	void CalculateRenderResolution(const DisplayLayoutConfig &config, int *width, int *height, int *scaleFactor, bool *upscaling, bool *ssaa) const;
+	void CalculateRenderResolution(int *width, int *height, int *scaleFactor, bool *upscaling, bool *ssaa);
 
 protected:
 	void CreateDeviceObjects();
 	void DestroyDeviceObjects();
-
 	void DestroyPostShader();
-	void DestroyStereoShader();
 
-	static void ShowPostShaderError(const std::string &errorString);
+	void ShowPostShaderError(const std::string &errorString);
 
-	Draw::ShaderModule *CompileShaderModule(ShaderStage stage, ShaderLanguage lang, const std::string &src, std::string *errorString) const;
-	Draw::Pipeline *CreatePipeline(std::vector<Draw::ShaderModule *> shaders, bool postShader, const UniformBufferDesc *uniformDesc) const;
-	bool CompilePostShader(const ShaderInfo *shaderInfo, Draw::Pipeline **outPipeline) const;
-	bool BuildPostShader(const DisplayLayoutConfig &config, const ShaderInfo *shaderInfo, const ShaderInfo *next, Draw::Pipeline **outPipeline);
+	Draw::ShaderModule *CompileShaderModule(ShaderStage stage, ShaderLanguage lang, const std::string &src, std::string *errorString);
+	Draw::Pipeline *CreatePipeline(std::vector<Draw::ShaderModule *> shaders, bool postShader, const UniformBufferDesc *uniformDesc);
+	bool BuildPostShader(const ShaderInfo *shaderInfo, const ShaderInfo *next);
 	bool AllocateFramebuffer(int w, int h);
 
-	bool BindSource(int binding, bool bindStereo);
+	void BindSource(int binding);
 
-	void GetCardboardSettings(const DisplayLayoutConfig &config, CardboardSettings *cardboardSettings) const;
-	void CalculatePostShaderUniforms(int bufferWidth, int bufferHeight, int targetWidth, int targetHeight, const ShaderInfo *shaderInfo, PostShaderUniforms *uniforms) const;
+	void GetCardboardSettings(CardboardSettings *cardboardSettings);
+	void CalculatePostShaderUniforms(int bufferWidth, int bufferHeight, int targetWidth, int targetHeight, const ShaderInfo *shaderInfo, PostShaderUniforms *uniforms);
 
 	Draw::DrawContext *draw_;
 	Draw::Pipeline *texColor_ = nullptr;
@@ -155,15 +127,13 @@ protected:
 	Draw::SamplerState *samplerNearest_ = nullptr;
 	Draw::SamplerState *samplerLinear_ = nullptr;
 	Draw::Buffer *vdata_ = nullptr;
+	Draw::Buffer *idata_ = nullptr;
 
+	std::vector<Draw::ShaderModule *> postShaderModules_;
 	std::vector<Draw::Pipeline *> postShaderPipelines_;
 	std::vector<Draw::Framebuffer *> postShaderFramebuffers_;
 	std::vector<ShaderInfo> postShaderInfo_;
 	std::vector<Draw::Framebuffer *> previousFramebuffers_;
-	
-	Draw::Pipeline *stereoPipeline_ = nullptr;
-	ShaderInfo *stereoShaderInfo_ = nullptr;
-
 	int previousIndex_ = 0;
 	PostShaderUniforms previousUniforms_{};
 
@@ -180,7 +150,6 @@ protected:
 
 	bool usePostShader_ = false;
 	bool restorePostShader_ = false;
-	bool presentedThisFrame_ = false;
 	ShaderLanguage lang_;
 
 	struct PrevFBO {

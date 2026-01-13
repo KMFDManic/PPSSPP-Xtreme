@@ -27,7 +27,7 @@
 class CachingFileLoader : public ProxiedFileLoader {
 public:
 	CachingFileLoader(FileLoader *backend);
-	~CachingFileLoader();
+	~CachingFileLoader() override;
 
 	bool Exists() override;
 	bool ExistsFast() override;

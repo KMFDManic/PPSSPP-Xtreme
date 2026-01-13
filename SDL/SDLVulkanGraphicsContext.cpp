@@ -8,14 +8,8 @@
 #include "Common/GPU/thin3d_create.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
 #include "Common/Data/Text/Parsers.h"
-#include "GPU/Vulkan/VulkanUtil.h"
 
 #include "Core/System.h"
-#if PPSSPP_PLATFORM(MAC)
-#include "SDL2/SDL_vulkan.h"
-#else
-#include "SDL_vulkan.h"
-#endif
 #include "SDLVulkanGraphicsContext.h"
 
 #if defined(VK_USE_PLATFORM_METAL_EXT)
@@ -28,8 +22,17 @@ static const bool g_Validate = true;
 static const bool g_Validate = false;
 #endif
 
-bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, int mode, std::string *error_message) {
-	window = SDL_CreateWindow("Initializing Vulkan...", x, y, w, h, mode);
+static uint32_t FlagsFromConfig() {
+	uint32_t flags = 0;
+	flags = g_Config.bVSync ? VULKAN_FLAG_PRESENT_FIFO : VULKAN_FLAG_PRESENT_MAILBOX;
+	if (g_Validate) {
+		flags |= VULKAN_FLAG_VALIDATE;
+	}
+	return flags;
+}
+
+bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int mode, std::string *error_message) {
+	window = SDL_CreateWindow("Initializing Vulkan...", x, y, pixel_xres, pixel_yres, mode);
 	if (!window) {
 		fprintf(stderr, "Error creating SDL window: %s\n", SDL_GetError());
 		exit(1);
@@ -43,43 +46,31 @@ bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, in
 
 	Version gitVer(PPSSPP_GIT_VERSION);
 
-	std::string errorStr;
-	if (!VulkanLoad(&errorStr)) {
-		*error_message = "Failed to load Vulkan driver library: ";
-		(*error_message) += errorStr;
+	if (!VulkanLoad()) {
+		*error_message = "Failed to load Vulkan driver library";
 		return false;
 	}
 
 	vulkan_ = new VulkanContext();
+	int vulkanFlags = FlagsFromConfig();
 
 	VulkanContext::CreateInfo info{};
-	InitVulkanCreateInfoFromConfig(&info);
+	info.app_name = "PPSSPP";
+	info.app_ver = gitVer.ToInteger();
+	info.flags = vulkanFlags;
 	if (VK_SUCCESS != vulkan_->CreateInstance(info)) {
 		*error_message = vulkan_->InitError();
 		delete vulkan_;
 		vulkan_ = nullptr;
 		return false;
 	}
-
-	int deviceNum = vulkan_->GetPhysicalDeviceByName(g_Config.sVulkanDevice);
-	if (deviceNum < 0) {
-		deviceNum = vulkan_->GetBestPhysicalDevice();
-		if (!g_Config.sVulkanDevice.empty())
-			g_Config.sVulkanDevice = vulkan_->GetPhysicalDeviceProperties(deviceNum).properties.deviceName;
-	}
-
-	if (vulkan_->CreateDevice(deviceNum) != VK_SUCCESS) {
+	vulkan_->ChooseDevice(vulkan_->GetBestPhysicalDevice());
+	if (vulkan_->CreateDevice() != VK_SUCCESS) {
 		*error_message = vulkan_->InitError();
 		delete vulkan_;
 		vulkan_ = nullptr;
 		return false;
 	}
-
-	vulkan_->SetCbGetDrawSize([window]() {
-		int w=1,h=1;
-		SDL_Vulkan_GetDrawableSize(window, &w, &h);
-		return VkExtent2D {(uint32_t)w, (uint32_t)h};
-	});
 
 	SDL_SysWMinfo sys_info{};
 	SDL_VERSION(&sys_info.version); //Set SDL version
@@ -113,34 +104,19 @@ bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, in
 		break;
 #endif
 #endif
-#if defined(VK_USE_PLATFORM_DISPLAY_KHR)
-	case SDL_SYSWM_KMSDRM:
-		/*
-		There is no problem passing null for the next two arguments, and reinit will be called later
-		huangzihan china
-		*/
-		vulkan_->InitSurface(WINDOWSYSTEM_DISPLAY, nullptr, nullptr);
-		break;
-#endif
 	default:
 		fprintf(stderr, "Vulkan subsystem %d not supported\n", sys_info.subsystem);
 		exit(1);
 		break;
 	}
 
-	bool useMultiThreading = g_Config.bRenderMultiThreading;
-	if (g_Config.iInflightFrames == 1) {
-		useMultiThreading = false;
-	}
-	draw_ = Draw::T3DCreateVulkanContext(vulkan_, useMultiThreading);
-
-	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
-	if (!vulkan_->InitSwapchain(presentMode)) {
+	if (!vulkan_->InitSwapchain()) {
 		*error_message = vulkan_->InitError();
 		Shutdown();
 		return false;
 	}
 
+	draw_ = Draw::T3DCreateVulkanContext(vulkan_, false);
 	SetGPUBackend(GPUBackend::VULKAN);
 	bool success = draw_->CreatePresets();
 	_assert_(success);
@@ -148,6 +124,7 @@ bool SDLVulkanGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, in
 
 	renderManager_ = (VulkanRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 	renderManager_->SetInflightFrames(g_Config.iInflightFrames);
+
 	return true;
 }
 
@@ -168,11 +145,9 @@ void SDLVulkanGraphicsContext::Shutdown() {
 
 void SDLVulkanGraphicsContext::Resize() {
 	draw_->HandleEvent(Draw::Event::LOST_BACKBUFFER, vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
-	// NOTE: Removing DestroySwapchain here causes a double re-create on MacOS with MoltenVK, for some reason.
-	// It's like passing on oldSwapchain doesn't really work as expected.
 	vulkan_->DestroySwapchain();
-	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
-	vulkan_->InitSwapchain(presentMode);
+	vulkan_->UpdateFlags(FlagsFromConfig());
+	vulkan_->InitSwapchain();
 	draw_->HandleEvent(Draw::Event::GOT_BACKBUFFER, vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
 }
 

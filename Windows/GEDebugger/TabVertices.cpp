@@ -15,10 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "Common/CommonWindows.h"
 #include <commctrl.h>
 #include "Common/CommonTypes.h"
-#include "Common/Data/Encoding/Utf8.h"
 #include "Common/StringUtils.h"
 #include "Core/System.h"
 #include "Windows/resource.h"
@@ -32,7 +30,6 @@
 #include "GPU/Common/GPUDebugInterface.h"
 #include "GPU/Debugger/Breakpoints.h"
 #include "GPU/Debugger/Stepping.h"
-#include "GPU/Debugger/State.h"
 
 static const GenericListViewColumn vertexListCols[] = {
 	{ L"X", 0.1f },
@@ -49,6 +46,18 @@ static const GenericListViewColumn vertexListCols[] = {
 
 GenericListViewDef vertexListDef = {
 	vertexListCols,	ARRAY_SIZE(vertexListCols),	NULL,	false
+};
+
+enum VertexListCols {
+	VERTEXLIST_COL_X,
+	VERTEXLIST_COL_Y,
+	VERTEXLIST_COL_Z,
+	VERTEXLIST_COL_U,
+	VERTEXLIST_COL_V,
+	VERTEXLIST_COL_COLOR,
+	VERTEXLIST_COL_NX,
+	VERTEXLIST_COL_NY,
+	VERTEXLIST_COL_NZ,
 };
 
 static const GenericListViewColumn matrixListCols[] = {
@@ -127,7 +136,7 @@ CtrlVertexList::~CtrlVertexList() {
 	delete decoder;
 }
 
-void CtrlVertexList::GetColumnText(wchar_t *dest, size_t destSize, int row, int col) {
+void CtrlVertexList::GetColumnText(wchar_t *dest, int row, int col) {
 	if (row < 0 || row >= rowCount_ ) {
 		wcscpy(dest, L"Invalid");
 		return;
@@ -135,24 +144,133 @@ void CtrlVertexList::GetColumnText(wchar_t *dest, size_t destSize, int row, int 
 
 	if (!indices.empty()) {
 		if (row >= (int)indices.size()) {
-			swprintf(dest, destSize, L"Invalid index %d", row);
+			swprintf(dest, 255, L"Invalid indice %d", row);
 			return;
 		}
 		row = indices[row];
 	}
 
-	char temp[256];
 	if (raw_) {
-		FormatVertColRaw(decoder, temp, sizeof(temp), row, col);
+		FormatVertColRaw(dest, row, col);
 	} else {
 		if (row >= (int)vertices.size()) {
-			swprintf(dest, destSize, L"Invalid vertex %d", row);
+			swprintf(dest, 255, L"Invalid vertex %d", row);
 			return;
 		}
 
-		FormatVertCol(temp, sizeof(temp), vertices[row], col);
+		FormatVertCol(dest, vertices[row], col);
 	}
-	ConvertUTF8ToWString(dest, destSize, temp);
+}
+
+void CtrlVertexList::FormatVertCol(wchar_t *dest, const GPUDebugVertex &vert, int col) {
+	switch (col) {
+	case VERTEXLIST_COL_X: swprintf(dest, 255, L"%f", vert.x); break;
+	case VERTEXLIST_COL_Y: swprintf(dest, 255, L"%f", vert.y); break;
+	case VERTEXLIST_COL_Z: swprintf(dest, 255, L"%f", vert.z); break;
+	case VERTEXLIST_COL_U: swprintf(dest, 255, L"%f", vert.u); break;
+	case VERTEXLIST_COL_V: swprintf(dest, 255, L"%f", vert.v); break;
+	case VERTEXLIST_COL_COLOR:
+		swprintf(dest, 255, L"%02x%02x%02x%02x", vert.c[0], vert.c[1], vert.c[2], vert.c[3]);
+		break;
+	case VERTEXLIST_COL_NX: swprintf(dest, 255, L"%f", vert.nx); break;
+	case VERTEXLIST_COL_NY: swprintf(dest, 255, L"%f", vert.ny); break;
+	case VERTEXLIST_COL_NZ: swprintf(dest, 255, L"%f", vert.nz); break;
+
+	default:
+		wcscpy(dest, L"Invalid");
+		break;
+	}
+}
+
+void CtrlVertexList::FormatVertColRaw(wchar_t *dest, int row, int col) {
+	auto memLock = Memory::Lock();
+	if (!PSP_IsInited()) {
+		wcscpy(dest, L"Invalid");
+		return;
+	}
+
+	// We could use the vertex decoder and reader, but those already do some minor adjustments.
+	// There's only a few values - let's just go after them directly.
+	const u8 *vert = Memory::GetPointer(gpuDebug->GetVertexAddress()) + row * decoder->size;
+	const u8 *pos = vert + decoder->posoff;
+	const u8 *tc = vert + decoder->tcoff;
+	const u8 *color = vert + decoder->coloff;
+	const u8 *norm = vert + decoder->nrmoff;
+
+	switch (col) {
+	case VERTEXLIST_COL_X:
+		FormatVertColRawType(dest, pos, decoder->pos, 0);
+		break;
+	case VERTEXLIST_COL_Y:
+		FormatVertColRawType(dest, pos, decoder->pos, 1);
+		break;
+	case VERTEXLIST_COL_Z:
+		FormatVertColRawType(dest, pos, decoder->pos, 2);
+		break;
+	case VERTEXLIST_COL_U:
+		FormatVertColRawType(dest, tc, decoder->tc, 0);
+		break;
+	case VERTEXLIST_COL_V:
+		FormatVertColRawType(dest, tc, decoder->tc, 1);
+		break;
+	case VERTEXLIST_COL_COLOR:
+		FormatVertColRawColor(dest, color, decoder->col);
+		break;
+
+	case VERTEXLIST_COL_NX: FormatVertColRawType(dest, norm, decoder->nrm, 0); break;
+	case VERTEXLIST_COL_NY: FormatVertColRawType(dest, norm, decoder->nrm, 1); break;
+	case VERTEXLIST_COL_NZ: FormatVertColRawType(dest, norm, decoder->nrm, 2); break;
+
+	default:
+		wcscpy(dest, L"Invalid");
+		break;
+	}
+}
+
+void CtrlVertexList::FormatVertColRawType(wchar_t *dest, const void *data, int type, int offset) {
+	switch (type) {
+	case 0:
+		wcscpy(dest, L"-");
+		break;
+
+	case 1: // 8-bit
+		swprintf(dest, 255, L"%02x", ((const u8 *)data)[offset]);
+		break;
+
+	case 2: // 16-bit
+		swprintf(dest, 255, L"%04x", ((const u16_le *)data)[offset]);
+		break;
+
+	case 3: // float
+		swprintf(dest, 255, L"%f", ((const float *)data)[offset]);
+		break;
+
+	default:
+		wcscpy(dest, L"Invalid");
+		break;
+	}
+}
+
+void CtrlVertexList::FormatVertColRawColor(wchar_t *dest, const void *data, int type) {
+	switch (type) {
+	case GE_VTYPE_COL_NONE >> GE_VTYPE_COL_SHIFT:
+		wcscpy(dest, L"-");
+		break;
+
+	case GE_VTYPE_COL_565 >> GE_VTYPE_COL_SHIFT:
+	case GE_VTYPE_COL_5551 >> GE_VTYPE_COL_SHIFT:
+	case GE_VTYPE_COL_4444 >> GE_VTYPE_COL_SHIFT:
+		swprintf(dest, 255, L"%04x", *(const u16_le *)data);
+		break;
+
+	case GE_VTYPE_COL_8888 >> GE_VTYPE_COL_SHIFT:
+		swprintf(dest, 255, L"%08x", *(const u32_le *)data);
+		break;
+
+	default:
+		wcscpy(dest, L"Invalid");
+		break;
+	}
 }
 
 int CtrlVertexList::GetRowCount() {
@@ -168,15 +286,26 @@ int CtrlVertexList::GetRowCount() {
 
 	// TODO: Maybe there are smarter ways?  Also, is this the best place to recalc?
 	auto state = gpuDebug->GetGState();
+	rowCount_ = state.prim & 0xFFFF;
 
-	rowCount_ = gpuDebug->GetCurrentPrimCount();
-	if (!gpuDebug->GetCurrentDrawAsDebugVertices(rowCount_, vertices, indices)) {
+	// Override if we're on a prim command.
+	DisplayList list;
+	if (gpuDebug->GetCurrentDisplayList(list)) {
+		u32 cmd = Memory::Read_U32(list.pc);
+		if ((cmd >> 24) == GE_CMD_PRIM) {
+			rowCount_ = cmd & 0xFFFF;
+		} else if ((cmd >> 24) == GE_CMD_BEZIER || (cmd >> 24) == GE_CMD_SPLINE) {
+			u32 u = (cmd & 0x00FF) >> 0;
+			u32 v = (cmd & 0xFF00) >> 8;
+			rowCount_ = u * v;
+		}
+	}
+
+	if (!gpuDebug->GetCurrentSimpleVertices(rowCount_, vertices, indices)) {
 		rowCount_ = 0;
 	}
 	VertexDecoderOptions options{};
-	// TODO: Maybe an option?
-	u32 vertTypeID = GetVertTypeID(state.vertType, state.getUVGenMode(), true);
-	decoder->SetVertexType(vertTypeID, options);
+	decoder->SetVertexType(state.vertType, options);
 	return rowCount_;
 }
 
@@ -328,7 +457,7 @@ bool CtrlMatrixList::GetValue(const GPUgstate &state, int row, int col, float &v
 	return true;
 }
 
-void CtrlMatrixList::GetColumnText(wchar_t *dest, size_t destSize, int row, int col) {
+void CtrlMatrixList::GetColumnText(wchar_t *dest, int row, int col) {
 	if (col == MATRIXLIST_COL_BREAKPOINT) {
 		wcscpy(dest, L" ");
 		return;
@@ -421,52 +550,23 @@ static constexpr MatrixCmdPair matrixCmds[] = {
 	{ MATRIXLIST_ROW_COUNT, GE_CMD_NOP },
 };
 
-static const MatrixCmdPair *FindCmdPair(int row) {
+void CtrlMatrixList::ToggleBreakpoint(int row) {
 	for (int i = 0; i < ARRAY_SIZE(matrixCmds) - 1; ++i) {
 		if (row < matrixCmds[i].row || row >= matrixCmds[i + 1].row)
 			continue;
 
-		return &matrixCmds[i];
-	}
-	return nullptr;
-}
+		// Okay, this command is in range.  Toggle the actual breakpoint.
+		auto &info = matrixCmds[i];
+		bool state = !GPUBreakpoints::IsCmdBreakpoint(info.cmd);
+		if (state)
+			GPUBreakpoints::AddCmdBreakpoint(info.cmd);
+		else
+			GPUBreakpoints::RemoveCmdBreakpoint(info.cmd);
 
-void CtrlMatrixList::ToggleBreakpoint(int row) {
-	const MatrixCmdPair *info = FindCmdPair(row);
-	if (!info)
-		return;
-
-	// Okay, this command is in range.  Toggle the actual breakpoint.
-	bool state = !gpuDebug->GetBreakpoints()->IsCmdBreakpoint(info->cmd);
-	if (state) {
-		gpuDebug->GetBreakpoints()->AddCmdBreakpoint(info->cmd);
-	} else {
-		if (gpuDebug->GetBreakpoints()->GetCmdBreakpointCond(info->cmd, nullptr)) {
-			int ret = MessageBox(GetHandle(), L"This breakpoint has a custom condition.\nDo you want to remove it?", L"Confirmation", MB_YESNO);
-			if (ret != IDYES)
-				return;
+		for (int r = matrixCmds[i].row; r < matrixCmds[i + 1].row; ++r) {
+			SetItemState(r, state ? 1 : 0);
 		}
-		gpuDebug->GetBreakpoints()->RemoveCmdBreakpoint(info->cmd);
 	}
-
-	for (int r = info->row; r < (info + 1)->row; ++r) {
-		SetItemState(r, state ? 1 : 0);
-	}
-}
-
-void CtrlMatrixList::PromptBreakpointCond(int row) {
-	const MatrixCmdPair *info = FindCmdPair(row);
-	if (!info)
-		return;
-
-	std::string expression;
-	gpuDebug->GetBreakpoints()->GetCmdBreakpointCond(info->cmd, &expression);
-	if (!InputBox_GetString(GetModuleHandle(NULL), GetHandle(), L"Expression", expression, expression))
-		return;
-
-	std::string error;
-	if (!gpuDebug->GetBreakpoints()->SetCmdBreakpointCond(info->cmd, expression, &error))
-		MessageBox(GetHandle(), ConvertUTF8ToWString(error).c_str(), L"Invalid expression", MB_OK | MB_ICONEXCLAMATION);
 }
 
 void CtrlMatrixList::OnDoubleClick(int row, int column) {
@@ -490,7 +590,7 @@ void CtrlMatrixList::OnDoubleClick(int row, int column) {
 	if (sscanf(strvalue.c_str(), "%f", &val) == 1) {
 		auto prevState = gpuDebug->GetGState();
 		auto setCmdValue = [&](u32 op) {
-			SendMessage(GetParent(GetParent(GetHandle())), WM_GEDBG_SETCMDWPARAM, op, 0);
+			SendMessage(GetParent(GetParent(GetHandle())), WM_GEDBG_SETCMDWPARAM, op, NULL);
 		};
 
 		union {
@@ -524,22 +624,16 @@ void CtrlMatrixList::OnDoubleClick(int row, int column) {
 void CtrlMatrixList::OnRightClick(int row, int column, const POINT &point) {
 	if (row >= GetRowCount())
 		return;
-	const MatrixCmdPair *info = FindCmdPair(row);
 
 	POINT screenPt(point);
 	ClientToScreen(GetHandle(), &screenPt);
 
 	HMENU subMenu = GetContextMenu(ContextMenuID::GEDBG_MATRIX);
 	SetMenuDefaultItem(subMenu, ID_REGLIST_CHANGE, FALSE);
-	EnableMenuItem(subMenu, ID_GEDBG_SETCOND, info && gpuDebug->GetBreakpoints()->IsCmdBreakpoint(info->cmd) ? MF_ENABLED : MF_GRAYED);
 
 	switch (TriggerContextMenu(ContextMenuID::GEDBG_MATRIX, GetHandle(), ContextPoint::FromClient(point))) {
 	case ID_DISASM_TOGGLEBREAKPOINT:
 		ToggleBreakpoint(row);
-		break;
-
-	case ID_GEDBG_SETCOND:
-		PromptBreakpointCond(row);
 		break;
 
 	case ID_DISASM_COPYINSTRUCTIONDISASM:

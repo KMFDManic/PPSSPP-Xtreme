@@ -22,7 +22,7 @@ import java.util.List;
 @SuppressWarnings("deprecation")
 class CameraHelper {
 	private static final String TAG = CameraHelper.class.getSimpleName();
-	private final Display mDisplay;
+	private Display mDisplay;
 	private int mTargetWidth = 0;
 	private int mTargetHeight = 0;
 	private Camera mCamera = null;
@@ -31,7 +31,7 @@ class CameraHelper {
 	private int mCameraOrientation = 0;
 	private Camera.Size mPreviewSize = null;
 	private long mLastFrameTime = 0;
-	private final SurfaceTexture mSurfaceTexture;
+	private SurfaceTexture mSurfaceTexture;
 
 	private static boolean firstRotation = true;
 
@@ -39,7 +39,7 @@ class CameraHelper {
 		int displayRotation = mDisplay.getRotation();
 		int displayDegrees = 0;
 		switch (displayRotation) {
-			case Surface.ROTATION_0:   /* displayDegrees = 0; */ break;
+			case Surface.ROTATION_0:   displayDegrees =   0; break;
 			case Surface.ROTATION_90:  displayDegrees =  90; break;
 			case Surface.ROTATION_180: displayDegrees = 180; break;
 			case Surface.ROTATION_270: displayDegrees = 270; break;
@@ -52,8 +52,6 @@ class CameraHelper {
 	}
 
 	// Does not work if the source is smaller than the destination!
-	// TODO: Should probably move this to C++... Maybe even share the full preview image with C++
-	// and do all the reordering and JPG compression on the C++ side.
 	static byte[] rotateNV21(final byte[] input, final int inWidth, final int inHeight,
 							 final int outWidth, final int outHeight, final int rotation) {
 		if (firstRotation) {
@@ -125,12 +123,12 @@ class CameraHelper {
 		return output;
 	}
 
-	private final Camera.PreviewCallback mPreviewCallback = new Camera.PreviewCallback() {
+	private Camera.PreviewCallback mPreviewCallback = new Camera.PreviewCallback() {
 		@Override
 		public void onPreviewFrame(byte[] previewData, Camera camera) {
-			// throttle at 16 ms
+			// throttle at 66 ms
 			long currentTime = SystemClock.elapsedRealtime();
-			if (currentTime - mLastFrameTime < 16) {
+			if (currentTime - mLastFrameTime < 66) {
 				return;
 			}
 			mLastFrameTime = currentTime;
@@ -148,7 +146,7 @@ class CameraHelper {
 			try {
 				baos.close();
 			} catch (IOException e) {
-				Log.e(TAG,"Camera I/O exception: " + e);
+				e.printStackTrace();
 			}
 		}
 	};
@@ -161,9 +159,6 @@ class CameraHelper {
 
 	static ArrayList<String> getDeviceList() {
 		ArrayList<String> deviceList = new ArrayList<>();
-		if (PpssppActivity.isVRDevice()) {
-			return deviceList;
-		}
 		int nrCam = Camera.getNumberOfCameras();
 		for (int index = 0; index < nrCam; index++) {
 			try {
@@ -172,7 +167,7 @@ class CameraHelper {
 				String devName = index + ":" + (info.facing == Camera.CameraInfo.CAMERA_FACING_BACK ? "Back Camera" : "Front Camera");
 				deviceList.add(devName);
 			} catch (Exception e) {
-				Log.e(TAG, "Failed to get camera info: " + e);
+				Log.e(TAG, "Failed to get camera info: " + e.toString());
 			}
 		}
 		return deviceList;
@@ -226,35 +221,19 @@ class CameraHelper {
 				throw new Exception("Couldn't find a viable preview size");
 			}
 
-			Log.i(TAG, "setPreviewSize(" + mPreviewSize.width + ", " + mPreviewSize.height + ")");
+			Log.d(TAG, "setPreviewSize(" + mPreviewSize.width + ", " + mPreviewSize.height + ")");
 			param.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
 
 			// Set preview FPS
+			int[] fps;
 			List<int[]> previewFps = param.getSupportedPreviewFpsRange();
-
-			int idealRate = 30000;
-
-			int bestIndex = -1;
-			int bestDistance = 0;  // bestIndex is -1 so irrelevant what the initial value is here.
-
+			fps = previewFps.get(0);
 			for (int i = 0; i < previewFps.size(); i++) {
-				int rangeStart = previewFps.get(i)[0];
-				int rangeEnd = previewFps.get(i)[1];
-				int distance = Integer.max(Math.abs(rangeStart - idealRate), Math.abs(rangeEnd - idealRate));
-
-				if (bestIndex == -1 || distance < bestDistance) {
-					bestDistance = distance;
-					bestIndex = i;
-				}
 				Log.d(TAG, "getSupportedPreviewFpsRange[" + i + "]: " + previewFps.get(i)[0] + " " + previewFps.get(i)[1]);
+				if (previewFps.get(i)[0] <= fps[0] && previewFps.get(i)[1] <= fps[1]) {
+					fps = previewFps.get(i);
+				}
 			}
-
-			if (bestIndex == -1) {
-				// This is pretty much impossible.
-				throw new Exception("Couldn't find a viable preview FPS");
-			}
-
-			int[] fps = previewFps.get(bestIndex);
 			Log.d(TAG, "setPreviewFpsRange(" + fps[0] + ", " + fps[1] + ")");
 			param.setPreviewFpsRange(fps[0], fps[1]);
 
@@ -264,7 +243,7 @@ class CameraHelper {
 			mCamera.startPreview();
 			mIsCameraRunning = true;
 		} catch (Exception e) {
-			Log.e(TAG, "Cannot start camera: " + e);
+			Log.e(TAG, "Cannot start camera: " + e.toString());
 		}
 	}
 

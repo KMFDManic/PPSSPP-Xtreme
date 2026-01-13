@@ -278,22 +278,6 @@ inline OpArg MRegSum(X64Reg base, X64Reg offset)
 	return MComplex(base, offset, 1, 0);
 }
 
-template <typename T>
-inline bool Accessible(const T *t1, const T *t2) {
-	ptrdiff_t diff = (const uint8_t *)t1 - (const uint8_t *)t2;
-	if (diff < 0) {
-		diff = -diff;
-	}
-	return diff < (ptrdiff_t)0x7FFFFFE0;
-}
-
-template <typename T>
-inline OpArg MAccessibleDisp(X64Reg r, const T *tbase, const T *t) {
-	_assert_(Accessible(tbase, t));
-	ptrdiff_t diff = (const uint8_t *)t - (const uint8_t *)tbase;
-	return MDisp(r, (int)diff);
-}
-
 inline OpArg Imm8 (u8 imm)  {return OpArg(imm, SCALE_IMM8);}
 inline OpArg Imm16(u16 imm) {return OpArg(imm, SCALE_IMM16);} //rarely used
 inline OpArg Imm32(u32 imm) {return OpArg(imm, SCALE_IMM32);}
@@ -399,7 +383,7 @@ public:
 	XEmitter(u8 *code_ptr) { code = code_ptr; flags_locked = false; }
 	virtual ~XEmitter() {}
 
-	void WriteModRM(int mod, int reg, int rm);
+	void WriteModRM(int mod, int rm, int reg);
 	void WriteSIB(int scale, int index, int base);
 
 	void SetCodePointer(u8 *ptr, u8 *writePtr);
@@ -409,10 +393,6 @@ public:
 	const u8 *AlignCode4();
 	const u8 *AlignCode16();
 	const u8 *AlignCodePage();
-
-	// Nops until the code pointer is 16-byte aligned. Good for loops.
-	const u8 *NopAlignCode16();
-
 	u8 *GetWritableCodePtr();
 
 	void LockFlags() { flags_locked = true; }
@@ -687,19 +667,17 @@ public:
 
 	// SSE4: Further horizontal operations - dot products. These are weirdly flexible, the arg contains both a read mask and a write "mask".
 	void DPPD(X64Reg dest, OpArg src, u8 arg);
-#endif
 
-	// SSE4: Insert and extract for floats.
-	// Note: insert from memory or an XMM.
-	void INSERTPS(X64Reg dest, OpArg arg, u8 dstsubreg, u8 srcsubreg = 0, u8 zmask = 0);
-	// Extract to memory or GPR.
-	void EXTRACTPS(OpArg dest, X64Reg arg, u8 subreg);
+	// These are probably useful for VFPU emulation.
+	void INSERTPS(X64Reg dest, OpArg src, u8 arg);
+	void EXTRACTPS(OpArg dest, X64Reg src, u8 arg);
+#endif
 
 	// SSE3: Horizontal operations in SIMD registers. Very slow! shufps-based code beats it handily on Ivy.
 	void HADDPS(X64Reg dest, OpArg src);
 
 	// SSE4: Further horizontal operations - dot products. These are weirdly flexible, the arg contains both a read mask and a write "mask".
-	void DPPS(X64Reg dest, OpArg arg, u8 mask);
+	void DPPS(X64Reg dest, OpArg src, u8 arg);
 
 	void UNPCKLPS(X64Reg dest, OpArg src);
 	void UNPCKHPS(X64Reg dest, OpArg src);
@@ -750,10 +728,6 @@ public:
 	void MOVQ_xmm(X64Reg dest, OpArg arg);
 	void MOVD_xmm(const OpArg &arg, X64Reg src);
 	void MOVQ_xmm(OpArg arg, X64Reg src);
-
-	// SSE3: Some additional moves.
-	void MOVSHDUP(X64Reg regOp1, OpArg arg);
-	void MOVSLDUP(X64Reg regOp1, OpArg arg);
 
 	// SSE/SSE2: Generates a mask from the high bits of the components of the packed register in question.
 	void MOVMSKPS(X64Reg dest, OpArg arg);
@@ -1045,7 +1019,7 @@ public:
 	// Can only extract from the low 128 bits.
 	void VEXTRACTPS(OpArg arg, X64Reg regOp1, u8 subreg);
 	// Can only insert into the low 128 bits, zeros upper bits.  Inserts from XMM.
-	void VINSERTPS(X64Reg regOp1, X64Reg regOp2, OpArg arg, u8 dstsubreg, u8 srcsubreg = 0, u8 zmask = 0);
+	void VINSERTPS(X64Reg regOp1, X64Reg regOp2, OpArg arg, u8 subreg);
 	void VLDDQU(int bits, X64Reg regOp1, OpArg arg);
 	void VMOVAPS(int bits, X64Reg regOp1, OpArg arg);
 	void VMOVAPD(int bits, X64Reg regOp1, OpArg arg);
@@ -1066,11 +1040,11 @@ public:
 	void VMOVLHPS(X64Reg regOp1, X64Reg regOp2, X64Reg arg);
 	void VMOVHPS(X64Reg regOp1, X64Reg regOp2, OpArg arg);
 	void VMOVHPS(OpArg arg, X64Reg regOp1);
-	void VMOVHPD(X64Reg regOp1, X64Reg regOp2, OpArg arg);
+	void VMOVHPD(X64Reg regOp2, X64Reg regOp1, OpArg arg);
 	void VMOVHPD(OpArg arg, X64Reg regOp1);
-	void VMOVLPS(X64Reg regOp1, X64Reg regOp2, OpArg arg);
+	void VMOVLPS(X64Reg regOp2, X64Reg regOp1, OpArg arg);
 	void VMOVLPS(OpArg arg, X64Reg regOp1);
-	void VMOVLPD(X64Reg regOp1, X64Reg regOp2, OpArg arg);
+	void VMOVLPD(X64Reg regOp2, X64Reg regOp1, OpArg arg);
 	void VMOVLPD(OpArg arg, X64Reg regOp1);
 	void VMOVMSKPS(int bits, X64Reg genReg, X64Reg xmmReg);
 	void VMOVMSKPD(int bits, X64Reg genReg, X64Reg xmmReg);

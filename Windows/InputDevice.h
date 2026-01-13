@@ -19,53 +19,20 @@
 
 #include <list>
 #include <memory>
-#include <atomic>
-#include <thread>
 
 #include "Common/CommonTypes.h"
 
 class InputDevice {
 public:
-	virtual ~InputDevice() = default;
+	virtual ~InputDevice() {
+	}
 
-	virtual void Init() {}
-	virtual void Shutdown() {}
-	virtual bool HasAccelerometer() const { return false; }
-
-	enum { UPDATESTATE_SKIP_PAD = 0x1234, UPDATESTATE_NO_SLEEP = 0x2345};
+	enum { UPDATESTATE_SKIP_PAD = 0x1234};
 	virtual int UpdateState() = 0;
+
+	static void BeginPolling();
+	static void StopPolling();
+
+	static void GainFocus();
+	static void LoseFocus();
 };
-
-class InputManager {
-public:
-	void BeginPolling();
-	void StopPolling();
-
-	void Shutdown() {
-		devices_.clear();
-	}
-
-	void GainFocus() {
-		focused_.store(true, std::memory_order_relaxed);
-	}
-	void LoseFocus() {
-		focused_.store(false, std::memory_order_relaxed);
-	}
-
-	void AddDevice(InputDevice *device) {
-		devices_.emplace_back(std::unique_ptr<InputDevice>(device));
-	}
-
-	bool AnyAccelerometer() const;
-
-private:
-	void InputThread();
-
-	std::vector<std::unique_ptr<InputDevice>> devices_;
-
-	std::atomic<bool> runThread_;
-	std::thread inputThread_;
-	std::atomic<bool> focused_;
-};
-
-extern InputManager g_InputManager;

@@ -122,7 +122,7 @@ static const std::vector<Draw::ShaderSource> vsAdrenoLogicTest = {
 	"} myBufferVals;\n"
 	"layout (location = 0) in vec4 pos;\n"
 	"layout (location = 1) in vec4 inColor;\n"
-	"layout (location = 3) in vec2 inTexCoord;\n"
+	"layout (location = 2) in vec2 inTexCoord;\n"
 	"layout (location = 0) out vec4 outColor;\n"
 	"layout (location = 1) out highp vec2 outTexCoord;\n"
 	"out gl_PerVertex { vec4 gl_Position; };\n"
@@ -219,7 +219,7 @@ static const std::vector<Draw::ShaderSource> vsFlat = {
 	"} myBufferVals;\n"
 	"layout (location = 0) in vec4 pos;\n"
 	"layout (location = 1) in vec4 inColor;\n"
-	"layout (location = 3) in vec2 inTexCoord;\n"
+	"layout (location = 2) in vec2 inTexCoord;\n"
 	"layout (location = 0) flat out lowp vec4 outColor;\n"
 	"layout (location = 1) out highp vec2 outTexCoord;\n"
 	"out gl_PerVertex { vec4 gl_Position; };\n"
@@ -230,8 +230,6 @@ static const std::vector<Draw::ShaderSource> vsFlat = {
 	"}\n"
 	}
 };
-
-static_assert(Draw::SEM_TEXCOORD0 == 3, "Semantic shader hardcoded in glsl above.");
 
 GPUDriverTestScreen::GPUDriverTestScreen() {
 	using namespace Draw;
@@ -295,23 +293,23 @@ void GPUDriverTestScreen::CreateViews() {
 
 	// Don't bother with views for now.
 	using namespace UI;
-	auto di = GetI18NCategory(I18NCat::DIALOG);
-	auto cr = GetI18NCategory(I18NCat::PSPCREDITS);
+	auto di = GetI18NCategory("Dialog");
+	auto cr = GetI18NCategory("PSPCredits");
 
 	AnchorLayout *anchor = new AnchorLayout();
 	root_ = anchor;
 
-	tabHolder_ = new TabHolder(ORIENT_HORIZONTAL, 30.0f, TabHolderFlags::Default, nullptr, nullptr, new AnchorLayoutParams(FILL_PARENT, FILL_PARENT, Centering::None));
+	tabHolder_ = new TabHolder(ORIENT_HORIZONTAL, 30.0f, new AnchorLayoutParams(FILL_PARENT, FILL_PARENT, false));
 	anchor->Add(tabHolder_);
-	tabHolder_->AddTab("Discard", ImageID::invalid(), new LinearLayout(ORIENT_VERTICAL));
-	tabHolder_->AddTab("Shader", ImageID::invalid(), new LinearLayout(ORIENT_VERTICAL));
+	tabHolder_->AddTab("Discard", new LinearLayout(ORIENT_VERTICAL));
+	tabHolder_->AddTab("Shader", new LinearLayout(ORIENT_VERTICAL));
 
-	Choice *back = new Choice(di->T("Back"), ImageID("I_NAVIGATE_BACK"), new AnchorLayoutParams(190, WRAP_CONTENT, 10, NONE, NONE, 10));
+	Choice *back = new Choice(di->T("Back"), "", false, new AnchorLayoutParams(100, WRAP_CONTENT, 10, NONE, NONE, 10));
 	back->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 	anchor->Add(back);
 }
 
-void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
+void GPUDriverTestScreen::DiscardTest() {
 	using namespace UI;
 	using namespace Draw;
 	if (!discardWriteDepthStencil_) {
@@ -331,10 +329,13 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 		dsDesc.depthWriteEnabled = true;
 		dsDesc.depthCompare = Comparison::ALWAYS;
 		dsDesc.stencilEnabled = true;
-		dsDesc.stencil.compareOp = Comparison::ALWAYS;
-		dsDesc.stencil.passOp = StencilOp::REPLACE;
-		dsDesc.stencil.failOp = StencilOp::REPLACE;  // These two shouldn't matter, because the test that fails is discard, not stencil.
-		dsDesc.stencil.depthFailOp = StencilOp::REPLACE;
+		dsDesc.front.compareMask = 0xFF;
+		dsDesc.front.compareOp = Comparison::ALWAYS;
+		dsDesc.front.passOp = StencilOp::REPLACE;
+		dsDesc.front.failOp = StencilOp::REPLACE;  // These two shouldn't matter, because the test that fails is discard, not stencil.
+		dsDesc.front.depthFailOp = StencilOp::REPLACE;
+		dsDesc.front.writeMask = 0xFF;
+		dsDesc.back = dsDesc.front;
 		DepthStencilState *depthStencilWrite = draw->CreateDepthStencilState(dsDesc);
 
 		// Write only depth.
@@ -352,27 +353,33 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 		dsDesc.depthTestEnabled = true;
 		dsDesc.stencilEnabled = true;
 		dsDesc.depthCompare = Comparison::ALWAYS;
-		dsDesc.stencil.compareOp = Comparison::EQUAL;
-		dsDesc.stencil.failOp = StencilOp::KEEP;
-		dsDesc.stencil.depthFailOp = StencilOp::KEEP;
+		dsDesc.front.compareOp = Comparison::EQUAL;
+		dsDesc.front.failOp = StencilOp::KEEP;
+		dsDesc.front.depthFailOp = StencilOp::KEEP;
+		dsDesc.front.writeMask = 0x0;
+		dsDesc.back = dsDesc.front;
 		DepthStencilState *stencilEqualDepthAlways = draw->CreateDepthStencilState(dsDesc);
 
 		dsDesc.depthTestEnabled = false;
-		dsDesc.stencil.compareOp = Comparison::EQUAL;
+		dsDesc.front.compareOp = Comparison::EQUAL;
+		dsDesc.back = dsDesc.front;
 		DepthStencilState *stencilEqual = draw->CreateDepthStencilState(dsDesc);
 
 		dsDesc.depthTestEnabled = true;
 		dsDesc.depthCompare = Comparison::ALWAYS;
-		dsDesc.stencil.compareOp = Comparison::NOT_EQUAL;
+		dsDesc.front.compareOp = Comparison::NOT_EQUAL;
+		dsDesc.back = dsDesc.front;
 		DepthStencilState *stenciNotEqualDepthAlways = draw->CreateDepthStencilState(dsDesc);
 
 		dsDesc.depthTestEnabled = false;
-		dsDesc.stencil.compareOp = Comparison::NOT_EQUAL;
+		dsDesc.front.compareOp = Comparison::NOT_EQUAL;
+		dsDesc.back = dsDesc.front;
 		DepthStencilState *stencilNotEqual = draw->CreateDepthStencilState(dsDesc);
 
 		dsDesc.stencilEnabled = true;
 		dsDesc.depthTestEnabled = true;
-		dsDesc.stencil.compareOp = Comparison::ALWAYS;
+		dsDesc.front.compareOp = Comparison::ALWAYS;
+		dsDesc.back = dsDesc.front;
 		dsDesc.depthCompare = Comparison::LESS_EQUAL;
 		DepthStencilState *stencilAlwaysDepthTestLessEqual = draw->CreateDepthStencilState(dsDesc);
 		dsDesc.depthCompare = Comparison::GREATER;
@@ -392,39 +399,39 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 			{ draw->GetVshaderPreset(VS_TEXTURE_COLOR_2D), discardFragShader_ },
 			inputLayout, depthStencilWrite, blendOffNoColor, rasterNoCull, &vsColBufDesc,
 		};
-		discardWriteDepthStencil_ = draw->CreateGraphicsPipeline(discardDesc, "test");
+		discardWriteDepthStencil_ = draw->CreateGraphicsPipeline(discardDesc);
 		discardDesc.depthStencil = depthWrite;
-		discardWriteDepth_ = draw->CreateGraphicsPipeline(discardDesc, "test");
+		discardWriteDepth_ = draw->CreateGraphicsPipeline(discardDesc);
 		discardDesc.depthStencil = stencilWrite;
-		discardWriteStencil_ = draw->CreateGraphicsPipeline(discardDesc, "test");
+		discardWriteStencil_ = draw->CreateGraphicsPipeline(discardDesc);
 
 		PipelineDesc testDesc{
 			Primitive::TRIANGLE_LIST,
 			{ draw->GetVshaderPreset(VS_TEXTURE_COLOR_2D), draw->GetFshaderPreset(FS_TEXTURE_COLOR_2D) },
 			inputLayout, stencilEqual, blendOff, rasterNoCull, &vsColBufDesc,
 		};
-		drawTestStencilEqual_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestStencilEqual_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = stencilEqualDepthAlways;
-		drawTestStencilEqualDepthAlways_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestStencilEqualDepthAlways_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = stencilNotEqual;
-		drawTestStencilNotEqual_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestStencilNotEqual_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = stenciNotEqualDepthAlways;
-		drawTestStencilNotEqualDepthAlways_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestStencilNotEqualDepthAlways_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = stencilAlwaysDepthTestGreater;
-		drawTestStencilAlwaysDepthGreater_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestStencilAlwaysDepthGreater_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = stencilAlwaysDepthTestLessEqual;
-		drawTestStencilAlwaysDepthLessEqual_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestStencilAlwaysDepthLessEqual_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = depthTestGreater;
-		drawTestDepthGreater_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestDepthGreater_ = draw->CreateGraphicsPipeline(testDesc);
 
 		testDesc.depthStencil = depthTestLessEqual;
-		drawTestDepthLessEqual_ = draw->CreateGraphicsPipeline(testDesc, "test");
+		drawTestDepthLessEqual_ = draw->CreateGraphicsPipeline(testDesc);
 
 		inputLayout->Release();
 		blendOff->Release();
@@ -440,6 +447,7 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 		rasterNoCull->Release();
 	}
 
+	UIContext &dc = *screenManager()->getUIContext();
 	Draw::DrawContext *draw = dc.GetDrawContext();
 
 	static const char * const writeModeNames[] = { "Stencil+Depth", "Stencil", "Depth" };
@@ -473,14 +481,14 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 	std::string apiName = screenManager()->getDrawContext()->GetInfoString(InfoField::APINAME);
 	std::string vendor = screenManager()->getDrawContext()->GetInfoString(InfoField::VENDORSTRING);
 	std::string driver = screenManager()->getDrawContext()->GetInfoString(InfoField::DRIVER);
-	dc.DrawText(apiName, layoutBounds.centerX(), 20, 0xFFFFFFFF, ALIGN_CENTER);
-	dc.DrawText(vendor, layoutBounds.centerX(), 60, 0xFFFFFFFF, ALIGN_CENTER);
-	dc.DrawText(driver, layoutBounds.centerX(), 100, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(apiName.c_str(), layoutBounds.centerX(), 20, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(vendor.c_str(), layoutBounds.centerX(), 60, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(driver.c_str(), layoutBounds.centerX(), 100, 0xFFFFFFFF, ALIGN_CENTER);
 	dc.Flush();
 
 	float testW = 170.f;
 	float padding = 20.0f;
-	UI::Style style = dc.GetTheme().itemStyle;
+	UI::Style style = dc.theme->itemStyle;
 
 	float y = 150;
 	for (int j = 0; j < numWriteModes; j++, y += 120.f + padding) {
@@ -498,28 +506,27 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 
 			dc.BeginPipeline(writePipelines[j], samplerNearest_);
 			// Draw the rectangle with stencil value 0, depth 0.1f and the text with stencil 0xFF, depth 0.9. Then set 0xFF as the stencil value and draw the rectangles at depth 0.5.
-
-			draw->SetStencilParams(0, 0xFF, 0xFF);
+			draw->SetStencilRef(0x0);
 			dc.SetCurZ(0.1f);
 			dc.FillRect(UI::Drawable(bgColorBAD), bounds);
 			// test bounds
 			dc.Flush();
 
-			draw->SetStencilParams(0xff, 0xFF, 0xFF);
+			draw->SetStencilRef(0xff);
 			dc.SetCurZ(0.9f);
 			dc.DrawTextRect("TEST OK", bounds, textColorBAD, ALIGN_HCENTER | ALIGN_VCENTER | FLAG_DYNAMIC_ASCII);
 			dc.Flush();
 
 			// Draw rectangle that should result in the text
 			dc.BeginPipeline(testPipeline1[i], samplerNearest_);
-			draw->SetStencilParams(0xff, 0, 0xFF);
+			draw->SetStencilRef(0xff);
 			dc.SetCurZ(0.5f);
 			dc.FillRect(UI::Drawable(textColorOK), bounds);
 			dc.Flush();
 
 			// Draw rectangle that should result in the bg
 			dc.BeginPipeline(testPipeline2[i], samplerNearest_);
-			draw->SetStencilParams(0xff, 0, 0xFF);
+			draw->SetStencilRef(0xff);
 			dc.SetCurZ(0.5f);
 			dc.FillRect(UI::Drawable(bgColorOK), bounds);
 			dc.Flush();
@@ -528,9 +535,10 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 	dc.Flush();
 }
 
-void GPUDriverTestScreen::ShaderTest(UIContext &dc) {
+void GPUDriverTestScreen::ShaderTest() {
 	using namespace Draw;
 
+	UIContext &dc = *screenManager()->getUIContext();
 	Draw::DrawContext *draw = dc.GetDrawContext();
 
 	if (!adrenoLogicDiscardPipeline_) {
@@ -557,14 +565,14 @@ void GPUDriverTestScreen::ShaderTest(UIContext &dc) {
 			{ adrenoLogicDiscardVertShader_, adrenoLogicDiscardFragShader_ },
 			inputLayout, depthStencilOff, blendOff, rasterNoCull, &vsColBufDesc,
 		};
-		adrenoLogicDiscardPipeline_ = draw->CreateGraphicsPipeline(adrenoLogicDiscardDesc, "test");
+		adrenoLogicDiscardPipeline_ = draw->CreateGraphicsPipeline(adrenoLogicDiscardDesc);
 
 		PipelineDesc flatDesc{
 			Primitive::TRIANGLE_LIST,
 			{ flatVertShader_, flatFragShader_ },
 			inputLayout, depthStencilOff, blendOff, rasterNoCull, &vsColBufDesc,
 		};
-		flatShadingPipeline_ = draw->CreateGraphicsPipeline(flatDesc, "test");
+		flatShadingPipeline_ = draw->CreateGraphicsPipeline(flatDesc);
 
 		inputLayout->Release();
 		blendOff->Release();
@@ -579,9 +587,9 @@ void GPUDriverTestScreen::ShaderTest(UIContext &dc) {
 	std::string apiName = screenManager()->getDrawContext()->GetInfoString(InfoField::APINAME);
 	std::string vendor = screenManager()->getDrawContext()->GetInfoString(InfoField::VENDORSTRING);
 	std::string driver = screenManager()->getDrawContext()->GetInfoString(InfoField::DRIVER);
-	dc.DrawText(apiName, layoutBounds.centerX(), 20, 0xFFFFFFFF, ALIGN_CENTER);
-	dc.DrawText(vendor, layoutBounds.centerX(), 60, 0xFFFFFFFF, ALIGN_CENTER);
-	dc.DrawText(driver, layoutBounds.centerX(), 100, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(apiName.c_str(), layoutBounds.centerX(), 20, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(vendor.c_str(), layoutBounds.centerX(), 60, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(driver.c_str(), layoutBounds.centerX(), 100, 0xFFFFFFFF, ALIGN_CENTER);
 	dc.Flush();
 
 	float y = layoutBounds.y + 150;
@@ -616,7 +624,7 @@ void GPUDriverTestScreen::ShaderTest(UIContext &dc) {
 	// Draw rectangle that should be flat shaded
 	dc.BeginPipeline(flatShadingPipeline_, samplerNearest_);
 	// There is a "provoking vertex" difference here between GL and Vulkan when using flat shading. One gets one color, one gets the other.
-	// However, we now use the VK_EXT_provoking_vertex extension to make it match up (and match with the PSP).
+	// Wherever possible we should reconfigure the GL provoking vertex to match Vulkan, probably.
 	dc.DrawImageVGradient(ImageID("I_ICON"), 0xFFFFFFFF, 0xFF808080, bounds);
 	dc.Flush();
 
@@ -627,13 +635,17 @@ void GPUDriverTestScreen::ShaderTest(UIContext &dc) {
 	dc.Flush();
 }
 
-void GPUDriverTestScreen::DrawForeground(UIContext &dc) {
+
+void GPUDriverTestScreen::render() {
+	using namespace Draw;
+	UIScreen::render();
+
 	switch (tabHolder_->GetCurrentTab()) {
 	case 0:
-		DiscardTest(dc);
+		DiscardTest();
 		break;
 	case 1:
-		ShaderTest(dc);
+		ShaderTest();
 		break;
 	}
 }

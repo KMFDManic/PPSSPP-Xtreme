@@ -43,9 +43,8 @@ private:
 	currentDir_t currentDir;
 
 	std::string startingDirectory;
-	mutable std::recursive_mutex lock;  // must be recursive. TODO: fix that
+	std::recursive_mutex lock;  // must be recursive
 
-	// Assumes the lock is held
 	void Reset() {
 		// This used to be 6, probably an attempt to replicate PSP handles.
 		// However, that's an artifact of using psplink anyway...
@@ -58,21 +57,17 @@ public:
 		Reset();
 	}
 
-	// Will replace the existing mount if already exists.
-	void Mount(const std::string &prefix, std::shared_ptr<IFileSystem> system);
+	void Mount(std::string prefix, std::shared_ptr<IFileSystem> system);
+	// Fails if there's not already a file system at prefix.
+	bool Remount(std::string prefix, std::shared_ptr<IFileSystem> system);
 
 	void UnmountAll();
-	void Unmount(const std::string &prefix);
-
-	// Would like to make this const, but...
-	std::vector<MountPoint> &GetMounts() {
-		return fileSystems;
-	}
+	void Unmount(std::string prefix);
 
 	// The pointer returned from these are for temporary usage only. Do not store.
 	IFileSystem *GetSystem(const std::string &prefix);
 	IFileSystem *GetSystemFromFilename(const std::string &filename);
-	IFileSystem *GetHandleOwner(u32 handle) const;
+	IFileSystem *GetHandleOwner(u32 handle);
 	FileSystemFlags FlagsFromFilename(const std::string &filename) {
 		IFileSystem *sys = GetSystemFromFilename(filename);
 		return sys ? sys->Flags() : FileSystemFlags::NONE;
@@ -96,7 +91,7 @@ public:
 	int MapFilePath(const std::string &inpath, std::string &outpath, MountPoint **system);
 
 	inline int MapFilePath(const std::string &_inpath, std::string &outpath, IFileSystem **system) {
-		MountPoint *mountPoint = nullptr;
+		MountPoint *mountPoint;
 		int error = MapFilePath(_inpath, outpath, &mountPoint);
 		if (error == 0) {
 			*system = mountPoint->system.get();
@@ -108,7 +103,7 @@ public:
 
 	std::string NormalizePrefix(std::string prefix) const;
 
-	std::vector<PSPFileInfo> GetDirListing(const std::string &path, bool *exists = nullptr) override;
+	std::vector<PSPFileInfo> GetDirListing(std::string path) override;
 	int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) override;
 	void     CloseFile(u32 handle) override;
 	size_t   ReadFile(u32 handle, u8 *pointer, s64 size) override;
@@ -117,7 +112,6 @@ public:
 	size_t   WriteFile(u32 handle, const u8 *pointer, s64 size, int &usec) override;
 	size_t   SeekFile(u32 handle, s32 position, FileMove type) override;
 	PSPFileInfo GetFileInfo(std::string filename) override;
-	PSPFileInfo GetFileInfoByHandle(u32 handle) override;
 	bool     OwnsHandle(u32 handle) override { return false; }
 	inline size_t GetSeekPos(u32 handle) {
 		return SeekFile(handle, 0, FILEMOVE_CURRENT);
@@ -131,11 +125,11 @@ public:
 	bool RemoveFile(const std::string &filename) override;
 	int  Ioctl(u32 handle, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 outlen, int &usec) override;
 	PSPDevType DevType(u32 handle) override;
-	FileSystemFlags Flags() const override { return FileSystemFlags::NONE; }
-	u64  FreeDiskSpace(const std::string &path) override;
+	FileSystemFlags Flags() override { return FileSystemFlags::NONE; }
+	u64  FreeSpace(const std::string &path) override;
 
 	// Convenience helper - returns < 0 on failure.
-	int ReadEntireFile(const std::string &filename, std::vector<u8> &data, bool quiet = false);
+	int ReadEntireFile(const std::string &filename, std::vector<u8> &data);
 
 	void SetStartingDirectory(const std::string &dir) {
 		std::lock_guard<std::recursive_mutex> guard(lock);
@@ -144,9 +138,16 @@ public:
 
 	int64_t ComputeRecursiveDirectorySize(const std::string &dirPath);
 
-	bool ComputeRecursiveDirSizeIfFast(const std::string &path, int64_t *size) override;
-
-	void Describe(char *buf, size_t size) const override { snprintf(buf, size, "Meta"); }
+	// Shouldn't ever be called, but meh.
+	bool ComputeRecursiveDirSizeIfFast(const std::string &path, int64_t *size) override {
+		int64_t sizeTemp = ComputeRecursiveDirectorySize(path);
+		if (sizeTemp >= 0) {
+			*size = sizeTemp;
+			return true;
+		} else {
+			return false;
+		}
+	}
 
 private:
 	int64_t RecursiveSize(const std::string &dirPath);

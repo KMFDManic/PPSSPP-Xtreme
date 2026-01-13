@@ -10,11 +10,6 @@
 #include "Common/Log.h"
 #include "Common/MemoryUtil.h"
 
-#if PPSSPP_PLATFORM(SWITCH)
-#include <cstdio>
-#include <switch.h>
-#endif // PPSSPP_PLATFORM(SWITCH)
-
 // Everything that needs to generate code should inherit from this.
 // You get memory management for free, plus, you can use all emitter functions without
 // having to prefix them with gen-> or something similar.
@@ -32,7 +27,7 @@ public:
 
 	virtual const u8 *GetCodePtr() const = 0;
 
-	u8 *GetBasePtr() const {
+	u8 *GetBasePtr() {
 		return region;
 	}
 
@@ -62,28 +57,14 @@ private:
 
 public:
 	CodeBlock() {}
-	~CodeBlock() {
-		if (region)
-			FreeCodeSpace();
-	}
+	virtual ~CodeBlock() { if (region) FreeCodeSpace(); }
 
 	// Call this before you generate any code.
 	void AllocCodeSpace(int size) {
 		region_size = size;
-#if PPSSPP_PLATFORM(SWITCH)
-		Result rc = jitCreate(&jitController, size);
-		if(R_FAILED(rc)) {
-			printf("Failed to create Jitbuffer of size 0x%x err: 0x%x\n", size, rc);
-		}
-		printf("[NXJIT]: Initialized RX: %p RW: %p\n", jitController.rx_addr, jitController.rw_addr);
-
-		region = (u8 *)jitController.rx_addr;
-		writableRegion = (u8 *)jitController.rw_addr;
-#else // PPSSPP_PLATFORM(SWITCH)
 		// The protection will be set to RW if PlatformIsWXExclusive.
 		region = (u8 *)AllocateExecutableMemory(region_size);
 		writableRegion = region;
-#endif // !PPSSPP_PLATFORM(SWITCH)
 		T::SetCodePointer(region, writableRegion);
 	}
 
@@ -99,7 +80,7 @@ public:
 		// If not WX Exclusive, no need to call ProtectMemoryPages because we never change the protection from RWX.
 		PoisonMemory(offset);
 		ResetCodePtr(offset);
-		if (PlatformIsWXExclusive() && offset != 0) {
+		if (PlatformIsWXExclusive()) {
 			// Need to re-protect the part we didn't clear.
 			ProtectMemoryPages(region, offset, MEM_PROT_READ | MEM_PROT_EXEC);
 		}
@@ -114,22 +95,7 @@ public:
 		// In case the last block made the current page exec/no-write, let's fix that.
 		if (PlatformIsWXExclusive()) {
 			writeStart_ = GetCodePtr();
-			if (writeStart_ + sizeEstimate - region > (ptrdiff_t)region_size)
-				sizeEstimate = region_size - (writeStart_ - region);
-			writeEstimated_ = sizeEstimate;
 			ProtectMemoryPages(writeStart_, sizeEstimate, MEM_PROT_READ | MEM_PROT_WRITE);
-		}
-	}
-
-	// In case you now know your original estimate is wrong.
-	void ContinueWrite(size_t sizeEstimate = 1) {
-		_dbg_assert_msg_(writeStart_, "Must have already called BeginWrite()");
-		if (PlatformIsWXExclusive()) {
-			const uint8_t *pos = GetCodePtr();
-			if (pos + sizeEstimate - region > (ptrdiff_t)region_size)
-				sizeEstimate = region_size - (pos - region);
-			writeEstimated_ = (pos - writeStart_) + sizeEstimate;
-			ProtectMemoryPages(pos, sizeEstimate, MEM_PROT_READ | MEM_PROT_WRITE);
 		}
 	}
 
@@ -137,27 +103,15 @@ public:
 		// OK, we're done. Re-protect the memory we touched.
 		if (PlatformIsWXExclusive() && writeStart_ != nullptr) {
 			const uint8_t *end = GetCodePtr();
-			size_t sz = end - writeStart_;
-			if (sz > writeEstimated_)
-				WARN_LOG(Log::JIT, "EndWrite(): Estimated %d bytes, wrote %d", (int)writeEstimated_, (int)sz);
-			// If we protected and wrote less, we may need to unprotect.
-			// Especially if we're linking blocks or similar.
-			if (sz < writeEstimated_)
-				sz = writeEstimated_;
-			ProtectMemoryPages(writeStart_, sz, MEM_PROT_READ | MEM_PROT_EXEC);
+			ProtectMemoryPages(writeStart_, end - writeStart_, MEM_PROT_READ | MEM_PROT_EXEC);
 			writeStart_ = nullptr;
 		}
 	}
 
 	// Call this when shutting down. Don't rely on the destructor, even though it'll do the job.
 	void FreeCodeSpace() {
-#if !PPSSPP_PLATFORM(SWITCH)
 		ProtectMemoryPages(region, region_size, MEM_PROT_READ | MEM_PROT_WRITE);
-		FreeExecutableMemory(region, region_size);
-#else // !PPSSPP_PLATFORM(SWITCH)
-		jitClose(&jitController);
-		printf("[NXJIT]: Jit closed\n");
-#endif // PPSSPP_PLATFORM(SWITCH)
+		FreeMemoryPages(region, region_size);
 		region = nullptr;
 		writableRegion = nullptr;
 		region_size = 0;
@@ -196,8 +150,5 @@ private:
 	// Note: this is a readable pointer.
 	const uint8_t *writeStart_ = nullptr;
 	uint8_t *writableRegion = nullptr;
-	size_t writeEstimated_ = 0;
-#if PPSSPP_PLATFORM(SWITCH)
-	Jit jitController;
-#endif // PPSSPP_PLATFORM(SWITCH)
 };
+

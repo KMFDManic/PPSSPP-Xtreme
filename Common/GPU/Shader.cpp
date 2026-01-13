@@ -11,6 +11,7 @@ const char *ShaderLanguageAsString(ShaderLanguage lang) {
 	case GLSL_1xx: return "GLSL 1.x";
 	case GLSL_3xx: return "GLSL 3.x";
 	case GLSL_VULKAN: return "GLSL-VK";
+	case HLSL_D3D9: return "HLSL-D3D9";
 	case HLSL_D3D11: return "HLSL-D3D11";
 	default: return "(combination)";
 	}
@@ -32,7 +33,6 @@ ShaderLanguageDesc::ShaderLanguageDesc(ShaderLanguage lang) {
 
 void ShaderLanguageDesc::Init(ShaderLanguage lang) {
 	shaderLanguage = lang;
-	strcpy(driverInfo, "");
 	switch (lang) {
 	case GLSL_1xx:
 		// Just used in the shader test, and as a basis for the others in DetectShaderLanguage.
@@ -44,7 +44,6 @@ void ShaderLanguageDesc::Init(ShaderLanguage lang) {
 		fragColor0 = "gl_FragColor";
 		fragColor1 = "fragColor1";
 		texture = "texture2D";
-		texture3D = "texture3D";
 		texelFetch = nullptr;
 		bitwiseOps = false;
 		lastFragData = nullptr;
@@ -60,13 +59,13 @@ void ShaderLanguageDesc::Init(ShaderLanguage lang) {
 		fragColor0 = "fragColor0";
 		fragColor1 = "fragColor1";
 		texture = "texture";
-		texture3D = "texture";
 		texelFetch = "texelFetch";
 		bitwiseOps = true;
 		lastFragData = nullptr;
 		gles = true;
 		forceMatrix4x4 = true;
 		glslES30 = true;
+		texelFetch = "texelFetch";
 		break;
 	case GLSL_VULKAN:
 		fragColor0 = "fragColor0";
@@ -81,27 +80,28 @@ void ShaderLanguageDesc::Init(ShaderLanguage lang) {
 		glslVersionNumber = 450;
 		lastFragData = nullptr;
 		texture = "texture";
-		texture3D = "texture";
 		texelFetch = "texelFetch";
 		forceMatrix4x4 = false;
 		coefsFromBuffers = true;
-		vertexIndex = true;
 		break;
+	case HLSL_D3D9:
 	case HLSL_D3D11:
-		fragColor0 = "outfragment.target";
-		fragColor1 = "outfragment.target1";
-		vertexIndex = true;  // if declared as a semantic input
+		if (lang == HLSL_D3D11) {
+			fragColor0 = "outfragment.target";
+			fragColor1 = "outfragment.target1";
+		} else {
+			fragColor0 = "target";
+		}
 		varying_fs = "in";
 		varying_vs = "out";
 		attribute = "in";
 		bitwiseOps = lang == HLSL_D3D11;
 		framebufferFetchExtension = nullptr;
 		gles = false;
-		glslES30 = true;
+		glslES30 = true;  // Hm, D3D9 too?
 		glslVersionNumber = 0;
 		lastFragData = nullptr;
 		texture = "texture";
-		texture3D = "texture";
 		texelFetch = "texelFetch";
 		forceMatrix4x4 = false;
 		coefsFromBuffers = true;
@@ -111,7 +111,7 @@ void ShaderLanguageDesc::Init(ShaderLanguage lang) {
 	}
 }
 
-void InitShaderResources(TBuiltInResource &Resources) {
+void init_resources(TBuiltInResource &Resources) {
 	Resources.maxLights = 32;
 	Resources.maxClipPlanes = 6;
 	Resources.maxTextureUnits = 32;
@@ -195,7 +195,6 @@ void InitShaderResources(TBuiltInResource &Resources) {
 	Resources.maxCullDistances = 8;
 	Resources.maxCombinedClipAndCullDistances = 8;
 	Resources.maxSamples = 4;
-	Resources.maxDualSourceDrawBuffersEXT = 1;
 	Resources.limits.nonInductiveForLoops = 1;
 	Resources.limits.whileLoops = 1;
 	Resources.limits.doWhileLoops = 1;

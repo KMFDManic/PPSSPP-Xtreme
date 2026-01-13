@@ -53,6 +53,8 @@ namespace MIPSComp {
 		{
 			AFTER_NONE = 0x00,
 			AFTER_CORE_STATE = 0x01,
+			AFTER_REWIND_PC_BAD_STATE = 0x02,
+			AFTER_MEMCHECK_CLEANUP = 0x04,
 		};
 
 		u32 compilerPC;
@@ -68,6 +70,7 @@ namespace MIPSComp {
 		int numInstructions;
 		bool compiling;	// TODO: get rid of this in favor of using analysis results to determine end of block
 		bool hadBreakpoints;
+		bool preloading = false;
 		JitBlock *curBlock;
 
 		u8 hasSetRounding = 0;
@@ -76,7 +79,6 @@ namespace MIPSComp {
 
 		// VFPU prefix magic
 		bool startDefaultPrefix = true;
-		bool blockWrotePrefixes = false;
 		u32 prefixS;
 		u32 prefixT;
 		u32 prefixD;
@@ -161,20 +163,20 @@ namespace MIPSComp {
 	private:
 		void LogSTPrefix(const char *name, int p, int pflag) {
 			if ((prefixSFlag & PREFIX_KNOWN) == 0) {
-				ERROR_LOG(Log::JIT, "%s: unknown  (%08x %i)", name, p, pflag);
+				ERROR_LOG(JIT, "%s: unknown  (%08x %i)", name, p, pflag);
 			} else if (prefixS != 0xE4) {
-				ERROR_LOG(Log::JIT, "%s: %08x flag: %i", name, p, pflag);
+				ERROR_LOG(JIT, "%s: %08x flag: %i", name, p, pflag);
 			} else {
-				WARN_LOG(Log::JIT, "%s: %08x flag: %i", name, p, pflag);
+				WARN_LOG(JIT, "%s: %08x flag: %i", name, p, pflag);
 			}
 		}
 		void LogDPrefix() {
 			if ((prefixDFlag & PREFIX_KNOWN) == 0) {
-				ERROR_LOG(Log::JIT, "D: unknown (%08x %i)", prefixD, prefixDFlag);
+				ERROR_LOG(JIT, "D: unknown (%08x %i)", prefixD, prefixDFlag);
 			} else if (prefixD != 0) {
-				ERROR_LOG(Log::JIT, "D: (%08x %i)", prefixD, prefixDFlag);
+				ERROR_LOG(JIT, "D: (%08x %i)", prefixD, prefixDFlag);
 			} else {
-				WARN_LOG(Log::JIT, "D: %08x flag: %i", prefixD, prefixDFlag);
+				WARN_LOG(JIT, "D: %08x flag: %i", prefixD, prefixDFlag);
 			}
 		}
 	};
@@ -233,11 +235,8 @@ namespace MIPSComp {
 		bool downcountInRegister;
 		// ARM64 only
 		bool useASIMDVFPU;
-		// ARM64 and RV64
 		bool useStaticAlloc;
 		bool enablePointerify;
-		// IR Interpreter
-		bool optimizeForInterpreter;
 
 		// Common
 		bool enableBlocklink;
@@ -246,4 +245,6 @@ namespace MIPSComp {
 		bool continueJumps;
 		int continueMaxInstructions;
 	};
+
 }
+

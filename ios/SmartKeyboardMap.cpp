@@ -9,7 +9,7 @@
 #include "SmartKeyboardMap.hpp"
 #include "Common/Input/KeyCodes.h"
 
-InputKeyCode getSmartKeyboardMap(int keycode) {
+int getSmartKeyboardMap(int keycode) {
     switch(keycode) {
         case 4: return NKCODE_A;
         case 5: return NKCODE_B;
@@ -73,6 +73,6 @@ InputKeyCode getSmartKeyboardMap(int keycode) {
         case 229: return NKCODE_SHIFT_RIGHT;
         case 230: return NKCODE_META_RIGHT;
         case 231: return NKCODE_ALT_RIGHT;
-        default: return NKCODE_UNKNOWN;
+        default: return 0;
     }
 }

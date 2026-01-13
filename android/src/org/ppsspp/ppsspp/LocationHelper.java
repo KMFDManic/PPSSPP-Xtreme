@@ -13,17 +13,13 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.RequiresApi;
-
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Iterator;
 
 class LocationHelper implements LocationListener {
 	private static final String TAG = LocationHelper.class.getSimpleName();
-	private static final int GPGGA_ID_INDEX = 0;
-	private static final int GPGGA_HDOP_INDEX = 8;
-	private static final int GPGGA_ALTITUDE_INDEX = 9;
-	private final LocationManager mLocationManager;
+	private LocationManager mLocationManager;
 	private boolean mLocationEnable;
 	private GpsStatus.Listener mGpsStatusListener;
 	private GnssStatus.Callback mGnssStatusCallback;
@@ -31,6 +27,8 @@ class LocationHelper implements LocationListener {
 	private GpsStatus.NmeaListener mNmeaListener;
 	private float mAltitudeAboveSeaLevel = 0f;
 	private float mHdop = 0f;
+	private Method addNmeaListenerMethod = null;
+	private Method removeNmeaListenerMethod = null;
 
 	LocationHelper(Context context) {
 		mLocationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
@@ -76,11 +74,21 @@ class LocationHelper implements LocationListener {
 							onNmea(nmea);
 						}
 					};
-					mLocationManager.addNmeaListener(mNmeaListener);
+
+					// Use reflection to work around a bug in the Android 29 SDK.
+					// https://stackoverflow.com/questions/57975969/accessing-nmea-on-android-api-level-24-when-compiled-for-target-api-level-29
+					try {
+						if (addNmeaListenerMethod == null) {
+							addNmeaListenerMethod = LocationManager.class.getMethod("addNmeaListener", GpsStatus.NmeaListener.class);
+						}
+						addNmeaListenerMethod.invoke(mLocationManager, mNmeaListener);
+					} catch (Exception e) {
+						Log.w(TAG, "Couldn't get the nmea add method: " + e.toString());
+					}
 				}
 				mLocationEnable = true;
 			} catch (SecurityException e) {
-				Log.e(TAG, "Cannot start location updates: " + e);
+				Log.e(TAG, "Cannot start location updates: " + e.toString());
 			}
 			if (!isGPSEnabled && !isNetworkEnabled) {
 				Log.i(TAG, "No location provider found");
@@ -106,7 +114,16 @@ class LocationHelper implements LocationListener {
 				mGpsStatusListener = null;
 			}
 			if (mNmeaListener != null) {
-				mLocationManager.removeNmeaListener(mNmeaListener);
+				// Use reflection to work around a bug in the Android 29 SDK.
+				// https://stackoverflow.com/questions/57975969/accessing-nmea-on-android-api-level-24-when-compiled-for-target-api-level-29
+				try {
+					if (removeNmeaListenerMethod == null) {
+						removeNmeaListenerMethod = LocationManager.class.getMethod("removeNmeaListener", GpsStatus.NmeaListener.class);
+					}
+					removeNmeaListenerMethod.invoke(mLocationManager, mNmeaListener);
+				} catch (Exception e) {
+					Log.w(TAG, "Couldn't get the nmea remove method: " + e.toString());
+				}
 				mNmeaListener = null;
 			}
 		}
@@ -137,14 +154,16 @@ class LocationHelper implements LocationListener {
 	}
 
 	@Override
-	public void onProviderEnabled(@NonNull String provider) {
+	public void onProviderEnabled(String provider) {
 	}
 
 	@Override
-	public void onProviderDisabled(@NonNull String provider) {
+	public void onProviderDisabled(String provider) {
 	}
 
-	@RequiresApi(Build.VERSION_CODES.N)
+
+
+	@TargetApi(Build.VERSION_CODES.N)
 	private void onSatelliteStatus(GnssStatus status) {
 		short index = 0;
 		for (short i = 0; i < status.getSatelliteCount(); i++) {
@@ -172,7 +191,8 @@ class LocationHelper implements LocationListener {
 					Iterable<GpsSatellite> satellites = gpsStatus.getSatellites();
 
 					short index = 0;
-					for (GpsSatellite satellite : satellites) {
+					for (Iterator<GpsSatellite> iterator = satellites.iterator(); iterator.hasNext(); ) {
+						GpsSatellite satellite = iterator.next();
 						if (satellite.getPrn() > 37) {
 							continue;
 						}
@@ -193,14 +213,14 @@ class LocationHelper implements LocationListener {
 
 	private void onNmea(String nmea) {
 		String[] tokens = nmea.split(",");
-		if (tokens.length < 10 || !tokens[GPGGA_ID_INDEX].equals("$GPGGA")) {
+		if (tokens.length < 10 || !tokens[0].equals("$GPGGA")) {
 			return;
 		}
-		if (!tokens[GPGGA_HDOP_INDEX].isEmpty()) {
-			mHdop = Float.valueOf(tokens[GPGGA_HDOP_INDEX]);
+		if (!tokens[8].isEmpty()) {
+			mHdop = Float.valueOf(tokens[8]);
 		}
-		if (!tokens[GPGGA_ALTITUDE_INDEX].isEmpty()) {
-			mAltitudeAboveSeaLevel = Float.valueOf(tokens[GPGGA_ALTITUDE_INDEX]);
+		if (!tokens[9].isEmpty()) {
+			mAltitudeAboveSeaLevel = Float.valueOf(tokens[9]);
 		}
 	}
 }

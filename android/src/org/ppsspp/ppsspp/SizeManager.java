@@ -1,78 +1,77 @@
 package org.ppsspp.ppsspp;
 
+import android.annotation.TargetApi;
+import android.app.Activity;
 import android.content.pm.ActivityInfo;
-import android.content.res.Configuration;
 import android.graphics.Point;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
-import android.view.Surface;
+import android.view.DisplayCutout;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
-import androidx.annotation.RequiresApi;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
+import android.view.WindowInsets;
+import java.lang.Runnable;
 
 public class SizeManager implements SurfaceHolder.Callback {
-	private static final String TAG = "PPSSPPSizeManager";
+	private static String TAG = "PPSSPPSizeManager";
 
-	final PpssppActivity activity;
+	final NativeActivity activity;
 	SurfaceView surfaceView = null;
+
+	private int safeInsetLeft = 0;
+	private int safeInsetRight = 0;
+	private int safeInsetTop = 0;
+	private int safeInsetBottom = 0;
 
 	private float densityDpi;
 	private float refreshRate;
+	private int pixelWidth;
+	private int pixelHeight;
 
 	private boolean navigationHidden = false;
 	private boolean displayUpdatePending = false;
 
-	private final Point desiredSize = new Point();
+	private Point desiredSize = new Point();
 	private int badOrientationCount = 0;
 
-	// Used to fix a race condition on some Android versions.
-	private Surface earlySurface = null;
-
-	private boolean paused = false;
-
-	public SizeManager(final PpssppActivity a) {
+	public SizeManager(final NativeActivity a) {
 		activity = a;
 	}
 
-	public void onResume() {
-		if (earlySurface != null) {
-			Log.i(TAG, "Applying deferred surface");
-			activity.notifySurface(earlySurface);
-			earlySurface = null;
-		}
-		paused = false;
-	}
-
-	public void onPause() {
-		paused = true;
-		// Make sure.
-		earlySurface = null;
-	}
-
+	@TargetApi(Build.VERSION_CODES.P)
 	public void setSurfaceView(SurfaceView view) {
 		surfaceView = view;
 		if (surfaceView == null)
 			return;
 
 		surfaceView.getHolder().addCallback(this);
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+			surfaceView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+				@Override
+				public WindowInsets onApplyWindowInsets(View view, WindowInsets windowInsets) {
+					updateInsets(windowInsets);
+					return windowInsets;
+				}
+			});
+		}
 	}
 
 	@Override
 	public void surfaceCreated(SurfaceHolder holder) {
-		int pixelWidth = holder.getSurfaceFrame().width();
-		int pixelHeight = holder.getSurfaceFrame().height();
+		pixelWidth = holder.getSurfaceFrame().width();
+		pixelHeight = holder.getSurfaceFrame().height();
 
 		// Workaround for terrible bug when locking and unlocking the screen in landscape mode on Nexus 5X.
 		int requestedOr = activity.getRequestedOrientation();
 		boolean requestedPortrait = requestedOr == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || requestedOr == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
 		boolean detectedPortrait = pixelHeight > pixelWidth;
-		if (badOrientationCount < 3 && requestedPortrait != detectedPortrait && requestedOr != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT && badOrientationCount < 3 && requestedPortrait != detectedPortrait && requestedOr != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
 			Log.e(TAG, "Bad orientation detected (w=" + pixelWidth + " h=" + pixelHeight + "! Recreating activity.");
 			badOrientationCount++;
 			activity.recreate();
@@ -81,49 +80,34 @@ public class SizeManager implements SurfaceHolder.Callback {
 			Log.i(TAG, "Correct orientation detected, resetting orientation counter.");
 			badOrientationCount = 0;
 		} else {
-			Log.i(TAG, "Bad orientation detected but ignored");
+			Log.i(TAG, "Bad orientation detected but ignored" + (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT ? " (sdk version)" : ""));
 		}
 
-		Display display = activity.getWindowManager().getDefaultDisplay();
-
-		refreshRate = display.getRefreshRate();
-
-		Log.d(TAG, "Surface created. pixelWidth=" + pixelWidth + ", pixelHeight=" + pixelHeight + " holder: " + holder + " or: " + requestedOr + " " + refreshRate + "Hz");
+		Log.d(TAG, "Surface created. pixelWidth=" + pixelWidth + ", pixelHeight=" + pixelHeight + " holder: " + holder.toString() + " or: " + requestedOr);
 		NativeApp.setDisplayParameters(pixelWidth, pixelHeight, (int)densityDpi, refreshRate);
 		getDesiredBackbufferSize(desiredSize);
 
 		// Note that desiredSize might be 0,0 here - but that's fine when calling setFixedSize! It means auto.
-		if (desiredSize.x == 0) {
-			Log.d(TAG, "Setting auto surface size (not fixed)");
-		} else {
-			Log.d(TAG, "Setting fixed surface size " + desiredSize.x + " x " + desiredSize.y);
-		}
+		Log.d(TAG, "Setting fixed size " + desiredSize.x + " x " + desiredSize.y);
 		holder.setFixedSize(desiredSize.x, desiredSize.y);
 	}
 
 	@Override
 	public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-		Log.v(TAG, "surfaceChanged: isCreating:" + holder.isCreating() + " holder: " + holder);
+		Log.v(TAG, "surfaceChanged: isCreating:" + holder.isCreating() + " holder: " + holder.toString());
 		if (holder.isCreating() && desiredSize.x > 0 && desiredSize.y > 0) {
 			// We have called setFixedSize which will trigger another surfaceChanged after the initial
 			// one. This one is the original one and we don't care about it.
 			Log.w(TAG, "holder.isCreating = true, ignoring. width=" + width + " height=" + height + " desWidth=" + desiredSize.x + " desHeight=" + desiredSize.y);
-
-			// TODO: Should we still set earlySurface here, to be sure?
 			return;
 		}
 
-		Log.i(TAG, "Surface changed. Resolution: " + width + "x" + height + " Format: " + format);
+		Log.w(TAG, "Surface changed. Resolution: " + width + "x" + height + " Format: " + format);
 		// The window size might have changed (immersive mode, native fullscreen on some devices)
 		NativeApp.backbufferResize(width, height, format);
 		updateDisplayMeasurements();
 
-		if (!paused) {
-			activity.notifySurface(holder.getSurface());
-		} else {
-			earlySurface = holder.getSurface();
-			Log.i(TAG, "Skipping notifySurface while paused - deferring to resume");
-		}
+		activity.notifySurface(holder.getSurface());
 	}
 
 	@Override
@@ -140,12 +124,18 @@ public class SizeManager implements SurfaceHolder.Callback {
 		}
 		displayUpdatePending = true;
 
-		activity.runOnUiThread(() -> {
-			Log.d(TAG, "checkDisplayMeasurements: checking now");
-			updateDisplayMeasurements();
-		});
+		final Runnable updater = new Runnable() {
+			public void run() {
+				Log.d(TAG, "checkDisplayMeasurements: checking now");
+				updateDisplayMeasurements();
+			}
+		};
+
+		final Handler handler = new Handler(Looper.getMainLooper());
+		handler.postDelayed(updater, 10);
 	}
 
+	@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
 	public void updateDisplayMeasurements() {
 		displayUpdatePending = false;
 
@@ -153,7 +143,7 @@ public class SizeManager implements SurfaceHolder.Callback {
 		// Early in startup, we don't have a view to query. Do our best to get some kind of size
 		// that can be used by config default heuristics, and so on.
 		DisplayMetrics metrics = new DisplayMetrics();
-		if (navigationHidden) {
+		if (navigationHidden && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
 			display.getRealMetrics(metrics);
 		} else {
 			display.getMetrics(metrics);
@@ -170,6 +160,7 @@ public class SizeManager implements SurfaceHolder.Callback {
 		NativeApp.setDisplayParameters(metrics.widthPixels, metrics.heightPixels, (int)densityDpi, refreshRate);
 	}
 
+	@TargetApi(Build.VERSION_CODES.KITKAT)
 	public void setupSystemUiCallback(final View view) {
 		view.setOnSystemUiVisibilityChangeListener(new View.OnSystemUiVisibilityChangeListener() {
 			@Override
@@ -180,7 +171,8 @@ public class SizeManager implements SurfaceHolder.Callback {
 				// act as if it's visible if it's not.
 				navigationHidden = ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0);
 				// TODO: Check here if it's the state we want.
-				Log.i(TAG, "SystemUiVisibilityChange! visibility=" + visibility + " navigationHidden: " + navigationHidden + " decorView: " + view.getWidth() + "x" + view.getHeight());
+				Log.i(TAG, "SystemUiVisibilityChange! visibility=" + visibility + " navigationHidden: " + navigationHidden);
+				Log.i(TAG, "decorView: " + view.getWidth() + "x" + view.getHeight());
 				checkDisplayMeasurements();
 			}
 		});
@@ -194,5 +186,29 @@ public class SizeManager implements SurfaceHolder.Callback {
 		NativeApp.computeDesiredBackbufferDimensions();
 		sz.x = NativeApp.getDesiredBackbufferWidth();
 		sz.y = NativeApp.getDesiredBackbufferHeight();
+	}
+
+	@TargetApi(Build.VERSION_CODES.P)
+	private void updateInsets(WindowInsets insets) {
+		if (insets == null) {
+			return;
+		}
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+			DisplayCutout cutout = insets.getDisplayCutout();
+			if (cutout != null) {
+				safeInsetLeft = cutout.getSafeInsetLeft();
+				safeInsetRight = cutout.getSafeInsetRight();
+				safeInsetTop = cutout.getSafeInsetTop();
+				safeInsetBottom = cutout.getSafeInsetBottom();
+				Log.i(TAG, "Safe insets: left: " + safeInsetLeft + " right: " + safeInsetRight + " top: " + safeInsetTop + " bottom: " + safeInsetBottom);
+			} else {
+				Log.i(TAG, "Safe insets: Cutout was null");
+				safeInsetLeft = 0;
+				safeInsetRight = 0;
+				safeInsetTop = 0;
+				safeInsetBottom = 0;
+			}
+			NativeApp.sendMessage("safe_insets", safeInsetLeft + ":" + safeInsetRight + ":" + safeInsetTop + ":" + safeInsetBottom);
+		}
 	}
 }

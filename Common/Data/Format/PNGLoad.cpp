@@ -5,7 +5,6 @@
 
 #include "Common/Data/Format/PNGLoad.h"
 #include "Common/Log.h"
-#include "Common/File/FileUtil.h"
 
 // *image_data_ptr should be deleted with free()
 // return value of 1 == success.
@@ -18,7 +17,7 @@ int pngLoad(const char *file, int *pwidth, int *pheight, unsigned char **image_d
 
 	if (PNG_IMAGE_FAILED(png))
 	{
-		WARN_LOG(Log::IO, "pngLoad: %s (%s)", png.message, file);
+		WARN_LOG(IO, "pngLoad: %s (%s)", png.message, file);
 		*image_data_ptr = nullptr;
 		return 0;
 	}
@@ -32,165 +31,31 @@ int pngLoad(const char *file, int *pwidth, int *pheight, unsigned char **image_d
 	return 1;
 }
 
-// Custom error handler
-void pngErrorHandler(png_structp png_ptr, png_const_charp error_msg) {
-	ERROR_LOG(Log::System, "libpng error: %s\n", error_msg);
-	longjmp(png_jmpbuf(png_ptr), 1);
-}
-
-void pngWarningHandler(png_structp png_ptr, png_const_charp warning_msg) {
-	DEBUG_LOG(Log::System, "libpng warning: %s\n", warning_msg);
-}
-
 int pngLoadPtr(const unsigned char *input_ptr, size_t input_len, int *pwidth, int *pheight, unsigned char **image_data_ptr) {
-	png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, pngErrorHandler, pngWarningHandler);
-	if (!png) {
+	png_image png{};
+	png.version = PNG_IMAGE_VERSION;
+
+	png_image_begin_read_from_memory(&png, input_ptr, input_len);
+
+	if (PNG_IMAGE_FAILED(png)) {
+		WARN_LOG(IO, "pngLoad: %s", png.message);
+		*image_data_ptr = nullptr;
 		return 0;
 	}
-	if (input_len == 0) {
+	*pwidth = png.width;
+	*pheight = png.height;
+	png.format = PNG_FORMAT_RGBA;
+
+	int stride = PNG_IMAGE_ROW_STRIDE(png);
+
+	size_t size = PNG_IMAGE_SIZE(png);
+	if (!size) {
+		ERROR_LOG(IO, "pngLoad: empty image");
+		*image_data_ptr = nullptr;
 		return 0;
 	}
-
-	// Ignore incorrect sRGB profiles
-	png_set_option(png, PNG_SKIP_sRGB_CHECK_PROFILE, PNG_OPTION_ON);
-	png_set_benign_errors(png, PNG_OPTION_ON);
-
-	png_infop info = png_create_info_struct(png);
-	if (!info) {
-		png_destroy_read_struct(&png, NULL, NULL);
-		return 0;
-	}
-
-	if (setjmp(png_jmpbuf(png))) {
-		png_destroy_read_struct(&png, &info, NULL);
-		if (*image_data_ptr) {
-			free(*image_data_ptr);
-			*image_data_ptr = NULL;
-		}
-		return 0;
-	}
-
-	png_set_read_fn(png, (png_voidp)&input_ptr, [](png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRead) {
-		const unsigned char **input = (const unsigned char **)png_get_io_ptr(png_ptr);
-		memcpy(outBytes, *input, byteCountToRead);
-		*input += byteCountToRead;
-	});
-
-	png_read_info(png, info);
-
-	*pwidth = png_get_image_width(png, info);
-	*pheight = png_get_image_height(png, info);
-
-	const int color_type = png_get_color_type(png, info);
-	png_set_strip_16(png);
-	png_set_packing(png);
-	if (color_type == PNG_COLOR_TYPE_GRAY)
-		png_set_expand_gray_1_2_4_to_8(png);
-	if (color_type == PNG_COLOR_TYPE_PALETTE) {
-		png_set_palette_to_rgb(png);
-	} else if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
-		png_set_gray_to_rgb(png);
-	}
-
-	if (png_get_valid(png, info, PNG_INFO_tRNS))
-		png_set_tRNS_to_alpha(png);
-	// Force 8-bit RGBA format
-	png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
-	png_set_interlace_handling(png);
-	// Ignore the file's gamma correction
-	png_set_gamma(png, 1.0, 1.0);
-
-	png_read_update_info(png, info);
-
-	size_t row_bytes = png_get_rowbytes(png, info);
-	size_t size = row_bytes * (*pheight);
 
 	*image_data_ptr = (unsigned char *)malloc(size);
-	if (!*image_data_ptr) {
-		png_destroy_read_struct(&png, &info, NULL);
-		return 0;
-	}
-
-	png_bytep *row_pointers = (png_bytep *)malloc(sizeof(png_bytep) * (*pheight));
-	for (int y = 0; y < *pheight; y++) {
-		row_pointers[y] = *image_data_ptr + y * row_bytes;
-	}
-
-	png_read_image(png, row_pointers);
-	free(row_pointers);
-	png_destroy_read_struct(&png, &info, NULL);
+	png_image_finish_read(&png, NULL, *image_data_ptr, stride, NULL);
 	return 1;
-}
-
-bool PNGHeaderPeek::IsValidPNGHeader() const {
-	if (magic != 0x474e5089 || ihdrTag != 0x52444849) {
-		return false;
-	}
-	// Reject crazy sized images, too.
-	if (Width() > 32768 && Height() > 32768) {
-		return false;
-	}
-	return true;
-}
-
-bool pngSave(const Path &filename, const void *buffer, int w, int h, int bytesPerPixel) {
-	png_bytepp row_ptrs = nullptr;
-
-	FILE *fp = File::OpenCFile(filename, "wb");
-	if (!fp) {
-		ERROR_LOG(Log::IO, "Unable to open png file for writing: %s", filename.c_str());
-		return false;
-	}
-
-	png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, pngErrorHandler, pngWarningHandler);
-	if (png_ptr == nullptr) {
-		fclose(fp);
-		ERROR_LOG(Log::IO, "PNG encode failed.");
-		return false;
-	}
-
-	png_infop info_ptr = png_create_info_struct(png_ptr);
-	if (info_ptr == nullptr) {
-		png_destroy_write_struct(&png_ptr, nullptr);
-		fclose(fp);
-		ERROR_LOG(Log::IO, "PNG encode failed.");
-		return false;
-	}
-
-	if (setjmp(png_jmpbuf(png_ptr))) {
-		if (row_ptrs != nullptr) {
-			png_free(png_ptr, row_ptrs);
-		}
-		png_destroy_write_struct(&png_ptr, &info_ptr);
-		fclose(fp);
-
-		// Should we even do this?
-		File::Delete(filename);
-
-		ERROR_LOG(Log::IO, "PNG encode failed.");
-		return false;
-	}
-
-	png_set_write_fn(png_ptr, fp, [](png_structp png_ptr, png_bytep data, png_size_t size) {
-		if (fwrite(data, 1, size, (FILE *)png_get_io_ptr(png_ptr)) < size) {
-			png_error(png_ptr, "Failed to write to file.");
-		}
-	}, [](png_structp png_ptr) {
-		fflush((FILE *)png_get_io_ptr(png_ptr));
-	});
-
-	png_set_IHDR(png_ptr, info_ptr, w, h, 8, bytesPerPixel == 3 ? PNG_COLOR_TYPE_RGB : PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
-
-	row_ptrs = (png_bytepp)png_malloc(png_ptr, (png_alloc_size_t)h * (png_alloc_size_t)sizeof(png_bytep));
-	for (png_alloc_size_t i = 0; i < h; ++i) {
-		row_ptrs[i] = (png_bytep)buffer + (png_alloc_size_t)w * (png_alloc_size_t)bytesPerPixel * i;
-	}
-	png_set_rows(png_ptr, info_ptr, row_ptrs);
-
-	png_write_png(png_ptr, info_ptr, PNG_TRANSFORM_IDENTITY, nullptr);
-
-	png_free(png_ptr, row_ptrs);
-	png_destroy_write_struct(&png_ptr, &info_ptr);
-	fclose(fp);
-	return true;
 }

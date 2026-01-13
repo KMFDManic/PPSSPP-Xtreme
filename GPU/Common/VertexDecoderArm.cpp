@@ -28,6 +28,7 @@
 
 #include "Common/CPUDetect.h"
 #include "Core/Config.h"
+#include "Core/Reporting.h"
 #include "GPU/GPUState.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 
@@ -135,6 +136,7 @@ static const JitLookup jitLookup[] = {
 
 	{&VertexDecoder::Step_PosS8Through, &VertexDecoderJitCache::Jit_PosS8Through},
 	{&VertexDecoder::Step_PosS16Through, &VertexDecoderJitCache::Jit_PosS16Through},
+	{&VertexDecoder::Step_PosFloatThrough, &VertexDecoderJitCache::Jit_PosFloat},
 
 	{&VertexDecoder::Step_PosS8, &VertexDecoderJitCache::Jit_PosS8},
 	{&VertexDecoder::Step_PosS16, &VertexDecoderJitCache::Jit_PosS16},
@@ -160,7 +162,7 @@ static const JitLookup jitLookup[] = {
 
 JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int32_t *jittedSize) {
 	dec_ = &dec;
-	BeginWrite(4096);
+	BeginWrite();
 	const u8 *start = AlignCode16();
 
 	bool prescaleStep = false;
@@ -190,6 +192,7 @@ JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int
 
 	// Keep the scale/offset in a few fp registers if we need it.
 	if (prescaleStep) {
+		MOVP2R(R3, &gstate_c.uv);
 		VLD1(F_32, neonUVScaleReg, R3, 2, ALIGN_NONE);
 		if ((dec.VertexType() & GE_VTYPE_TC_MASK) == GE_VTYPE_TC_8BIT) {
 			VMOV_neon(F_32, neonScratchReg, by128);
@@ -202,7 +205,7 @@ JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int
 
 	// Add code to convert matrices to 4x4.
 	// Later we might want to do this when the matrices are loaded instead.
-	if (dec.skinInDecode) {
+	if (dec.weighttype && g_Config.bSoftwareSkinning) {
 		// Copying from R3 to R4
 		MOVP2R(R3, gstate.boneMatrix);
 		MOVP2R(R4, bones);
@@ -248,7 +251,7 @@ JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int
 		MOV(fullAlphaReg, 0xFF);
 	}
 
-	JumpTarget loopStart = NopAlignCode16();
+	JumpTarget loopStart = GetCodePtr();
 	// Preload data cache ahead of reading. This offset seems pretty good.
 	PLD(srcReg, 64);
 	for (int i = 0; i < dec.numSteps_; i++) {
@@ -256,9 +259,9 @@ JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int
 			EndWrite();
 			// Reset the code ptr and return zero to indicate that we failed.
 			ResetCodePtr(GetOffset(start));
-			char temp[1024]{};
-			dec.ToString(temp, true);
-			WARN_LOG(Log::G3D, "Could not compile vertex decoder, failed at step %s: %s", GetStepFunctionName(dec.steps_[i]), temp);
+			char temp[1024] = {0};
+			dec.ToString(temp);
+			INFO_LOG(G3D, "Could not compile vertex decoder: %s", temp);
 			return 0;
 		}
 	}
@@ -285,8 +288,8 @@ JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int
 	/*
 	DisassembleArm(start, GetCodePtr() - start);
 	char temp[1024] = {0};
-	dec.ToString(temp, true);
-	INFO_LOG(Log::G3D, "%s", temp);
+	dec.ToString(temp);
+	INFO_LOG(G3D, "%s", temp);
 	*/
 
 	*jittedSize = GetCodePtr() - start;
@@ -870,14 +873,22 @@ void VertexDecoderJitCache::Jit_NormalFloat() {
 	STMIA(scratchReg, false, 3, tempReg1, tempReg2, tempReg3);
 }
 
+// Through expands into floats, always. Might want to look at changing this.
 void VertexDecoderJitCache::Jit_PosS8Through() {
+	DEBUG_LOG_REPORT_ONCE(vertexS8Through, G3D, "Using S8 positions in throughmode");
 	_dbg_assert_msg_(fpScratchReg + 1 == fpScratchReg2, "VertexDecoder fpScratchRegs must be in order.");
 	_dbg_assert_msg_(fpScratchReg2 + 1 == fpScratchReg3, "VertexDecoder fpScratchRegs must be in order.");
 
-	// 8-bit positions in throughmode always decode to 0, depth included.
-	VEOR(neonScratchReg, neonScratchReg, neonScratchReg);
-	VEOR(neonScratchReg2, neonScratchReg, neonScratchReg);
+	// TODO: SIMD
+	LDRSB(tempReg1, srcReg, dec_->posoff);
+	LDRSB(tempReg2, srcReg, dec_->posoff + 1);
+	LDRSB(tempReg3, srcReg, dec_->posoff + 2);  // signed?
+	static const ARMReg tr[3] = { tempReg1, tempReg2, tempReg3 };
+	static const ARMReg fr[3] = { fpScratchReg, fpScratchReg2, fpScratchReg3 };
 	ADD(scratchReg, dstReg, dec_->decFmt.posoff);
+	VMOV(neonScratchReg, tempReg1, tempReg2);
+	VMOV(neonScratchReg2, tempReg3, tempReg3);
+	VCVT(F_32 | I_SIGNED, neonScratchRegQ, neonScratchRegQ);
 	VST1(F_32, neonScratchReg, scratchReg, 2, ALIGN_NONE);
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012- PPSSPP Project.
+// Copyright (c) 2014- PPSSPP Project.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,51 +15,22 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include <algorithm>
-
-#include "Common/GPU/OpenGL/GLFeatures.h"
-#include "Common/LogReporting.h"
-#include "GPU/Common/DrawEngineCommon.h"
-#include "GPU/Common/TextureCacheCommon.h"
+#include "Common/GPU/OpenGL/GLSLProgram.h"
+#include "Core/Config.h"
+#include "Core/ConfigValues.h"
+#include "Core/Reporting.h"
+#include "GPU/Common/StencilCommon.h"
+#include "GPU/GLES/DrawEngineGLES.h"
 #include "GPU/GLES/FramebufferManagerGLES.h"
-#include "Common/GPU/ShaderWriter.h"
+#include "GPU/GLES/ShaderManagerGLES.h"
+#include "GPU/GLES/TextureCacheGLES.h"
 
-static const InputDef vs_inputs[] = {
-	{ "vec2", "a_position", Draw::SEM_POSITION },
-};
-
-struct DepthUB {
-	float u_depthFactor[4];
-	float u_depthShift[4];
-	float u_depthTo8[4];
-};
-
-const UniformDef depthUniforms[] = {
-	{ "vec4", "u_depthFactor", 0 },
-	{ "vec4", "u_depthShift", 1},
-	{ "vec4", "u_depthTo8", 2},
-};
-
-const UniformBufferDesc depthUBDesc{ sizeof(DepthUB), {
-	{ "u_depthFactor", -1, -1, UniformType::FLOAT4, 0 },
-	{ "u_depthShift", -1, -1, UniformType::FLOAT4, 16 },
-	{ "u_depthTo8", -1, -1, UniformType::FLOAT4, 32 },
-} };
-
-static const SamplerDef samplers[] = {
-	{ 0, "tex" },
-};
-
-static const VaryingDef varyings[] = {
-	{ "vec2", "v_texcoord", Draw::SEM_TEXCOORD0, 0, "highp" },
-};
-
-static const char * const stencil_dl_fs = R"(
+static const char *stencil_fs = R"(
 #ifdef GL_ES
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
 #else
-precision mediump float;
+precision mediump float;  // just hope it's enough..
 #endif
 #endif
 #if __VERSION__ >= 130
@@ -68,16 +39,19 @@ precision mediump float;
 #define gl_FragColor fragColor0
 out vec4 fragColor0;
 #endif
-varying vec2 v_texcoord;
-lowp uniform usampler2D tex;
+varying vec2 v_texcoord0;
+uniform float u_stencilValue;
+uniform sampler2D tex;
+float roundAndScaleTo255f(in float x) { return floor(x * 255.99); }
 void main() {
-  uint stencil = texture2D(tex, v_texcoord).r;
-  float scaled = float(stencil) / 255.0;
-  gl_FragColor = vec4(scaled, scaled, scaled, scaled);
+  vec4 index = texture2D(tex, v_texcoord0);
+  gl_FragColor = vec4(index.a);
+  float shifted = roundAndScaleTo255f(index.a) / roundAndScaleTo255f(u_stencilValue);
+  if (mod(floor(shifted), 2.0) < 0.99) discard;
 }
 )";
 
-static const char * const stencil_vs = R"(
+static const char *stencil_vs = R"(
 #ifdef GL_ES
 precision highp float;
 #endif
@@ -85,84 +59,165 @@ precision highp float;
 #define attribute in
 #define varying out
 #endif
-attribute vec2 a_position;
-varying vec2 v_texcoord;
+attribute vec4 a_position;
+attribute vec2 a_texcoord0;
+varying vec2 v_texcoord0;
 void main() {
-  v_texcoord = a_position * 2.0;
-  gl_Position = vec4(v_texcoord * 2.0 - vec2(1.0, 1.0), 0.0, 1.0);
+  v_texcoord0 = a_texcoord0;
+  gl_Position = a_position;
 }
 )";
 
-Draw::Pipeline *CreateReadbackPipeline(Draw::DrawContext *draw, const char *tag, const UniformBufferDesc *ubDesc, const char *fs, const char *fsTag, const char *vs, const char *vsTag);
-
-// Well, this is not depth, but it's depth/stencil related.
-bool FramebufferManagerGLES::ReadbackStencilbuffer(Draw::Framebuffer *fbo, int x, int y, int w, int h, uint8_t *pixels, int pixelsStride, Draw::ReadbackMode mode) {
-	using namespace Draw;
-
-	if (!fbo) {
-		ERROR_LOG_REPORT_ONCE(vfbfbozero, Log::sceGe, "ReadbackStencilbufferSync: bad fbo");
+bool FramebufferManagerGLES::NotifyStencilUpload(u32 addr, int size, StencilUpload flags) {
+	addr &= 0x3FFFFFFF;
+	if (!MayIntersectFramebuffer(addr)) {
 		return false;
 	}
 
-	const bool useColorPath = gl_extensions.IsGLES;
-	if (!useColorPath) {
-		return draw_->CopyFramebufferToMemory(fbo, Aspect::STENCIL_BIT, x, y, w, h, DataFormat::S8, pixels, pixelsStride, ReadbackMode::BLOCK, "ReadbackStencilbufferSync");
+	VirtualFramebuffer *dstBuffer = 0;
+	for (size_t i = 0; i < vfbs_.size(); ++i) {
+		VirtualFramebuffer *vfb = vfbs_[i];
+		if (vfb->fb_address == addr) {
+			dstBuffer = vfb;
+		}
+	}
+	if (!dstBuffer) {
+		return false;
 	}
 
-	// Unsupported below GLES 3.1 or without ARB_stencil_texturing.
-	// OES_texture_stencil8 is related, but used to specify texture data.
-	if ((gl_extensions.IsGLES && !gl_extensions.VersionGEThan(3, 1)) && !gl_extensions.ARB_stencil_texturing)
+	int values = 0;
+	u8 usedBits = 0;
+
+	const u8 *src = Memory::GetPointer(addr);
+	if (!src)
 		return false;
 
-	// Pixel size always 4 here because we always request RGBA back.
-	const u32 bufSize = w * h * 4;
-	if (!convBuf_ || convBufSize_ < bufSize) {
-		delete[] convBuf_;
-		convBuf_ = new u8[bufSize];
-		convBufSize_ = bufSize;
+	switch (dstBuffer->format) {
+	case GE_FORMAT_565:
+		// Well, this doesn't make much sense.
+		return false;
+	case GE_FORMAT_5551:
+		usedBits = StencilBits5551(src, dstBuffer->fb_stride * dstBuffer->bufferHeight);
+		values = 2;
+		break;
+	case GE_FORMAT_4444:
+		usedBits = StencilBits4444(src, dstBuffer->fb_stride * dstBuffer->bufferHeight);
+		values = 16;
+		break;
+	case GE_FORMAT_8888:
+		usedBits = StencilBits8888(src, dstBuffer->fb_stride * dstBuffer->bufferHeight);
+		values = 256;
+		break;
+	case GE_FORMAT_INVALID:
+	case GE_FORMAT_DEPTH16:
+		// Inconceivable.
+		_assert_(false);
+		break;
 	}
 
-	if (!stencilReadbackPipeline_) {
-		stencilReadbackPipeline_ = CreateReadbackPipeline(draw_, "stencil_dl", &depthUBDesc, stencil_dl_fs, "stencil_dl_fs", stencil_vs, "stencil_vs");
-		stencilReadbackSampler_ = draw_->CreateSamplerState({});
+	if (usedBits == 0) {
+		if (flags == StencilUpload::STENCIL_IS_ZERO) {
+			// Common when creating buffers, it's already 0.  We're done.
+			return false;
+		}
+		shaderManager_->DirtyLastShader();
+
+		// Let's not bother with the shader if it's just zero.
+		if (dstBuffer->fbo) {
+			draw_->BindFramebufferAsRenderTarget(dstBuffer->fbo, { Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::CLEAR }, "NotifyStencilUpload_Clear");
+		}
+		render_->Clear(0, 0, 0, GL_STENCIL_BUFFER_BIT | GL_COLOR_BUFFER_BIT, 0x8, 0, 0, 0, 0);
+		gstate_c.Dirty(DIRTY_BLEND_STATE | DIRTY_VIEWPORTSCISSOR_STATE);
+		return true;
+	}
+
+	if (!stencilUploadProgram_) {
+		std::string errorString;
+		static std::string vs_code, fs_code;
+		vs_code = ApplyGLSLPrelude(stencil_vs, GL_VERTEX_SHADER);
+		fs_code = ApplyGLSLPrelude(stencil_fs, GL_FRAGMENT_SHADER);
+		std::vector<GLRShader *> shaders;
+		shaders.push_back(render_->CreateShader(GL_VERTEX_SHADER, vs_code, "stencil"));
+		shaders.push_back(render_->CreateShader(GL_FRAGMENT_SHADER, fs_code, "stencil"));
+		std::vector<GLRProgram::Semantic> semantics;
+		semantics.push_back({ 0, "a_position" });
+		semantics.push_back({ 1, "a_texcoord0" });
+		std::vector<GLRProgram::UniformLocQuery> queries;
+		queries.push_back({ &u_stencilUploadTex, "tex" });
+		queries.push_back({ &u_stencilValue, "u_stencilValue" });
+		std::vector<GLRProgram::Initializer> inits;
+		inits.push_back({ &u_stencilUploadTex, 0, TEX_SLOT_PSP_TEXTURE });
+		stencilUploadProgram_ = render_->CreateProgram(shaders, semantics, queries, inits, false, false);
+		for (auto iter : shaders) {
+			render_->DeleteShader(iter);
+		}
+		if (!stencilUploadProgram_) {
+			ERROR_LOG_REPORT(G3D, "Failed to compile stencilUploadProgram! This shouldn't happen.\n%s", errorString.c_str());
+		}
 	}
 
 	shaderManager_->DirtyLastShader();
-	auto *blitFBO = GetTempFBO(TempFBO::Z_COPY, fbo->Width(), fbo->Height());
-	draw_->BindFramebufferAsRenderTarget(blitFBO, { RPAction::DONT_CARE, RPAction::DONT_CARE, RPAction::DONT_CARE }, "ReadbackStencilbufferSync");
-	Draw::Viewport viewport = { 0.0f, 0.0f, (float)fbo->Width(), (float)fbo->Height(), 0.0f, 1.0f };
-	draw_->SetViewport(viewport);
 
-	draw_->BindFramebufferAsTexture(fbo, TEX_SLOT_PSP_TEXTURE, Aspect::STENCIL_BIT, 0);
-	draw_->BindSamplerStates(TEX_SLOT_PSP_TEXTURE, 1, &stencilReadbackSampler_);
+	bool useBlit = gstate_c.Supports(GPU_SUPPORTS_FRAMEBUFFER_BLIT);
 
-	// We must bind the program after starting the render pass.
-	draw_->SetScissorRect(0, 0, w, h);
-	draw_->BindPipeline(stencilReadbackPipeline_);
+	// Our fragment shader (and discard) is slow.  Since the source is 1x, we can stencil to 1x.
+	// Then after we're done, we'll just blit it across and stretch it there.
+	if (dstBuffer->width == dstBuffer->renderWidth || !dstBuffer->fbo) {
+		useBlit = false;
+	}
+	u16 w = useBlit ? dstBuffer->width : dstBuffer->renderWidth;
+	u16 h = useBlit ? dstBuffer->height : dstBuffer->renderHeight;
 
-	// Fullscreen triangle coordinates.
-	static const float positions[6] = {
-		0.0, 0.0,
-		1.0, 0.0,
-		0.0, 1.0,
-	};
-	draw_->DrawUP(positions, 3);
-
-	draw_->CopyFramebufferToMemory(blitFBO, Aspect::COLOR_BIT, x, y, w, h, DataFormat::R8G8B8A8_UNORM, convBuf_, w, mode, "ReadbackStencilbufferSync");
+	Draw::Framebuffer *blitFBO = nullptr;
+	if (useBlit) {
+		blitFBO = GetTempFBO(TempFBO::STENCIL, w, h);
+		draw_->BindFramebufferAsRenderTarget(blitFBO, { Draw::RPAction::DONT_CARE, Draw::RPAction::DONT_CARE, Draw::RPAction::DONT_CARE }, "NotifyStencilUpload_Blit");
+	} else if (dstBuffer->fbo) {
+		draw_->BindFramebufferAsRenderTarget(dstBuffer->fbo, { Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::DONT_CARE }, "NotifyStencilUpload_NoBlit");
+	}
+	render_->SetViewport({ 0, 0, (float)w, (float)h, 0.0f, 1.0f });
 
 	textureCache_->ForgetLastTexture();
+	Draw::Texture *tex = MakePixelTexture(src, dstBuffer->format, dstBuffer->fb_stride, dstBuffer->width, dstBuffer->height);
+	if (!tex)
+		return false;
 
-	// TODO: Use 1/4 width to write all values directly and skip CPU conversion?
-	uint8_t *dest = pixels;
-	const u32_le *packed32 = (u32_le *)convBuf_;
-	for (int yp = 0; yp < h; ++yp) {
-		for (int xp = 0; xp < w; ++xp) {
-			dest[xp] = packed32[xp] & 0xFF;
+	draw_->BindTextures(TEX_SLOT_PSP_TEXTURE, 1, &tex);
+
+	// We must bind the program after starting the render pass, and set the color mask after clearing.
+	render_->SetScissor({ 0, 0, w, h });
+	render_->SetDepth(false, false, GL_ALWAYS);
+	render_->Clear(0, 0, 0, GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, 0x8, 0, 0, 0, 0);
+	render_->SetStencilFunc(GL_TRUE, GL_ALWAYS, 0xFF, 0xFF);
+	render_->SetRaster(false, GL_CCW, GL_FRONT, GL_FALSE, GL_FALSE);
+	render_->BindProgram(stencilUploadProgram_);
+	render_->SetNoBlendAndMask(0x8);
+
+	for (int i = 1; i < values; i += i) {
+		if (!(usedBits & i)) {
+			// It's already zero, let's skip it.
+			continue;
 		}
-		dest += pixelsStride;
-		packed32 += w;
+		if (dstBuffer->format == GE_FORMAT_4444) {
+			render_->SetStencilOp((i << 4) | i, GL_REPLACE, GL_REPLACE, GL_REPLACE);
+			render_->SetUniformF1(&u_stencilValue, i * (16.0f / 255.0f));
+		} else if (dstBuffer->format == GE_FORMAT_5551) {
+			render_->SetStencilOp(0xFF, GL_REPLACE, GL_REPLACE, GL_REPLACE);
+			render_->SetUniformF1(&u_stencilValue, i * (128.0f / 255.0f));
+		} else {
+			render_->SetStencilOp(i, GL_REPLACE, GL_REPLACE, GL_REPLACE);
+			render_->SetUniformF1(&u_stencilValue, i * (1.0f / 255.0f));
+		}
+		DrawActiveTexture(0, 0, dstBuffer->width, dstBuffer->height, dstBuffer->bufferWidth, dstBuffer->bufferHeight, 0.0f, 0.0f, 1.0f, 1.0f, ROTATION_LOCKED_HORIZONTAL, DRAWTEX_NEAREST | DRAWTEX_KEEP_STENCIL_ALPHA);
 	}
 
-	gstate_c.Dirty(DIRTY_ALL_RENDER_STATE);
+	if (useBlit) {
+		render_->SetScissor({ 0, 0, dstBuffer->renderWidth, dstBuffer->renderHeight });
+		draw_->BlitFramebuffer(blitFBO, 0, 0, w, h, dstBuffer->fbo, 0, 0, dstBuffer->renderWidth, dstBuffer->renderHeight, Draw::FB_STENCIL_BIT, Draw::FB_BLIT_NEAREST, "NotifyStencilUpload_Blit");
+	}
+
+	tex->Release();
+	RebindFramebuffer("RebindFramebuffer - Stencil");
+	gstate_c.Dirty(DIRTY_BLEND_STATE | DIRTY_RASTER_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_TEXTURE_IMAGE | DIRTY_TEXTURE_PARAMS);
 	return true;
 }

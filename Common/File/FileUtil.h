@@ -17,9 +17,9 @@
 
 #pragma once
 
+#include <fstream>
 #include <cstdio>
 #include <string>
-#include <string_view>
 #include <time.h>
 #include <cstdint>
 
@@ -27,7 +27,7 @@
 
 // Some functions here support Android content URIs. These are marked as such.
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 inline struct tm* localtime_r(const time_t *clock, struct tm *result) {
 	if (localtime_s(result, clock) == 0)
 		return result;
@@ -55,26 +55,21 @@ enum OpenFlag {
 // of DirectoryFileSystem::Open here eventually for symmetry.
 int OpenFD(const Path &filename, OpenFlag flags);
 
-// Cross-platform way to close FDs, corresponsing in platform support with OpenFD above.
-void CloseFD(int fd);
-
 // Resolves symlinks and similar.
-std::string ResolvePath(std::string_view path);
+std::string ResolvePath(const std::string &path);
 
 // Returns true if file filename exists
 bool Exists(const Path &path);
 
 // Returns true if file filename exists in directory path.
-bool ExistsInDir(const Path &path, std::string_view filename);
+bool ExistsInDir(const Path &path, const std::string &filename);
 
 // Returns true if filename exists, and is a directory
 // Supports Android content URIs.
-bool IsDirectory(const Path &path);
+bool IsDirectory(const Path &filename);
 
 // Returns struct with modification date of file
 bool GetModifTime(const Path &filename, tm &return_time);
-// Same but with unix timestamp
-bool GetModifTimeT(const Path &filename, time_t *return_time);  // the time_t, of course, matches time_now_unix_utc().
 
 // Returns the size of filename (64bit)
 uint64_t GetFileSize(const Path &filename);
@@ -88,23 +83,21 @@ uint64_t ComputeRecursiveDirectorySize(const Path &path);
 // Returns true if successful, or path already exists.
 bool CreateDir(const Path &filename);
 
-void ChangeMTime(const Path &path, time_t mtime);
-
 // Creates the full path of fullPath returns true on success
 bool CreateFullPath(const Path &fullPath);
 
-// Deletes a given file by name, return true on success
-// Doesn't support deleting a directory (although it will work on some platforms - ideally shouldn't)
-bool Delete(const Path &filename, bool quiet = false);
+// Deletes a given filename, return true on success
+// Doesn't supports deleting a directory
+bool Delete(const Path &filename);
 
-// Deletes a directory by name, returns true on success
+// Deletes a directory filename, returns true on success
 // Directory must be empty.
 bool DeleteDir(const Path &filename);
 
 // Deletes the given directory and anything under it. Returns true on success.
 bool DeleteDirRecursively(const Path &directory);
 
-// Renames/moves file srcFilename to destFilename, returns true on success 
+// Renames file srcFilename to destFilename, returns true on success 
 // Will usually only work with in the same partition or other unit of storage,
 // so you might have to fall back to copy/delete.
 bool Rename(const Path &srcFilename, const Path &destFilename);
@@ -127,27 +120,8 @@ bool CreateEmptyFile(const Path &filename);
 // TODO: Belongs in System or something.
 bool OpenFileInEditor(const Path &fileName);
 
-// Uses some heuristics to determine if this is a folder that we would want to
-// write to.
-bool IsProbablyInDownloadsFolder(const Path &folder);
-
 // TODO: Belongs in System or something.
 const Path &GetExeDirectory();
-
-const Path GetCurDirectory();
-
-// Portable version of fseek() that works with 64-bit offsets if supported by
-// the operating system.
-int Fseek(FILE *file, int64_t offset, int whence);
-
-// Portable version of fseek() that works with 64-bit offsets if supported by
-// the operating system, and returns the new offset from the start of the file
-// or -1 if it failed.
-int64_t Fseektell(FILE *file, int64_t offset, int whence);
-
-// Portable version of ftell() that works with 64-bit offsets if supported by
-// the operating system.
-int64_t Ftell(FILE *file);
 
 // simple wrapper for cstdlib file functions to
 // hopefully will make error checking easier
@@ -168,7 +142,7 @@ public:
 	template <typename T>
 	bool ReadArray(T* data, size_t length)
 	{
-		if (!IsOpen() || length != fread(data, sizeof(T), length, m_file))
+		if (!IsOpen() || length != std::fread(data, sizeof(T), length, m_file))
 			m_good = false;
 
 		return m_good;
@@ -177,7 +151,7 @@ public:
 	template <typename T>
 	bool WriteArray(const T* data, size_t length)
 	{
-		if (!IsOpen() || length != fwrite(data, sizeof(T), length, m_file))
+		if (!IsOpen() || length != std::fwrite(data, sizeof(T), length, m_file))
 			m_good = false;
 
 		return m_good;
@@ -199,11 +173,11 @@ public:
 	bool IsGood() const { return m_good; }
 	operator bool() const { return IsGood() && IsOpen(); }
 
-	FILE* ReleaseHandle();
+	std::FILE* ReleaseHandle();
 
-	FILE* GetHandle() { return m_file; }
+	std::FILE* GetHandle() { return m_file; }
 
-	void SetHandle(FILE* file);
+	void SetHandle(std::FILE* file);
 
 	bool Seek(int64_t off, int origin);
 	uint64_t Tell();
@@ -214,43 +188,23 @@ public:
 	// clear error state
 	void Clear() {
 		m_good = true;
-#ifndef HAVE_LIBRETRO_VFS
 #undef clearerr
 		std::clearerr(m_file);
-#endif
 	}
 
 private:
-	FILE *m_file = nullptr;
+	std::FILE *m_file = nullptr;
 	bool m_good = true;
 };
-
-#ifdef HAVE_LIBRETRO_VFS
-// Call this on libretro core initialization with the libretro virtual file
-// system interface.
-void InitLibretroVFS(const struct retro_vfs_interface_info *vfs) noexcept;
-#endif
 
 // TODO: Refactor, this was moved from the old file_util.cpp.
 
 // Whole-file reading/writing
-bool WriteStringToFile(bool textFile, std::string_view str, const Path &filename);
-bool WriteDataToFile(bool textFile, const void* data, size_t size, const Path &filename);
+bool WriteStringToFile(bool text_file, const std::string &str, const Path &filename);
+bool WriteDataToFile(bool text_file, const void* data, const unsigned int size, const Path &filename);
 
-bool ReadFileToStringOptions(bool textFile, bool allowShort, const Path &path, std::string *str);
-
-// Wrappers that clarify the intentions.
-inline bool ReadBinaryFileToString(const Path &path, std::string *str) {
-	return ReadFileToStringOptions(false, false, path, str);
-}
-inline bool ReadSysTextFileToString(const Path &path, std::string *str) {
-	return ReadFileToStringOptions(true, true, path, str);
-}
-inline bool ReadTextFileToString(const Path &path, std::string *str) {
-	return ReadFileToStringOptions(true, false, path, str);
-}
-
+bool ReadFileToString(bool text_file, const Path &filename, std::string &str);
 // Return value must be delete[]-d.
-uint8_t *ReadLocalFile(const Path &path, size_t *size);
+uint8_t *ReadLocalFile(const Path &filename, size_t *size);
 
 }  // namespace

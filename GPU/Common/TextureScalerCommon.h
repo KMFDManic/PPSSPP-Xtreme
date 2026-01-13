@@ -22,33 +22,34 @@
 
 static const int MIN_TEXSCALE_LINES_PER_THREAD = 4;
 
-// The texture scaler requires input to be in R8G8B8A8.
-// (It's OK if you flip R and B as they are not treated very differently from each other.
-// They will of course not unflip during the operation so be aware of that).
 class TextureScalerCommon {
 public:
 	TextureScalerCommon();
 	~TextureScalerCommon();
 
-	void ScaleAlways(u32 *out, u32 *src, int width, int height, int *scaledWidth, int *scaledHeight, int factor);
-	bool Scale(u32 *&data, int width, int height, int *scaledWidth, int *scaledHeight, int factor);
-	bool ScaleInto(u32 *out, u32 *src, int width, int height, int *scaledWidth, int *scaledHeight, int factor);
+	void ScaleAlways(u32 *out, u32 *src, u32 &dstFmt, int &width, int &height, int factor);
+	bool Scale(u32 *&data, u32 &dstfmt, int &width, int &height, int factor);
+	bool ScaleInto(u32 *out, u32 *src, u32 &dstfmt, int &width, int &height, int factor);
 
 	enum { XBRZ = 0, HYBRID = 1, BICUBIC = 2, HYBRID_BICUBIC = 3 };
 
 protected:
-	static void ScaleXBRZ(int factor, u32* source, u32* dest, int width, int height);
+	virtual void ConvertTo8888(u32 format, u32 *source, u32 *&dest, int width, int height) = 0;
+	virtual int BytesPerPixel(u32 format) = 0;
+	virtual u32 Get8888Format() = 0;
+
+	void ScaleXBRZ(int factor, u32* source, u32* dest, int width, int height);
 	void ScaleBilinear(int factor, u32* source, u32* dest, int width, int height);
-	static void ScaleBicubicBSpline(int factor, u32* source, u32* dest, int width, int height);
-	static void ScaleBicubicMitchell(int factor, u32* source, u32* dest, int width, int height);
+	void ScaleBicubicBSpline(int factor, u32* source, u32* dest, int width, int height);
+	void ScaleBicubicMitchell(int factor, u32* source, u32* dest, int width, int height);
 	void ScaleHybrid(int factor, u32* source, u32* dest, int width, int height, bool bicubic = false);
 
 	void DePosterize(u32* source, u32* dest, int width, int height);
 
-	static bool IsEmptyOrFlat(const u32 *data, int pixels) ;
+	bool IsEmptyOrFlat(u32* data, int pixels, int fmt);
 
 	// depending on the factor and texture sizes, these can get pretty large 
 	// maximum is (100 MB total for a 512 by 512 texture with scaling factor 5 and hybrid scaling)
 	// of course, scaling factor 5 is totally silly anyway
-	AlignedVector<u32, 16> bufDeposter, bufOutput, bufTmp1, bufTmp2, bufTmp3;
+	SimpleBuf<u32> bufInput, bufDeposter, bufOutput, bufTmp1, bufTmp2, bufTmp3;
 };

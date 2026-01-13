@@ -21,12 +21,11 @@ RIFFReader::~RIFFReader() {
 }
 
 int RIFFReader::ReadInt() {
-	int value = 0;
 	if (data_ && pos_ < eof_ - 3) {
 		pos_ += 4;
-		memcpy(&value, data_ + pos_ - 4, 4);
+		return *(int *)(data_ + pos_ - 4);
 	}
-	return value;
+	return 0;
 }
 
 bool RIFFReader::Descend(uint32_t intoId) {
@@ -47,7 +46,7 @@ bool RIFFReader::Descend(uint32_t intoId) {
 		int startLocation = pos_;
 
 		if (pos_ + length > fileSize_) {
-			ERROR_LOG(Log::IO, "Block extends outside of RIFF file - failing descend");
+			ERROR_LOG(IO, "Block extends outside of RIFF file - failing descend");
 			pos_ = stack[depth_].parentStartLocation;
 			return false;
 		}
@@ -62,7 +61,7 @@ bool RIFFReader::Descend(uint32_t intoId) {
 			if (length > 0) {
 				pos_ += length; // try next block
 			} else {
-				ERROR_LOG(Log::IO, "Bad data in RIFF file : block length %d. Not descending.", length);
+				ERROR_LOG(IO, "Bad data in RIFF file : block length %d. Not descending.", length);
 				pos_ = stack[depth_].parentStartLocation;
 				return false;
 			}
@@ -105,3 +104,4 @@ int RIFFReader::GetCurrentChunkSize() {
 	else
 		return 0;
 }
+

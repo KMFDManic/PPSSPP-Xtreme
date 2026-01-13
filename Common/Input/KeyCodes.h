@@ -1,7 +1,6 @@
 #pragma once
 
-// These mostly match Android keycodes.
-enum InputKeyCode {
+typedef enum _keycode_t {
 	NKCODE_BUTTON_CROSS = 23, // trackpad or X button(Xperia Play) is pressed
 	NKCODE_BUTTON_CROSS_PS3 = 96, // PS3 X button is pressed
 	NKCODE_BUTTON_CIRCLE = 1004, // Special custom keycode generated from 'O' button by our java code. Or 'O' button if Alt is pressed (TODO)
@@ -128,7 +127,7 @@ enum InputKeyCode {
 	NKCODE_META_LEFT = 117,
 	NKCODE_META_RIGHT = 118,
 	NKCODE_FUNCTION = 119,
-	NKCODE_PRINTSCREEN = 120,
+	NKCODE_SYSRQ = 120,
 	NKCODE_BREAK = 121,
 	NKCODE_MOVE_HOME = 122,
 	NKCODE_MOVE_END = 123,
@@ -235,6 +234,24 @@ enum InputKeyCode {
 	NKCODE_LEFTBRACE = 221,
 	NKCODE_RIGHTBRACE = 222,
 
+	// Ouya buttons. Just here for reference, they map straight to regular android buttons
+	// and will be mapped the same way.
+	NKCODE_OUYA_BUTTON_A = 97,
+	NKCODE_OUYA_BUTTON_DPAD_DOWN = 20,
+	NKCODE_OUYA_BUTTON_DPAD_LEFT = 21,
+	NKCODE_OUYA_BUTTON_DPAD_RIGHT = 22,
+	NKCODE_OUYA_BUTTON_DPAD_UP = 19,
+	NKCODE_OUYA_BUTTON_L1 = 102,
+	NKCODE_OUYA_BUTTON_L2 = 104,
+	NKCODE_OUYA_BUTTON_L3 = 106,
+	NKCODE_OUYA_BUTTON_MENU = 82,
+	NKCODE_OUYA_BUTTON_O = 96,
+	NKCODE_OUYA_BUTTON_R1 = 103,
+	NKCODE_OUYA_BUTTON_R2 = 105,
+	NKCODE_OUYA_BUTTON_R3 = 107,
+	NKCODE_OUYA_BUTTON_U = 99,
+	NKCODE_OUYA_BUTTON_Y = 100,
+
 	// Extended keycodes, not available on Android
 	NKCODE_EXT_PIPE = 1001,  // The key next to Z on euro 102-key keyboards.
 
@@ -244,13 +261,10 @@ enum InputKeyCode {
 	NKCODE_EXT_MOUSEBUTTON_4 = 1006,
 	NKCODE_EXT_MOUSEBUTTON_5 = 1007,
 	NKCODE_EXT_MOUSEWHEEL_UP = 1008,
-	NKCODE_EXT_MOUSEWHEEL_DOWN = 1009,
+	NKCODE_EXT_MOUSEWHEEL_DOWN = 1009
+} keycode_t;
 
-	NKCODE_MAX
-};
-
-// These mostly match Android axis IDs.
-enum InputAxis {
+enum AndroidJoystickAxis {
 	// Field descriptor #15 I
 	JOYSTICK_AXIS_X = 0,
 	JOYSTICK_AXIS_Y = 1,
@@ -279,15 +293,29 @@ enum InputAxis {
 	JOYSTICK_AXIS_DISTANCE = 24,
 	JOYSTICK_AXIS_TILT = 25,
 
+	// Ouya axises. Just here for reference, they map straight to regular android axises
+	// and will be mapped the same way.
+	JOYSTICK_OUYA_AXIS_L2 = 17,
+	JOYSTICK_OUYA_AXIS_LS_X = 0,
+	JOYSTICK_OUYA_AXIS_LS_Y = 1,
+	JOYSTICK_OUYA_AXIS_R2 = 18,
+	JOYSTICK_OUYA_AXIS_RS_X = 11,
+	JOYSTICK_OUYA_AXIS_RS_Y = 14,
+
 	// Relative mouse axis for PC.
 	JOYSTICK_AXIS_MOUSE_REL_X = 26,
 	JOYSTICK_AXIS_MOUSE_REL_Y = 27,
 
-	// Mobile device accelerometer/gyro. NOTE: These are no longer passed around internally, only used for the plugin API.
+	// Getting these on Ouya, no clue what they are.
+	JOYSTICK_AXIS_OUYA_UNKNOWN1 = 32,
+	JOYSTICK_AXIS_OUYA_UNKNOWN2 = 33,
+	JOYSTICK_AXIS_OUYA_UNKNOWN3 = 34,
+	JOYSTICK_AXIS_OUYA_UNKNOWN4 = 35,
+
+	// Mobile device accelerometer/gyro
 	JOYSTICK_AXIS_ACCELEROMETER_X = 40,
 	JOYSTICK_AXIS_ACCELEROMETER_Y = 41,
 	JOYSTICK_AXIS_ACCELEROMETER_Z = 42,
 
-	// The numbers must NOT be changed, only additions are allowed
 	JOYSTICK_AXIS_MAX = 44
 };

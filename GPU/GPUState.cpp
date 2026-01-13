@@ -17,13 +17,25 @@
 
 #include "ppsspp_config.h"
 #include "Common/Common.h"
-#include "Common/Math/SIMDHeaders.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
+#include "Core/CoreParameter.h"
+#include "Core/Config.h"
+#include "Core/System.h"
 #include "Core/MemMap.h"
 #include "GPU/ge_constants.h"
-#include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
+
+#ifdef _M_SSE
+#include <emmintrin.h>
+#endif
+#if PPSSPP_ARCH(ARM_NEON)
+#if defined(_MSC_VER) && PPSSPP_ARCH(ARM64)
+#include <arm64_neon.h>
+#else
+#include <arm_neon.h>
+#endif
+#endif
 
 // This must be aligned so that the matrices within are aligned.
 alignas(16) GPUgstate gstate;
@@ -73,20 +85,11 @@ static const CmdRange contextCmdRanges[] = {
 	// Skip: {0xFA, 0xFF},
 };
 
-static u32_le *SaveMatrix(u32_le *cmds, GEMatrixType type, int sz, int numcmd, int datacmd) {
-	if (!gpu)
-		return cmds;
-
+static u32_le *SaveMatrix(u32_le *cmds, const float *mtx, int sz, int numcmd, int datacmd) {
 	*cmds++ = numcmd << 24;
-	// This saves the CPU-visible values, not the actual used ones, which may differ.
-	// Note that Restore overwrites both values.
-	if (type == GE_MTX_BONE0) {
-		for (int i = 0; i < 8; ++i)
-			gpu->GetMatrix24(GEMatrixType(GE_MTX_BONE0 + i), cmds + i * 12, datacmd << 24);
-	} else {
-		gpu->GetMatrix24(type, cmds, datacmd << 24);
+	for (int i = 0; i < sz; ++i) {
+		*cmds++ = (datacmd << 24) | toFloat24(mtx[i]);
 	}
-	cmds += sz;
 
 	return cmds;
 }
@@ -115,8 +118,6 @@ void GPUgstate::Reset() {
 	memset(gstate.boneMatrix, 0, sizeof(gstate.boneMatrix));
 
 	savedContextVersion = 1;
-
-	gstate_c.Dirty(DIRTY_CULL_PLANES);
 }
 
 void GPUgstate::Save(u32_le *ptr) {
@@ -129,7 +130,6 @@ void GPUgstate::Save(u32_le *ptr) {
 	u32_le *cmds = ptr + 17;
 	for (size_t i = 0; i < ARRAY_SIZE(contextCmdRanges); ++i) {
 		for (int n = contextCmdRanges[i].start; n <= contextCmdRanges[i].end; ++n) {
-			// We'll run ReapplyGfxState after this to process dirtying.
 			*cmds++ = cmdmem[n];
 		}
 	}
@@ -152,17 +152,17 @@ void GPUgstate::Save(u32_le *ptr) {
 		memcpy(matrices, projMatrix, sizeof(projMatrix)); matrices += sizeof(projMatrix);
 		memcpy(matrices, tgenMatrix, sizeof(tgenMatrix)); matrices += sizeof(tgenMatrix);
 	} else {
-		cmds = SaveMatrix(cmds, GE_MTX_BONE0, ARRAY_SIZE(boneMatrix), GE_CMD_BONEMATRIXNUMBER, GE_CMD_BONEMATRIXDATA);
-		cmds = SaveMatrix(cmds, GE_MTX_WORLD, ARRAY_SIZE(worldMatrix), GE_CMD_WORLDMATRIXNUMBER, GE_CMD_WORLDMATRIXDATA);
-		cmds = SaveMatrix(cmds, GE_MTX_VIEW, ARRAY_SIZE(viewMatrix), GE_CMD_VIEWMATRIXNUMBER, GE_CMD_VIEWMATRIXDATA);
-		cmds = SaveMatrix(cmds, GE_MTX_PROJECTION, ARRAY_SIZE(projMatrix), GE_CMD_PROJMATRIXNUMBER, GE_CMD_PROJMATRIXDATA);
-		cmds = SaveMatrix(cmds, GE_MTX_TEXGEN, ARRAY_SIZE(tgenMatrix), GE_CMD_TGENMATRIXNUMBER, GE_CMD_TGENMATRIXDATA);
+		cmds = SaveMatrix(cmds, boneMatrix, ARRAY_SIZE(boneMatrix), GE_CMD_BONEMATRIXNUMBER, GE_CMD_BONEMATRIXDATA);
+		cmds = SaveMatrix(cmds, worldMatrix, ARRAY_SIZE(worldMatrix), GE_CMD_WORLDMATRIXNUMBER, GE_CMD_WORLDMATRIXDATA);
+		cmds = SaveMatrix(cmds, viewMatrix, ARRAY_SIZE(viewMatrix), GE_CMD_VIEWMATRIXNUMBER, GE_CMD_VIEWMATRIXDATA);
+		cmds = SaveMatrix(cmds, projMatrix, ARRAY_SIZE(projMatrix), GE_CMD_PROJMATRIXNUMBER, GE_CMD_PROJMATRIXDATA);
+		cmds = SaveMatrix(cmds, tgenMatrix, ARRAY_SIZE(tgenMatrix), GE_CMD_TGENMATRIXNUMBER, GE_CMD_TGENMATRIXDATA);
 
-		*cmds++ = boneMatrixNumber & 0xFF00007F;
-		*cmds++ = worldmtxnum & 0xFF00000F;
-		*cmds++ = viewmtxnum & 0xFF00000F;
-		*cmds++ = projmtxnum & 0xFF00000F;
-		*cmds++ = texmtxnum & 0xFF00000F;
+		*cmds++ = boneMatrixNumber;
+		*cmds++ = worldmtxnum;
+		*cmds++ = viewmtxnum;
+		*cmds++ = projmtxnum;
+		*cmds++ = texmtxnum;
 		*cmds++ = GE_CMD_END << 24;
 	}
 }
@@ -199,10 +199,10 @@ void GPUgstate::FastLoadBoneMatrix(u32 addr) {
 #endif
 
 	num += 12;
-	gstate.boneMatrixNumber = (GE_CMD_BONEMATRIXNUMBER << 24) | (num & 0x00FFFFFF);
+	gstate.boneMatrixNumber = (GE_CMD_BONEMATRIXNUMBER << 24) | (num & 0x7F);
 }
 
-void GPUgstate::Restore(const u32_le *ptr) {
+void GPUgstate::Restore(u32_le *ptr) {
 	// Not sure what the first 10 values are, exactly, but these seem right.
 	gstate_c.vertexAddr = ptr[5];
 	gstate_c.indexAddr = ptr[6];
@@ -238,21 +238,19 @@ void GPUgstate::Restore(const u32_le *ptr) {
 		cmds = LoadMatrix(cmds, projMatrix, ARRAY_SIZE(projMatrix));
 		cmds = LoadMatrix(cmds, tgenMatrix, ARRAY_SIZE(tgenMatrix));
 
-		boneMatrixNumber = (*cmds++) & 0xFF00007F;
-		worldmtxnum = (*cmds++) & 0xFF00000F;
-		viewmtxnum = (*cmds++) & 0xFF00000F;
-		projmtxnum = (*cmds++) & 0xFF00000F;
-		texmtxnum = (*cmds++) & 0xFF00000F;
+		boneMatrixNumber = *cmds++;
+		worldmtxnum = *cmds++;
+		viewmtxnum = *cmds++;
+		projmtxnum = *cmds++;
+		texmtxnum = *cmds++;
 	}
-
-	if (gpu)
-		gpu->ResetMatrices();
-
-	gstate_c.Dirty(DIRTY_CULL_PLANES);
 }
 
 bool vertTypeIsSkinningEnabled(u32 vertType) {
-	return ((vertType & GE_VTYPE_WEIGHT_MASK) != GE_VTYPE_WEIGHT_NONE);
+	if (g_Config.bSoftwareSkinning)
+		return false;
+	else
+		return ((vertType & GE_VTYPE_WEIGHT_MASK) != GE_VTYPE_WEIGHT_NONE);
 }
 
 struct GPUStateCache_v0 {
@@ -357,69 +355,4 @@ void GPUStateCache::DoState(PointerWrap &p) {
 	} else {
 		Do(p, savedContextVersion);
 	}
-
-	if (p.GetMode() == PointerWrap::MODE_READ)
-		gstate_c.Dirty(DIRTY_CULL_PLANES);
-}
-
-static const char *const g_gpuUseFlagNames[32] = {
-	"GPU_USE_DUALSOURCE_BLEND",
-	"GPU_USE_LIGHT_UBERSHADER",
-	"GPU_USE_FRAGMENT_TEST_CACHE",
-	"GPU_USE_VS_RANGE_CULLING",
-	"GPU_USE_BLEND_MINMAX",
-	"GPU_USE_LOGIC_OP",
-	"GPU_USE_FRAGMENT_UBERSHADER",
-	"GPU_USE_TEXTURE_NPOT",
-	"GPU_USE_ANISOTROPY",
-	"GPU_USE_CLEAR_RAM_HACK",
-	"GPU_USE_INSTANCE_RENDERING",
-	"GPU_USE_VERTEX_TEXTURE_FETCH",
-	"GPU_USE_TEXTURE_FLOAT",
-	"GPU_USE_16BIT_FORMATS",
-	"GPU_USE_DEPTH_CLAMP",
-	"GPU_USE_TEXTURE_LOD_CONTROL",
-	"GPU_USE_DEPTH_TEXTURE",
-	"GPU_USE_ACCURATE_DEPTH",
-	"GPU_USE_GS_CULLING",
-	"N/A",
-	"GPU_USE_FRAMEBUFFER_FETCH",
-	"GPU_SCALE_DEPTH_FROM_24BIT_TO_16BIT",
-	"GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT",
-	"GPU_ROUND_DEPTH_TO_16BIT",
-	"GPU_USE_CLIP_DISTANCE",
-	"GPU_USE_CULL_DISTANCE",
-	"N/A", // bit 26
-	"N/A", // bit 27
-	"N/A", // bit 28
-	"GPU_USE_VIRTUAL_REALITY",
-	"GPU_USE_SINGLE_PASS_STEREO",
-	"GPU_USE_SIMPLE_STEREO_PERSPECTIVE",
-};
-
-const char *GpuUseFlagToString(int useFlag) {
-	if ((u32)useFlag < 32) {
-		return g_gpuUseFlagNames[useFlag];
-	} else {
-		return "N/A";
-	}
-}
-
-bool GPUStateCache::SetUseFlags(const u32 newFlags) {
-	if (newFlags != useFlags_) {
-		if (useFlags_ != 0 && newFlags != 0) {
-			INFO_LOG(Log::G3D, "Shader useflags changed from %08x to %08x:", useFlags_, newFlags);
-			for (int i = 0; i < 32; i++) {
-				const int mask = 1 << i;
-				bool oldVal = (useFlags_ & mask) != 0;
-				bool newVal = (newFlags & mask) != 0;
-				if (oldVal != newVal) {
-					INFO_LOG(Log::G3D, "%s changed from %d to %d", g_gpuUseFlagNames[i], (int)oldVal, (int)newVal);
-				}
-			}
-			useFlagsChanged = true;
-		}
-		useFlags_ = newFlags;
-	}
-	return useFlagsChanged;
 }

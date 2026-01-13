@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <set>
 
@@ -14,19 +15,23 @@
 #include "Common/Log.h"
 #include "Common/Thread/ThreadUtil.h"
 
+#include "Core/Config.h"
+#include "Core/System.h"
+
 #if PPSSPP_PLATFORM(ANDROID)
 #include "android/jni/app-android.h"
+#include "android/jni/AndroidContentURI.h"
 #endif
 
-static bool LoadRemoteFileList(const Path &url, std::string_view userAgent, bool *cancel, std::vector<File::FileInfo> &files) {
+bool LoadRemoteFileList(const Path &url, bool *cancel, std::vector<File::FileInfo> &files) {
 	_dbg_assert_(url.Type() == PathType::HTTP);
 
-	http::Client http(nullptr);
+	http::Client http;
 	Buffer result;
 	int code = 500;
 	std::vector<std::string> responseHeaders;
 
-	http.SetUserAgent(userAgent);
+	http.SetUserAgent(StringFromFormat("PPSSPP/%s", PPSSPP_GIT_VERSION));
 
 	Url baseURL(url.ToString());
 	if (!baseURL.Valid()) {
@@ -34,10 +39,10 @@ static bool LoadRemoteFileList(const Path &url, std::string_view userAgent, bool
 	}
 
 	// Start by requesting the list of files from the server.
+	http::RequestParams req(baseURL.Resource(), "text/plain, text/html; q=0.9, */*; q=0.8");
 	if (http.Resolve(baseURL.Host().c_str(), baseURL.Port())) {
 		if (http.Connect(2, 20.0, cancel)) {
-			http::RequestParams req(baseURL.Resource(), "text/plain, text/html; q=0.9, */*; q=0.8");
-			net::RequestProgress progress(cancel);
+			http::RequestProgress progress(cancel);
 			code = http.GET(req, &result, responseHeaders, &progress);
 			http.Disconnect();
 		}
@@ -51,11 +56,10 @@ static bool LoadRemoteFileList(const Path &url, std::string_view userAgent, bool
 	std::vector<std::string> items;
 	result.TakeAll(&listing);
 
-	constexpr std::string_view ContentTypeHeader = "Content-Type:";
 	std::string contentType;
 	for (const std::string &header : responseHeaders) {
-		if (startsWithNoCase(header, ContentTypeHeader)) {
-			contentType = header.substr(ContentTypeHeader.size());
+		if (startsWithNoCase(header, "Content-Type:")) {
+			contentType = header.substr(strlen("Content-Type:"));
 			// Strip any whitespace (TODO: maybe move this to stringutil?)
 			contentType.erase(0, contentType.find_first_not_of(" \t\r\n"));
 			contentType.erase(contentType.find_last_not_of(" \t\r\n") + 1);
@@ -74,36 +78,27 @@ static bool LoadRemoteFileList(const Path &url, std::string_view userAgent, bool
 		// Try to extract from an automatic webserver directory listing...
 		GetQuotedStrings(listing, items);
 	} else {
-		ERROR_LOG(Log::IO, "Unsupported Content-Type: %s", contentType.c_str());
+		ERROR_LOG(IO, "Unsupported Content-Type: %s", contentType.c_str());
 		return false;
 	}
-	Path basePath(baseURL.ToString());
-	for (auto &item : items) {
+
+	for (std::string item : items) {
 		// Apply some workarounds.
 		if (item.empty())
 			continue;
-		if (item.back() == '\r') {
+		if (item.back() == '\r')
 			item.pop_back();
-			if (item.empty())
-				continue;
-		}
 		if (item == baseURL.Resource())
 			continue;
 
 		File::FileInfo info;
-		if (item.back() == '/') {
-			item.pop_back();
-			if (item.empty())
-				continue;
-			info.isDirectory = true;
-		} else {
-			info.isDirectory = false;
-		}
 		info.name = item;
-		info.fullName = basePath / item;
+		info.fullName = Path(baseURL.Relative(item).ToString());
+		info.isDirectory = endsWith(item, "/");
 		info.exists = true;
 		info.size = 0;
 		info.isWritable = false;
+
 		files.push_back(info);
 	}
 
@@ -111,12 +106,12 @@ static bool LoadRemoteFileList(const Path &url, std::string_view userAgent, bool
 }
 
 PathBrowser::~PathBrowser() {
-	{
-		std::unique_lock<std::mutex> guard(pendingLock_);
-		pendingCancel_ = true;
-		pendingStop_ = true;
-		pendingCond_.notify_all();
-	}
+	std::unique_lock<std::mutex> guard(pendingLock_);
+	pendingCancel_ = true;
+	pendingStop_ = true;
+	pendingCond_.notify_all();
+	guard.unlock();
+
 	if (pendingThread_.joinable()) {
 		pendingThread_.join();
 	}
@@ -124,13 +119,7 @@ PathBrowser::~PathBrowser() {
 
 void PathBrowser::SetPath(const Path &path) {
 	path_ = path;
-	ApplyRestriction();
 	HandlePath();
-}
-
-void PathBrowser::RestrictToRoot(const Path &root) {
-	VERBOSE_LOG(Log::IO, "Restricting to root: %s", root.c_str());
-	restrictedRoot_ = root;
 }
 
 void PathBrowser::HandlePath() {
@@ -155,8 +144,6 @@ void PathBrowser::HandlePath() {
 	pendingThread_ = std::thread([&] {
 		SetCurrentThreadName("PathBrowser");
 
-		AndroidJNIThreadContext jniContext;  // destructor detaches
-
 		std::unique_lock<std::mutex> guard(pendingLock_);
 		std::vector<File::FileInfo> results;
 		Path lastPath("NONSENSE THAT WONT EQUAL A PATH");
@@ -168,26 +155,24 @@ void PathBrowser::HandlePath() {
 				break;
 			}
 			lastPath = pendingPath_;
+			bool success = false;
 			if (lastPath.Type() == PathType::HTTP) {
 				guard.unlock();
 				results.clear();
-				success_ = LoadRemoteFileList(lastPath, userAgent_, &pendingCancel_, results);
+				success = LoadRemoteFileList(lastPath, &pendingCancel_, results);
 				guard.lock();
 			} else if (lastPath.empty()) {
 				results.clear();
-				success_ = true;
+				success = true;
 			} else {
 				guard.unlock();
 				results.clear();
-				success_ = File::GetFilesInDir(lastPath, &results, nullptr);
-				if (!success_) {
-					WARN_LOG(Log::IO, "PathBrowser: Failed to list directory: %s", lastPath.c_str());
-				}
+				success = File::GetFilesInDir(lastPath, &results, nullptr);
 				guard.lock();
 			}
 
 			if (pendingPath_ == lastPath) {
-				if (success_ && !pendingCancel_) {
+				if (success && !pendingCancel_) {
 					pendingFiles_ = results;
 				}
 				pendingPath_.clear();
@@ -204,41 +189,59 @@ void PathBrowser::ResetPending() {
 	pendingPath_.clear();
 }
 
-bool PathBrowser::GetListing(std::vector<File::FileInfo> &fileInfo, const char *extensionFilter, bool *cancel) {
+bool PathBrowser::IsListingReady() {
+	return ready_;
+}
+
+std::string PathBrowser::GetFriendlyPath() const {
+	std::string str = GetPath().ToVisualString();
+	// Show relative to memstick root if there.
+	std::string root = GetSysDirectory(DIRECTORY_MEMSTICK_ROOT).ToVisualString();
+
+	if (startsWith(str, root)) {
+		return std::string("ms:") + str.substr(root.size());
+	}
+
+#if PPSSPP_PLATFORM(LINUX) || PPSSPP_PLATFORM(MAC)
+	char *home = getenv("HOME");
+	if (home != nullptr && !strncmp(str.c_str(), home, strlen(home))) {
+		str = std::string("~") + str.substr(strlen(home));
+	}
+#endif
+	return str;
+}
+
+bool PathBrowser::GetListing(std::vector<File::FileInfo> &fileInfo, const char *filter, bool *cancel) {
 	std::unique_lock<std::mutex> guard(pendingLock_);
 	while (!IsListingReady() && (!cancel || !*cancel)) {
-		// In case cancel changes, just sleep. TODO: Replace with condition variable.
+		// In case cancel changes, just sleep.
 		guard.unlock();
-		sleep_ms(50, "pathbrowser-poll");
+		sleep_ms(50);
 		guard.lock();
 	}
 
-	fileInfo = ApplyFilter(pendingFiles_, extensionFilter, "");
+	fileInfo = ApplyFilter(pendingFiles_, filter);
 	return true;
 }
 
-void PathBrowser::ApplyRestriction() {
-	if (!path_.StartsWith(restrictedRoot_) && !startsWith(path_.ToString(), "!")) {
-		WARN_LOG(Log::IO, "Applying path restriction: %s (%s didn't match)", restrictedRoot_.c_str(), path_.c_str());
-		path_ = restrictedRoot_;
-	}
-}
-
 bool PathBrowser::CanNavigateUp() {
-	if (path_ == restrictedRoot_) {
+/* Leaving this commented out, not sure if there's a use in UWP for navigating up from the user data folder.
+#if PPSSPP_PLATFORM(UWP)
+	// Can't navigate up from memstick folder :(
+	if (path_ == GetSysDirectory(DIRECTORY_MEMSTICK_ROOT)) {
 		return false;
 	}
+#endif
+*/
 	return path_.CanNavigateUp();
 }
 
 void PathBrowser::NavigateUp() {
-	_dbg_assert_(CanNavigateUp());
 	path_ = path_.NavigateUp();
-	ApplyRestriction();
 }
 
 // TODO: Support paths like "../../hello"
-void PathBrowser::Navigate(std::string_view path) {
+void PathBrowser::Navigate(const std::string &path) {
 	if (path == ".")
 		return;
 	if (path == "..") {

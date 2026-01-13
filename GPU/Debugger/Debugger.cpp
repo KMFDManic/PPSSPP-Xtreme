@@ -25,22 +25,141 @@
 
 namespace GPUDebug {
 
-const char *BreakNextToString(BreakNext next) {
-	switch (next) {
-	case BreakNext::NONE: return "NONE,";
-	case BreakNext::OP: return "OP";
-	case BreakNext::DRAW: return "DRAW";
-	case BreakNext::TEX: return "TEX";
-	case BreakNext::NONTEX: return "NONTEX";
-	case BreakNext::FRAME: return "FRAME";
-	case BreakNext::VSYNC: return "VSYNC";
-	case BreakNext::PRIM: return "PRIM";
-	case BreakNext::CURVE: return "CURVE";
-	case BreakNext::BLOCK_TRANSFER: return "BLOCK_TRANSFER";
-	case BreakNext::COUNT: return "COUNT";
-	case BreakNext::DEBUG_RUN: return "DEBUG_RUN";
-	default: return "N/A";
+static bool active = false;
+static bool inited = false;
+static BreakNext breakNext = BreakNext::NONE;
+static int breakAtCount = -1;
+static bool hasBreakpoints = false;
+
+static int primsLastFrame = 0;
+static int primsThisFrame = 0;
+static int thisFlipNum = 0;
+
+static std::vector<std::pair<int, int>> restrictPrimRanges;
+static std::string restrictPrimRule;
+
+static void Init() {
+	if (!inited) {
+		GPUBreakpoints::Init([](bool flag) {
+			hasBreakpoints = flag;
+		});
+		Core_ListenStopRequest(&GPUStepping::ForceUnpause);
+		inited = true;
 	}
+}
+
+void SetActive(bool flag) {
+	Init();
+
+	active = flag;
+	if (!active) {
+		breakNext = BreakNext::NONE;
+		breakAtCount = -1;
+		GPUStepping::ResumeFromStepping();
+	}
+}
+
+bool IsActive() {
+	return active;
+}
+
+void SetBreakNext(BreakNext next) {
+	SetActive(true);
+	breakNext = next;
+	breakAtCount = -1;
+	if (next == BreakNext::TEX) {
+		GPUBreakpoints::AddTextureChangeTempBreakpoint();
+	} else if (next == BreakNext::PRIM || next == BreakNext::COUNT) {
+		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_PRIM, true);
+		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_BEZIER, true);
+		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_SPLINE, true);
+	} else if (next == BreakNext::CURVE) {
+		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_BEZIER, true);
+		GPUBreakpoints::AddCmdBreakpoint(GE_CMD_SPLINE, true);
+	}
+	GPUStepping::ResumeFromStepping();
+}
+
+void SetBreakCount(int c, bool relative) {
+	if (relative) {
+		breakAtCount = primsThisFrame + c;
+	} else {
+		breakAtCount = c;
+	}
+}
+
+static bool IsBreakpoint(u32 pc, u32 op) {
+	if (breakNext == BreakNext::OP) {
+		return true;
+	} else if (breakNext == BreakNext::COUNT) {
+		return primsThisFrame == breakAtCount;
+	} else if (hasBreakpoints) {
+		return GPUBreakpoints::IsBreakpoint(pc, op);
+	}
+	return false;
+}
+
+bool NotifyCommand(u32 pc) {
+	if (!active)
+		return true;
+	u32 op = Memory::ReadUnchecked_U32(pc);
+	u32 cmd = op >> 24;
+	if (thisFlipNum != gpuStats.numFlips) {
+		primsLastFrame = primsThisFrame;
+		primsThisFrame = 0;
+		thisFlipNum = gpuStats.numFlips;
+	}
+
+	bool process = true;
+	if (cmd == GE_CMD_PRIM || cmd == GE_CMD_BEZIER || cmd == GE_CMD_SPLINE) {
+		primsThisFrame++;
+
+		if (!restrictPrimRanges.empty()) {
+			process = false;
+			for (const auto &range : restrictPrimRanges) {
+				if (primsThisFrame >= range.first && primsThisFrame <= range.second) {
+					process = true;
+					break;
+				}
+			}
+		}
+	}
+
+	if (IsBreakpoint(pc, op)) {
+		GPUBreakpoints::ClearTempBreakpoints();
+
+		auto info = gpuDebug->DissassembleOp(pc);
+		NOTICE_LOG(G3D, "Waiting at %08x, %s", pc, info.desc.c_str());
+		GPUStepping::EnterStepping();
+	}
+
+	return process;
+}
+
+void NotifyDraw() {
+	if (!active)
+		return;
+	if (breakNext == BreakNext::DRAW && !GPUStepping::IsStepping()) {
+		NOTICE_LOG(G3D, "Waiting at a draw");
+		GPUStepping::EnterStepping();
+	}
+}
+
+void NotifyDisplay(u32 framebuf, u32 stride, int format) {
+	if (!active)
+		return;
+	if (breakNext == BreakNext::FRAME) {
+		// This should work fine, start stepping at the first op of the new frame.
+		breakNext = BreakNext::OP;
+	}
+}
+
+int PrimsThisFrame() {
+	return primsThisFrame;
+}
+
+int PrimsLastFrame() {
+	return primsLastFrame;
 }
 
 static bool ParseRange(const std::string &s, std::pair<int, int> &range) {
@@ -52,9 +171,15 @@ static bool ParseRange(const std::string &s, std::pair<int, int> &range) {
 	return true;
 }
 
-bool ParsePrimRanges(std::string_view rule, std::vector<std::pair<int, int>> *output) {
-	constexpr int MAX_PRIMS = 0x7FFFFFFF;
+bool SetRestrictPrims(const char *rule) {
+	SetActive(true);
+	if (rule == nullptr || rule[0] == 0 || (rule[0] == '*' && rule[1] == 0)) {
+		restrictPrimRanges.clear();
+		restrictPrimRule.clear();
+		return true;
+	}
 
+	static constexpr int MAX_PRIMS = 0x7FFFFFFF;
 	std::vector<std::string> parts;
 	SplitString(rule, ',', parts);
 
@@ -69,9 +194,9 @@ bool ParsePrimRanges(std::string_view rule, std::vector<std::pair<int, int>> *ou
 			// If there's nothing yet, add everything else.
 			if (updated.empty()) {
 				if (range.first > 0)
-					updated.emplace_back(0, range.first - 1);
+					updated.push_back(std::make_pair(0, range.first - 1));
 				if (range.second < MAX_PRIMS)
-					updated.emplace_back(range.second + 1, MAX_PRIMS);
+					updated.push_back(std::make_pair(range.second + 1, MAX_PRIMS));
 				continue;
 			}
 
@@ -90,7 +215,7 @@ bool ParsePrimRanges(std::string_view rule, std::vector<std::pair<int, int>> *ou
 					// We're slicing a hole in this subrange.
 					int next = sub.second;
 					sub.second = range.first - 1;
-					updated.emplace_back(range.second + 1, next);
+					updated.push_back(std::make_pair(range.second + 1, next));
 					continue;
 				}
 
@@ -107,8 +232,14 @@ bool ParsePrimRanges(std::string_view rule, std::vector<std::pair<int, int>> *ou
 			updated.push_back(range);
 		}
 	}
-	*output = updated;
+
+	restrictPrimRanges = updated;
+	restrictPrimRule = rule;
 	return true;
+}
+
+const char *GetRestrictPrims() {
+	return restrictPrimRule.c_str();
 }
 
 }

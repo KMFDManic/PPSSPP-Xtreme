@@ -1,11 +1,10 @@
 #pragma once
 
-#include "Core/Debugger/DebugInterface.h"
-#include "Core/HLE/sceKernelThread.h"
-#include "Core/Debugger/Breakpoints.h"
-#include "Core/Debugger/SymbolMap.h"
-#include "Core/Debugger/Watch.h"
-#include "Core/MIPS/MIPSStackWalk.h"
+#include "../../Core/Debugger/DebugInterface.h"
+#include "../../Core/HLE/sceKernelThread.h"
+#include "../../Core/Debugger/Breakpoints.h"
+#include "../../Core/Debugger/SymbolMap.h"
+#include "../../Core/MIPS/MIPSStackWalk.h"
 #include "Windows/W32Util/Misc.h"
 
 class CtrlThreadList: public GenericListControl
@@ -16,11 +15,11 @@ public:
 	void showMenu(int itemIndex, const POINT &pt);
 	const char* getCurrentThreadName();
 protected:
-	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT &returnValue) override;
-	void GetColumnText(wchar_t *dest, size_t destSize, int row, int col) override;
-	int GetRowCount() override { return (int) threads.size(); }
-	void OnDoubleClick(int itemIndex, int column) override;
-	void OnRightClick(int itemIndex, int column, const POINT &point) override;
+	virtual bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& returnValue);
+	virtual void GetColumnText(wchar_t* dest, int row, int col);
+	virtual int GetRowCount() { return (int) threads.size(); };
+	virtual void OnDoubleClick(int itemIndex, int column);
+	virtual void OnRightClick(int itemIndex, int column, const POINT& point);
 private:
 	std::vector<DebugThreadInfo> threads;
 };
@@ -30,20 +29,21 @@ class CtrlDisAsmView;
 class CtrlBreakpointList: public GenericListControl
 {
 public:
-	CtrlBreakpointList(HWND hwnd, MIPSDebugInterface* cpu, CtrlDisAsmView* disasm);
+	CtrlBreakpointList(HWND hwnd, DebugInterface* cpu, CtrlDisAsmView* disasm);
 	void reloadBreakpoints();
+	void showMenu(int itemIndex, const POINT &pt);
 protected:
-	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT &returnValue) override;
-	void GetColumnText(wchar_t *dest, size_t destSize, int row, int col) override;
-	int GetRowCount() override { return getTotalBreakpointCount(); }
-	void OnDoubleClick(int itemIndex, int column) override;
-	void OnRightClick(int itemIndex, int column, const POINT &point) override;
-	void OnToggle(int item, bool newValue) override;
+	virtual bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& returnValue);
+	virtual void GetColumnText(wchar_t* dest, int row, int col);
+	virtual int GetRowCount() { return getTotalBreakpointCount(); };
+	virtual void OnDoubleClick(int itemIndex, int column);
+	virtual void OnRightClick(int itemIndex, int column, const POINT& point);
+	virtual void OnToggle(int item, bool newValue);
 private:
 	std::vector<BreakPoint> displayedBreakPoints_;
 	std::vector<MemCheck> displayedMemChecks_;
 	std::wstring breakpointText;
-	MIPSDebugInterface* cpu;
+	DebugInterface* cpu;
 	CtrlDisAsmView* disasm;
 
 	void editBreakpoint(int itemIndex);
@@ -61,10 +61,10 @@ public:
 	CtrlStackTraceView(HWND hwnd, DebugInterface* cpu, CtrlDisAsmView* disasm);
 	void loadStackTrace();
 protected:
-	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT &returnValue) override;
-	void GetColumnText(wchar_t *dest, size_t destSize, int row, int col) override;
-	int GetRowCount() override { return (int)frames.size(); }
-	void OnDoubleClick(int itemIndex, int column) override;
+	virtual bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& returnValue);
+	virtual void GetColumnText(wchar_t* dest, int row, int col);
+	virtual int GetRowCount() { return (int)frames.size(); };
+	virtual void OnDoubleClick(int itemIndex, int column);
 private:
 	std::vector<MIPSStackWalk::StackFrame> frames;
 	DebugInterface* cpu;
@@ -77,34 +77,11 @@ public:
 	CtrlModuleList(HWND hwnd, DebugInterface* cpu);
 	void loadModules();
 protected:
-	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT &returnValue) override;
-	void GetColumnText(wchar_t *dest, size_t destSize, int row, int col) override;
-	int GetRowCount() override { return (int)modules.size(); }
-	void OnDoubleClick(int itemIndex, int column) override;
+	virtual bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& returnValue);
+	virtual void GetColumnText(wchar_t* dest, int row, int col);
+	virtual int GetRowCount() { return (int)modules.size(); };
+	virtual void OnDoubleClick(int itemIndex, int column);
 private:
 	std::vector<LoadedModuleInfo> modules;
 	DebugInterface* cpu;
-};
-
-class CtrlWatchList : public GenericListControl {
-public:
-	CtrlWatchList(HWND hwnd, DebugInterface *cpu);
-	void RefreshValues();
-
-protected:
-	bool WindowMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT &returnValue) override;
-	void GetColumnText(wchar_t *dest, size_t destSize, int row, int col) override;
-	int GetRowCount() override { return (int)watches_.size(); }
-	void OnRightClick(int itemIndex, int column, const POINT &point) override;
-	bool ListenRowPrePaint() override { return true; }
-	bool OnRowPrePaint(int row, LPNMLVCUSTOMDRAW msg) override;
-
-private:
-	void AddWatch();
-	void EditWatch(int pos);
-	void DeleteWatch(int pos);
-	bool HasWatchChanged(int pos);
-
-	std::vector<WatchInfo> watches_;
-	DebugInterface *cpu_;
 };

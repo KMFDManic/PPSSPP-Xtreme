@@ -22,35 +22,25 @@
 
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/ViewGroup.h"
-#include "UI/BaseScreens.h"
+#include "UI/MiscScreens.h"
 #include "UI/MainScreen.h"
-#include "UI/TabbedDialogScreen.h"
 
-class RemoteISOScreen : public UITabbedBaseDialogScreen {
+class RemoteISOScreen : public UIScreenWithBackground {
 public:
-	RemoteISOScreen(const Path &filename);
-
-	const char *tag() const override { return "RemoteISO"; }
-	void CreateTabs() override;
+	RemoteISOScreen();
 
 protected:
-	void OnChangeRemoteISOSubdir(UI::EventParams &e);
-
-	void CreateConnectTab(UI::ViewGroup *viewGroup);
-	void CreateSettingsTab(UI::ViewGroup *viewGroup);
-	bool ShowSearchControls() const override { return false; }
-
 	void update() override;
+	void CreateViews() override;
 
-	void HandleStartServer(UI::EventParams &e);
-	void HandleStopServer(UI::EventParams &e);
-	void HandleBrowse(UI::EventParams &e);
+	UI::EventReturn HandleStartServer(UI::EventParams &e);
+	UI::EventReturn HandleStopServer(UI::EventParams &e);
+	UI::EventReturn HandleBrowse(UI::EventParams &e);
+	UI::EventReturn HandleSettings(UI::EventParams &e);
 
 	UI::TextView *firewallWarning_ = nullptr;
 	bool serverRunning_ = false;
 	bool serverStopping_ = false;
-
-	int frameCount_ = 0;
 };
 
 enum class ScanStatus {
@@ -62,12 +52,10 @@ enum class ScanStatus {
 	LOADED,
 };
 
-class RemoteISOConnectScreen : public UIBaseDialogScreen {
+class RemoteISOConnectScreen : public UIScreenWithBackground {
 public:
 	RemoteISOConnectScreen();
-	~RemoteISOConnectScreen();
-
-	const char *tag() const override { return "RemoteISOConnect"; }
+	~RemoteISOConnectScreen() override;
 
 protected:
 	void update() override;
@@ -78,25 +66,22 @@ protected:
 	void ExecuteLoad();
 	bool FindServer(std::string &resultHost, int &resultPort);
 
-	UI::TextView *statusView_ = nullptr;
+	UI::TextView *statusView_;
 
 	ScanStatus status_ = ScanStatus::SCANNING;
 	std::string statusMessage_;
 	double nextRetry_ = 0.0;
-	std::thread scanThread_;
+	std::thread *scanThread_;
 	std::mutex statusLock_;
 	std::string host_;
-	int port_ = -1;
+	int port_;
 	std::string url_;
 	std::vector<Path> games_;
 };
 
 class RemoteISOBrowseScreen : public MainScreen {
 public:
-	RemoteISOBrowseScreen(const std::string &url, const std::vector<Path> &games)
-		: url_(url), games_(games) {}
-
-	const char *tag() const override { return "RemoteISOBrowse"; }
+	RemoteISOBrowseScreen(const std::string &url, const std::vector<Path> &games);
 
 protected:
 	void CreateViews() override;
@@ -105,5 +90,18 @@ protected:
 	std::vector<Path> games_;
 };
 
-std::string RemoteSubdir();
-std::string FormatRemoteISOUrl(const char *host, int port, const char *subdir);
+class RemoteISOSettingsScreen : public UIDialogScreenWithBackground {
+public:
+	RemoteISOSettingsScreen();
+
+	UI::EventReturn OnClickRemoteISOSubdir(UI::EventParams &e);
+	UI::EventReturn OnClickRemoteServer(UI::EventParams &e);
+protected:
+
+	void update() override;
+	void CreateViews() override;
+
+	UI::EventReturn OnChangeRemoteISOSubdir(UI::EventParams &e);
+
+	bool serverRunning_ = false;
+};

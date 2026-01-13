@@ -16,24 +16,16 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "Common/StringUtils.h"
-#include "Common/Math/math_util.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
-#include "Core/System.h"
 #include "Core/Debugger/DisassemblyManager.h"
 #include "Core/Debugger/SymbolMap.h"
 #include "Core/Debugger/WebSocket/HLESubscriber.h"
 #include "Core/Debugger/WebSocket/WebSocketUtils.h"
-#include "Core/MemMap.h"
 #include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPSDebugInterface.h"
 #include "Core/MIPS/MIPSStackWalk.h"
 #include "Core/HLE/sceKernelThread.h"
-#include "Core/Reporting.h"
-
-// General note: Function addresses will be snapped appropriately to full instructions
-// if they are not divisible by four. Addresses downwards, sizes upwards.
-// It's recommended to use correctly aligned addresses instead.
 
 DebuggerSubscriber *WebSocketHLEInit(DebuggerEventHandlerMap &map) {
 	map["hle.thread.list"] = &WebSocketHLEThreadList;
@@ -42,9 +34,7 @@ DebuggerSubscriber *WebSocketHLEInit(DebuggerEventHandlerMap &map) {
 	map["hle.func.list"] = &WebSocketHLEFuncList;
 	map["hle.func.add"] = &WebSocketHLEFuncAdd;
 	map["hle.func.remove"] = &WebSocketHLEFuncRemove;
-	map["hle.func.removeRange"] = &WebSocketHLEFuncRemoveRange;
 	map["hle.func.rename"] = &WebSocketHLEFuncRename;
-	map["hle.func.scan"] = &WebSocketHLEFuncScan;
 	map["hle.module.list"] = &WebSocketHLEModuleList;
 	map["hle.backtrace"] = &WebSocketHLEBacktrace;
 
@@ -74,7 +64,7 @@ void WebSocketHLEThreadList(DebuggerRequest &req) {
 
 	JsonWriter &json = req.Respond();
 	json.pushArray("threads");
-	for (const auto &th : threads) {
+	for (auto th : threads) {
 		json.pushDict();
 		json.writeUint("id", th.id);
 		json.writeString("name", th.name);
@@ -106,7 +96,7 @@ void WebSocketHLEThreadList(DebuggerRequest &req) {
 }
 
 static bool ThreadInfoForStatus(DebuggerRequest &req, DebugThreadInfo *result) {
-	if (PSP_GetBootState() != BootState::Complete) {
+	if (!PSP_IsInited()) {
 		req.Fail("CPU not active");
 		return false;
 	}
@@ -120,7 +110,7 @@ static bool ThreadInfoForStatus(DebuggerRequest &req, DebugThreadInfo *result) {
 		return false;
 
 	auto threads = GetThreadsInfo();
-	for (const auto &t : threads) {
+	for (auto t : threads) {
 		if (t.id == threadID) {
 			*result = t;
 			return true;
@@ -156,8 +146,6 @@ void WebSocketHLEThreadWake(DebuggerRequest &req) {
 		return req.Fail("Cannot force run thread based on current status");
 	}
 
-	Reporting::NotifyDebugger();
-
 	JsonWriter &json = req.Respond();
 	json.writeUint("thread", threadInfo.id);
 	json.writeString("status", "ready");
@@ -185,7 +173,7 @@ void WebSocketHLEThreadStop(DebuggerRequest &req) {
 		break;
 
 	default:
-		return req.Fail("Cannot force stop thread based on current status");
+		return req.Fail("Cannot force run thread based on current status");
 	}
 
 	// Get it again to verify.
@@ -193,8 +181,6 @@ void WebSocketHLEThreadStop(DebuggerRequest &req) {
 		return;
 	if ((threadInfo.status & THREADSTATUS_DORMANT) == 0)
 		return req.Fail("Failed to stop thread");
-
-	Reporting::NotifyDebugger();
 
 	JsonWriter &json = req.Respond();
 	json.writeUint("thread", threadInfo.id);
@@ -214,7 +200,7 @@ void WebSocketHLEFuncList(DebuggerRequest &req) {
 	if (!g_symbolMap)
 		return req.Fail("CPU not active");
 
-	auto functions = g_symbolMap->GetAllActiveSymbols(ST_FUNCTION);
+	auto functions = g_symbolMap->GetAllSymbols(ST_FUNCTION);
 
 	JsonWriter &json = req.Respond();
 	json.pushArray("functions");
@@ -252,15 +238,11 @@ void WebSocketHLEFuncAdd(DebuggerRequest &req) {
 	u32 addr;
 	if (!req.ParamU32("address", &addr))
 		return;
-
 	u32 size = -1;
 	if (!req.ParamU32("size", &size, false, DebuggerParamType::OPTIONAL))
 		return;
 	if (size == 0)
 		size = -1;
-
-	addr = RoundDownToMultipleOf(addr, 4);
-	size = RoundUpToMultipleOf(size, 4);
 
 	std::string name;
 	if (!req.ParamString("name", &name, DebuggerParamType::OPTIONAL))
@@ -269,7 +251,7 @@ void WebSocketHLEFuncAdd(DebuggerRequest &req) {
 		name = StringFromFormat("z_un_%08x", addr);
 
 	u32 prevBegin = g_symbolMap->GetFunctionStart(addr);
-	u32 endBegin = size == -1 ? prevBegin : g_symbolMap->GetFunctionStart(addr + size - 4);
+	u32 endBegin = size == -1 ? prevBegin : g_symbolMap->GetFunctionStart(addr + size - 1);
 	if (prevBegin == addr) {
 		return req.Fail("Function already exists at 'address'");
 	} else if (endBegin != prevBegin) {
@@ -284,7 +266,7 @@ void WebSocketHLEFuncAdd(DebuggerRequest &req) {
 			size = prevSize - newPrevSize;
 
 		// Make sure we register the new length for replacements too.
-		MIPSAnalyst::ForgetFunctions(prevBegin, prevBegin + newPrevSize);
+		MIPSAnalyst::ForgetFunctions(prevBegin, prevBegin + newPrevSize - 1);
 		g_symbolMap->SetFunctionSize(prevBegin, newPrevSize);
 		MIPSAnalyst::RegisterFunction(prevBegin, newPrevSize, prevName.c_str());
 	} else {
@@ -294,7 +276,7 @@ void WebSocketHLEFuncAdd(DebuggerRequest &req) {
 	}
 
 	// To ensure we restore replacements.
-	MIPSAnalyst::ForgetFunctions(addr, addr + size);
+	MIPSAnalyst::ForgetFunctions(addr, addr + size - 1);
 	g_symbolMap->AddFunction(name.c_str(), addr, size);
 	g_symbolMap->SortSymbols();
 	MIPSAnalyst::RegisterFunction(addr, size, name.c_str());
@@ -307,7 +289,8 @@ void WebSocketHLEFuncAdd(DebuggerRequest &req) {
 	}
 
 	// Clear cache for branch lines and such.
-	g_disassemblyManager.clear();
+	DisassemblyManager manager;
+	manager.clear();
 
 	JsonWriter &json = req.Respond();
 	json.writeUint("address", addr);
@@ -335,8 +318,6 @@ void WebSocketHLEFuncRemove(DebuggerRequest &req) {
 	if (!req.ParamU32("address", &addr))
 		return;
 
-	addr = RoundDownToMultipleOf(addr, 4);
-
 	u32 funcBegin = g_symbolMap->GetFunctionStart(addr);
 	if (funcBegin == -1)
 		return req.Fail("No function found at 'address'");
@@ -348,10 +329,10 @@ void WebSocketHLEFuncRemove(DebuggerRequest &req) {
 		std::string prevName = g_symbolMap->GetLabelString(prevBegin);
 		u32 expandedSize = g_symbolMap->GetFunctionSize(prevBegin) + funcSize;
 		g_symbolMap->SetFunctionSize(prevBegin, expandedSize);
-		MIPSAnalyst::ForgetFunctions(prevBegin, prevBegin + expandedSize);
+		MIPSAnalyst::ForgetFunctions(prevBegin, prevBegin + expandedSize - 1);
 		MIPSAnalyst::RegisterFunction(prevBegin, expandedSize, prevName.c_str());
 	} else {
-		MIPSAnalyst::ForgetFunctions(funcBegin, funcBegin + funcSize);
+		MIPSAnalyst::ForgetFunctions(funcBegin, funcBegin + funcSize - 1);
 	}
 
 	g_symbolMap->RemoveFunction(funcBegin, true);
@@ -365,80 +346,12 @@ void WebSocketHLEFuncRemove(DebuggerRequest &req) {
 	}
 
 	// Clear cache for branch lines and such.
-	g_disassemblyManager.clear();
+	DisassemblyManager manager;
+	manager.clear();
 
 	JsonWriter &json = req.Respond();
 	json.writeUint("address", funcBegin);
 	json.writeUint("size", funcSize);
-}
-
-// This function removes function symbols that intersect or lie inside the range
-// (Note: this makes no checks whether the range is valid)
-// Returns the number of removed functions
-static u32 RemoveFuncSymbolsInRange(u32 addr, u32 size) {
-	u32 func_address = g_symbolMap->GetFunctionStart(addr);
-	if (func_address == SymbolMap::INVALID_ADDRESS) {
-		func_address = g_symbolMap->GetNextSymbolAddress(addr, SymbolType::ST_FUNCTION);
-	}
-
-	u32 counter = 0;
-	while (func_address < addr + size && func_address != SymbolMap::INVALID_ADDRESS) {
-		g_symbolMap->RemoveFunction(func_address, true);
-		++counter;
-		func_address = g_symbolMap->GetNextSymbolAddress(addr, SymbolType::ST_FUNCTION);
-	}
-
-	if (counter) {
-		MIPSAnalyst::ForgetFunctions(addr, addr + size);
-
-		// The following was copied from hle.func.remove:
-		g_symbolMap->SortSymbols();
-
-		MIPSAnalyst::UpdateHashMap();
-		MIPSAnalyst::ApplyHashMap();
-
-		if (g_Config.bFuncReplacements) {
-			MIPSAnalyst::ReplaceFunctions();
-		}
-
-		// Clear cache for branch lines and such.
-		g_disassemblyManager.clear();
-	}
-	return counter;
-}
-
-// Remove function symbols in range (hle.func.removeRange)
-//
-// Parameters:
-//  - address: unsigned integer address for the start of the range.
-//  - size: unsigned integer size in bytes for removal
-//
-// Response (same event name):
-//  - count: number of removed functions
-void WebSocketHLEFuncRemoveRange(DebuggerRequest &req) {
-	if (!g_symbolMap)
-		return req.Fail("CPU not active");
-	if (!Core_IsStepping())
-		return req.Fail("CPU currently running (cpu.stepping first)");
-
-	u32 addr;
-	if (!req.ParamU32("address", &addr))
-		return;
-
-	u32 size;
-	if (!req.ParamU32("size", &size))
-		return;
-
-	addr = RoundDownToMultipleOf(addr, 4);
-	size = RoundUpToMultipleOf(size, 4);
-
-	if (!Memory::IsValidRange(addr, size))
-		return req.Fail("Address or size outside valid memory");
-
-	u32 count = RemoveFuncSymbolsInRange(addr, size);
-
-	JsonWriter &json = req.Respond();
-	json.writeUint("count", count);
 }
 
 // Rename a function symbol (hle.func.rename)
@@ -448,8 +361,8 @@ void WebSocketHLEFuncRemoveRange(DebuggerRequest &req) {
 //  - name: string, new name for the function.
 //
 // Response (same event name):
-//  - address: the start address of the renamed function.
-//  - size: the size in bytes of the renamed function.
+//  - address: the start address of the removed function.
+//  - size: the size in bytes of the removed function.
 //  - name: string, new name repeated back.
 void WebSocketHLEFuncRename(DebuggerRequest &req) {
 	if (!g_symbolMap)
@@ -464,8 +377,6 @@ void WebSocketHLEFuncRename(DebuggerRequest &req) {
 	if (!req.ParamString("name", &name))
 		return;
 
-	addr = RoundDownToMultipleOf(addr, 4);
-
 	u32 funcBegin = g_symbolMap->GetFunctionStart(addr);
 	if (funcBegin == -1)
 		return req.Fail("No function found at 'address'");
@@ -473,7 +384,7 @@ void WebSocketHLEFuncRename(DebuggerRequest &req) {
 
 	g_symbolMap->SetLabelName(name.c_str(), funcBegin);
 	// To ensure we reapply replacements (in case we check name there.)
-	MIPSAnalyst::ForgetFunctions(funcBegin, funcBegin + funcSize);
+	MIPSAnalyst::ForgetFunctions(funcBegin, funcBegin + funcSize - 1);
 	MIPSAnalyst::RegisterFunction(funcBegin, funcSize, name.c_str());
 	MIPSAnalyst::UpdateHashMap();
 	MIPSAnalyst::ApplyHashMap();
@@ -485,49 +396,6 @@ void WebSocketHLEFuncRename(DebuggerRequest &req) {
 	json.writeUint("address", funcBegin);
 	json.writeUint("size", funcSize);
 	json.writeString("name", name);
-}
-
-// Auto-detect functions in a memory range (hle.func.scan)
-//
-// Parameters:
-//  - address: unsigned integer address for the start of the range.
-//  - size: unsigned integer size in bytes for scan.
-//  - remove: optional bool indicating whether functions that intersect or inside lie inside the range must be removed before scanning
-//
-// Response (same event name) with no extra data.
-void WebSocketHLEFuncScan(DebuggerRequest &req) {
-	if (!g_symbolMap)
-		return req.Fail("CPU not active");
-	if (!Core_IsStepping())
-		return req.Fail("CPU currently running (cpu.stepping first)");
-
-	u32 addr;
-	if (!req.ParamU32("address", &addr))
-		return;
-
-
-	u32 size;
-	if (!req.ParamU32("size", &size))
-		return;
-
-	addr = RoundDownToMultipleOf(addr, 4);
-	size = RoundUpToMultipleOf(size, 4);
-
-	bool remove = false;
-	if (!req.ParamBool("remove", &remove, DebuggerParamType::OPTIONAL))
-		return;
-
-	if (!Memory::IsValidRange(addr, size))
-		return req.Fail("Address or size outside valid memory");
-
-	if (remove) {
-		RemoveFuncSymbolsInRange(addr, size);
-	}
-
-	bool insertSymbols = MIPSAnalyst::ScanForFunctions(addr, addr + size, true);
-	MIPSAnalyst::FinalizeScan(insertSymbols);
-
-	req.Respond();
 }
 
 // List all known user modules (hle.module.list)
@@ -612,8 +480,9 @@ void WebSocketHLEBacktrace(DebuggerRequest &req) {
 		json.writeUint("sp", f.sp);
 		json.writeUint("stackSize", f.stackSize);
 
+		DisassemblyManager manager;
 		DisassemblyLineInfo line;
-		g_disassemblyManager.getLine(g_disassemblyManager.getStartAddress(f.pc), true, line, cpuDebug);
+		manager.getLine(manager.getStartAddress(f.pc), true, line, cpuDebug);
 		json.writeString("code", line.name + " " + line.params);
 
 		json.pop();

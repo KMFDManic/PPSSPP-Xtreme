@@ -1,5 +1,4 @@
 #include "ppsspp_config.h"
-
 #include "Common/System/Display.h"
 #include "Common/GPU/thin3d.h"
 #include "Common/Data/Hash/Hash.h"
@@ -7,20 +6,16 @@
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Render/Text/draw_text.h"
 #include "Common/Render/Text/draw_text_uwp.h"
-#include "Common/File/VFS/VFS.h"
+
 #include "Common/Log.h"
 #include "Common/StringUtils.h"
-#include "Common/File/Path.h"
 
 #if PPSSPP_PLATFORM(UWP)
-#include <string>
 
 #include <d3d11.h>
 #include <dxgi1_3.h>
 #include <d2d1_3.h>
 #include <dwrite_3.h>
-
-using namespace Microsoft::WRL;
 
 enum {
 	MAX_TEXT_WIDTH = 4096,
@@ -29,49 +24,45 @@ enum {
 
 class TextDrawerFontContext {
 public:
-	TextDrawerFontContext(const FontStyle &_style, float _dpiScale, IDWriteFactory4 *factory, IDWriteFontCollection1 *fontCollection) : style(_style), dpiScale(_dpiScale) {
-		DWRITE_FONT_STYLE fontStyle = DWRITE_FONT_STYLE_NORMAL;
-		DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
-		int height = style.sizePts;
-		FontStyleFlags styleFlags = FontStyleFlags::Default;
-		std::string fontName = GetFontNameForFontStyle(style, &styleFlags);
-		if (styleFlags & FontStyleFlags::Bold) {
-			weight = DWRITE_FONT_WEIGHT_BOLD;
-		}
-		if (styleFlags & FontStyleFlags::Italic) {
-			fontStyle = DWRITE_FONT_STYLE_ITALIC;
-		}
-
-		HRESULT hr = factory->CreateTextFormat(
-			ConvertUTF8ToWString(fontName).c_str(),
-			fontCollection,
-			weight,
-			fontStyle,
-			DWRITE_FONT_STRETCH_NORMAL,
-			(float)MulDiv(height, (int)(96.0f * (1.0f / dpiScale)), 72),
-			L"en-us",
-			&textFmt
-		);
-		if (FAILED(hr)) {
-			ERROR_LOG(Log::G3D, "Failed creating text format for font %s", fontName.c_str());
-		}
+	~TextDrawerFontContext() {
+		Destroy();
 	}
 
-	~TextDrawerFontContext() {
+	void Create() {
 		if (textFmt) {
-			textFmt->Release();
+			Destroy();
 		}
+
+		if (factory == nullptr) return;
+
+		HRESULT hr = factory->CreateTextFormat(
+			fname.c_str(),
+			fontCollection,
+			weight,
+			DWRITE_FONT_STYLE_NORMAL,
+			DWRITE_FONT_STRETCH_NORMAL,
+			(float)MulDiv(height, (int)(96.0f * (1.0f / dpiScale)), 72),
+			L"",
+			&textFmt
+		);
+	}
+	void Destroy() {
+		textFmt->Release();
 		textFmt = nullptr;
 	}
 
-	IDWriteTextFormat *textFmt = nullptr;
-	FontStyle style;
+	IDWriteFactory4* factory = nullptr;
+	IDWriteFontCollection1* fontCollection = nullptr;
+	IDWriteTextFormat* textFmt = nullptr;
+	std::wstring fname;
+	int height;
+	DWRITE_FONT_WEIGHT weight;
 	float dpiScale;
 };
 
 struct TextDrawerContext {
-	ID2D1Bitmap1 *bitmap;
-	ID2D1Bitmap1 *mirror_bmp;
+	ID2D1Bitmap1* bitmap;
+	ID2D1Bitmap1* mirror_bmp;
 };
 
 TextDrawerUWP::TextDrawerUWP(Draw::DrawContext *draw) : TextDrawer(draw), ctx_(nullptr) {
@@ -106,66 +97,18 @@ TextDrawerUWP::TextDrawerUWP(Draw::DrawContext *draw) : TextDrawer(draw), ctx_(n
 	hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_d2dContext);
 	if (FAILED(hr)) _assert_msg_(false, "D2D CreateDeviceContext failed");
 
+	// Load the Roboto font
+	hr = m_dwriteFactory->CreateFontFileReference(L"Content/Roboto-Condensed.ttf", nullptr, &m_fontFile);
+	if (FAILED(hr)) ERROR_LOG(SYSTEM, "CreateFontFileReference failed");
 	hr = m_dwriteFactory->CreateFontSetBuilder(&m_fontSetBuilder);
-	if (FAILED(hr)) ERROR_LOG(Log::System, "CreateFontSetBuilder failed");
-
-	hr = m_dwriteFactory->CreateInMemoryFontFileLoader(&m_inMemoryLoader);
-	if (FAILED(hr)) {
-		_assert_msg_(false, "D2D CreateInMemoryFontFileLoader failed");
-	}
-	hr = m_dwriteFactory->RegisterFontFileLoader(m_inMemoryLoader);
-	if (FAILED(hr)) {
-		_assert_msg_(false, "D2D RegisterFontFileLoader failed");
-	}
-	// Load our fonts.
-	const std::vector<std::string> fontFilenames = GetAllFontFilenames();
-	for (const auto &fname : fontFilenames) {
-		size_t size;
-		uint8_t *data = g_VFS.ReadFile((fname + ".ttf").c_str(), &size);
-
-		ComPtr<IDWriteFontFile> fontFile;
-		hr = m_inMemoryLoader->CreateInMemoryFontFileReference(
-			m_dwriteFactory,
-			data,
-			static_cast<UINT32>(size),
-			nullptr,       // optional last write time
-			&fontFile
-		);
-
-		m_fontSetBuilder->AddFontFile(fontFile.Get());
-
-		delete[] data;
-		m_fontFiles.push_back(fontFile);
-	}
-
+	if (FAILED(hr)) ERROR_LOG(SYSTEM, "CreateFontSetBuilder failed");
+	hr = m_fontSetBuilder->AddFontFile(m_fontFile);
 	hr = m_fontSetBuilder->CreateFontSet(&m_fontSet);
 	hr = m_dwriteFactory->CreateFontCollectionFromFontSet(m_fontSet, &m_fontCollection);
 
-	UINT32 familyCount = m_fontCollection->GetFontFamilyCount();
-	for (UINT32 i = 0; i < familyCount; ++i) {
-		IDWriteFontFamily *family;
-		m_fontCollection->GetFontFamily(i, &family);
-
-		IDWriteLocalizedStrings *names;
-		family->GetFamilyNames(&names);
-
-		UINT32 length = 0;
-		names->GetStringLength(0, &length);
-
-		std::wstring name(length + 1, L'\0');
-		names->GetString(0, &name[0], length + 1);
-
-		std::string nname = ConvertWStringToUTF8(name);
-
-		NOTICE_LOG(Log::G3D, "Font family: %s", nname.c_str());
-
-		names->Release();
-		family->Release();
-	}
-
 	ctx_ = new TextDrawerContext();
 	
-	D2D1_BITMAP_PROPERTIES1 properties{};
+	D2D1_BITMAP_PROPERTIES1 properties;
 	properties.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	properties.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
 	properties.dpiX = 96.0f;
@@ -194,91 +137,199 @@ TextDrawerUWP::TextDrawerUWP(Draw::DrawContext *draw) : TextDrawer(draw), ctx_(n
 	);
 
 	m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White, 1.0f), &m_d2dWhiteBrush);
+
 }
 
 TextDrawerUWP::~TextDrawerUWP() {
 	ClearCache();
-	ClearFonts();
+
+	fontMap_.clear();
 
 	ctx_->bitmap->Release();
 	ctx_->mirror_bmp->Release();
-
-	m_dwriteFactory->UnregisterFontFileLoader(m_inMemoryLoader);
-	m_fontCollection->Release();
-	m_fontSet->Release();
-	for (auto file : m_fontFiles) {
-		file->Release();
-	}
-	m_fontFiles.clear();
-	m_fontSetBuilder->Release();
-	m_dwriteFactory->Release();
-	m_inMemoryLoader->Release();
 
 	m_d2dWhiteBrush->Release();
 	m_d2dContext->Release();
 	m_d2dDevice->Release();
 	m_d2dFactory->Release();
+
+	m_fontCollection->Release();
+	m_fontSet->Release();
+	m_fontFile->Release();
+	m_fontSetBuilder->Release();
+	m_dwriteFactory->Release();
 	delete ctx_;
 }
 
-void TextDrawerUWP::SetOrCreateFont(const FontStyle &style) {
-	auto iter = fontMap_.find(style);
+uint32_t TextDrawerUWP::SetFont(const char *fontName, int size, int flags) {
+	uint32_t fontHash = fontName ? hash::Adler32((const uint8_t *)fontName, strlen(fontName)) : 0;
+	fontHash ^= size;
+	fontHash ^= flags << 10;
+
+	auto iter = fontMap_.find(fontHash);
 	if (iter != fontMap_.end()) {
-		fontStyle_ = style;
-		return;
+		fontHash_ = fontHash;
+		return fontHash;
 	}
 
-	fontMap_[style] = std::make_unique<TextDrawerFontContext>(style, dpiScale_, m_dwriteFactory, m_fontCollection);
-	fontStyle_ = style;
+	std::wstring fname;
+	if (fontName)
+		fname = ConvertUTF8ToWString(fontName);
+	else
+		fname = L"Tahoma";
+
+	TextDrawerFontContext *font = new TextDrawerFontContext();
+	font->weight = DWRITE_FONT_WEIGHT_LIGHT;
+	font->height = size;
+	font->fname = fname;
+	font->dpiScale = dpiScale_;
+	font->factory = m_dwriteFactory;
+	font->fontCollection = m_fontCollection;
+	font->Create();
+
+	fontMap_[fontHash] = std::unique_ptr<TextDrawerFontContext>(font);
+	fontHash_ = fontHash;
+	return fontHash;
 }
 
-void TextDrawerUWP::MeasureStringInternal(std::string_view str, float *w, float *h) {
-	IDWriteTextFormat* format = nullptr;
-	auto iter = fontMap_.find(fontStyle_);
+void TextDrawerUWP::SetFont(uint32_t fontHandle) {
+	auto iter = fontMap_.find(fontHandle);
+	if (iter != fontMap_.end()) {
+		fontHash_ = fontHandle;
+	}
+}
+
+void TextDrawerUWP::MeasureString(const char *str, size_t len, float *w, float *h) {
+	CacheKey key{ std::string(str, len), fontHash_ };
+	
+	TextMeasureEntry *entry;
+	auto iter = sizeCache_.find(key);
+	if (iter != sizeCache_.end()) {
+		entry = iter->second.get();
+	} else {
+		IDWriteTextFormat* format = nullptr;
+		auto iter = fontMap_.find(fontHash_);
+		if (iter != fontMap_.end()) {
+			format = iter->second->textFmt;
+		}
+		if (!format) return;
+
+		std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(ReplaceAll(std::string(str, len), "\n", "\r\n"), "&&", "&"));
+
+		format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+		
+		IDWriteTextLayout* layout;
+		m_dwriteFactory->CreateTextLayout(
+			(LPWSTR)wstr.c_str(),
+			(int)wstr.size(),
+			format,
+			MAX_TEXT_WIDTH,
+			MAX_TEXT_HEIGHT,
+			&layout
+		);
+
+		DWRITE_TEXT_METRICS metrics;
+		layout->GetMetrics(&metrics);
+		layout->Release();
+
+		entry = new TextMeasureEntry();
+		entry->width = (int)(metrics.width + 1.0f);
+		entry->height = (int)(metrics.height + 1.0f);
+		sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
+	}
+
+	entry->lastUsedFrame = frameCount_;
+	*w = entry->width * fontScaleX_ * dpiScale_;
+	*h = entry->height * fontScaleY_ * dpiScale_;
+}
+
+void TextDrawerUWP::MeasureStringRect(const char *str, size_t len, const Bounds &bounds, float *w, float *h, int align) {
+	IDWriteTextFormat *format = nullptr;
+	auto iter = fontMap_.find(fontHash_);
 	if (iter != fontMap_.end()) {
 		format = iter->second->textFmt;
 	}
-	if (!format) return;
-
-	std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(str, "\n", "\r\n"));
-
-	format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-		
-	IDWriteTextLayout* layout;
-	m_dwriteFactory->CreateTextLayout(
-		(LPWSTR)wstr.c_str(),
-		(int)wstr.size(),
-		format,
-		MAX_TEXT_WIDTH,
-		MAX_TEXT_HEIGHT,
-		&layout
-	);
-
-	DWRITE_TEXT_METRICS metrics;
-	layout->GetMetrics(&metrics);
-	layout->Release();
-
-	*w = (int)(metrics.width + 1.0f);
-	*h = (int)(metrics.height + 1.0f);
-}
-
-bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStringEntry &entry, Draw::DataFormat texFormat, std::string_view str, int align, bool fullColor) {
-	if (str.empty()) {
-		bitmapData.clear();
-		return false;
+	if (!format) {
+		*w = 0;
+		*h = 0;
+		return;
 	}
 
-	std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(str, "\n", "\r\n"));
+	std::string toMeasure = std::string(str, len);
+	int wrap = align & (FLAG_WRAP_TEXT | FLAG_ELLIPSIZE_TEXT);
+	if (wrap) {
+		bool rotated = (align & (ROTATE_90DEG_LEFT | ROTATE_90DEG_RIGHT)) != 0;
+		WrapString(toMeasure, toMeasure.c_str(), rotated ? bounds.h : bounds.w, wrap);
+	}
+
+	std::vector<std::string> lines;
+	SplitString(toMeasure, '\n', lines);
+	int total_w = 0;
+	int total_h = 0;
+	for (size_t i = 0; i < lines.size(); i++) {
+		CacheKey key{ lines[i], fontHash_ };
+
+		TextMeasureEntry *entry;
+		auto iter = sizeCache_.find(key);
+		if (iter != sizeCache_.end()) {
+			entry = iter->second.get();
+		} else {
+			std::wstring wstr = ConvertUTF8ToWString(lines[i].length() == 0 ? " " : ReplaceAll(lines[i], "&&", "&"));
+
+			if (align & ALIGN_HCENTER)
+				format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+			else if (align & ALIGN_LEFT)
+				format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+			else if (align & ALIGN_RIGHT)
+				format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+
+			IDWriteTextLayout* layout;
+			m_dwriteFactory->CreateTextLayout(
+				(LPWSTR)wstr.c_str(),
+				(int)wstr.size(),
+				format,
+				MAX_TEXT_WIDTH,
+				MAX_TEXT_HEIGHT,
+				&layout
+			);
+
+			DWRITE_TEXT_METRICS metrics;
+			layout->GetMetrics(&metrics);
+			layout->Release();
+
+			entry = new TextMeasureEntry();
+			entry->width = (int)(metrics.width + 1.0f);
+			entry->height = (int)(metrics.height + 1.0f);
+			sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
+		}
+		entry->lastUsedFrame = frameCount_;
+
+		if (total_w < entry->width) {
+			total_w = entry->width;
+		}
+		total_h += entry->height;
+	}
+	*w = total_w * fontScaleX_ * dpiScale_;
+	*h = total_h * fontScaleY_ * dpiScale_;
+}
+
+void TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStringEntry &entry, Draw::DataFormat texFormat, const char *str, int align) {
+	if (!strlen(str)) {
+		bitmapData.clear();
+		return;
+	}
+
+	std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(ReplaceAll(str, "\n", "\r\n"), "&&", "&"));
 	SIZE size;
 
 	IDWriteTextFormat *format = nullptr;
-	auto iter = fontMap_.find(fontStyle_);
+	auto iter = fontMap_.find(fontHash_);
 	if (iter != fontMap_.end()) {
 		format = iter->second->textFmt;
 	}
 	if (!format) {
 		bitmapData.clear();
-		return false;
+		return;
 	}
 
 	if (align & ALIGN_HCENTER)
@@ -330,7 +381,7 @@ bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 
 	m_d2dContext->BeginDraw();
 	m_d2dContext->Clear();
-	m_d2dContext->DrawTextLayout(D2D1::Point2F(0.0f, 0.0f), layout, m_d2dWhiteBrush, texFormat == Draw::DataFormat::R8G8B8A8_UNORM ? D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT : D2D1_DRAW_TEXT_OPTIONS_NONE);
+	m_d2dContext->DrawTextLayout(D2D1::Point2F(0.0f, 0.0f), layout, m_d2dWhiteBrush);
 	m_d2dContext->EndDraw();
 
 	layout->Release();
@@ -345,43 +396,32 @@ bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 	// because we need white. Well, we could using swizzle, but not all our backends support that.
 	if (texFormat == Draw::DataFormat::R8G8B8A8_UNORM || texFormat == Draw::DataFormat::B8G8R8A8_UNORM) {
 		bitmapData.resize(entry.bmWidth * entry.bmHeight * sizeof(uint32_t));
-		bool swap = texFormat == Draw::DataFormat::R8G8B8A8_UNORM;
 		uint32_t *bitmapData32 = (uint32_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
-			uint32_t *bmpLine = (uint32_t *)&map.bits[map.pitch * y];
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint32_t v = bmpLine[x];
-				if (fullColor) {
-					if (swap)
-						v = (v & 0xFF00FF00) | ((v >> 16) & 0xFF) | ((v << 16) & 0xFF0000);
-					bitmapData32[entry.bmWidth * y + x] = RGBAToPremul8888(v);
-				} else {
-					bitmapData32[entry.bmWidth * y + x] = AlphaToPremul8888(v >> 24);
-				}
+				uint8_t bAlpha = (uint8_t)(map.bits[map.pitch * y + x * 4] & 0xff);
+				bitmapData32[entry.bmWidth * y + x] = (bAlpha << 24) | 0x00ffffff;
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::B4G4R4A4_UNORM_PACK16 || texFormat == Draw::DataFormat::R4G4B4A4_UNORM_PACK16) {
-		_dbg_assert_(!fullColor);
 		bitmapData.resize(entry.bmWidth * entry.bmHeight * sizeof(uint16_t));
 		uint16_t *bitmapData16 = (uint16_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint8_t bAlpha = (uint8_t)(map.bits[map.pitch * y + x * 4] & 0xff);
-				bitmapData16[entry.bmWidth * y + x] = AlphaToPremul4444(bAlpha);
+				uint8_t bAlpha = (uint8_t)((map.bits[map.pitch * y + x * 4] & 0xff) >> 4);
+				bitmapData16[entry.bmWidth * y + x] = (bAlpha) | 0xfff0;
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::A4R4G4B4_UNORM_PACK16) {
-		_dbg_assert_(!fullColor);
 		bitmapData.resize(entry.bmWidth * entry.bmHeight * sizeof(uint16_t));
 		uint16_t *bitmapData16 = (uint16_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint8_t bAlpha = (uint8_t)(map.bits[map.pitch * y + x * 4] & 0xff);
-				bitmapData16[entry.bmWidth * y + x] = AlphaToPremul4444(bAlpha);
+				uint8_t bAlpha = (uint8_t)((map.bits[map.pitch * y + x * 4] & 0xff) >> 4);
+				bitmapData16[entry.bmWidth * y + x] = (bAlpha << 12) | 0x0fff;
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::R8_UNORM) {
-		_dbg_assert_(!fullColor);
 		bitmapData.resize(entry.bmWidth * entry.bmHeight);
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
@@ -394,14 +434,114 @@ bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 	}
 
 	ctx_->mirror_bmp->Unmap();
-	return true;
 }
 
-void TextDrawerUWP::ClearFonts() {
+void TextDrawerUWP::DrawString(DrawBuffer &target, const char *str, float x, float y, uint32_t color, int align) {
+	using namespace Draw;
+	if (!strlen(str))
+		return;
+
+	CacheKey key{ std::string(str), fontHash_ };
+	target.Flush(true);
+
+	TextStringEntry *entry;
+
+	auto iter = cache_.find(key);
+	if (iter != cache_.end()) {
+		entry = iter->second.get();
+		entry->lastUsedFrame = frameCount_;
+	} else {
+		DataFormat texFormat;
+		// For our purposes these are equivalent, so just choose the supported one. D3D can emulate them.
+		if (draw_->GetDataFormatSupport(Draw::DataFormat::A4R4G4B4_UNORM_PACK16) & FMT_TEXTURE)
+			texFormat = Draw::DataFormat::A4R4G4B4_UNORM_PACK16;
+		else if (draw_->GetDataFormatSupport(Draw::DataFormat::B4G4R4A4_UNORM_PACK16) & FMT_TEXTURE)
+			texFormat = Draw::DataFormat::B4G4R4A4_UNORM_PACK16;
+		else
+			texFormat = Draw::DataFormat::R8G8B8A8_UNORM;
+
+		entry = new TextStringEntry();
+
+		// Convert the bitmap to a Thin3D compatible array of 16-bit pixels. Can't use a single channel format
+		// because we need white. Well, we could using swizzle, but not all our backends support that.
+		TextureDesc desc{};
+		std::vector<uint8_t> bitmapData;
+		DrawStringBitmap(bitmapData, *entry, texFormat, str, align);
+		desc.initData.push_back(&bitmapData[0]);
+
+		desc.type = TextureType::LINEAR2D;
+		desc.format = texFormat;
+		desc.width = entry->bmWidth;
+		desc.height = entry->bmHeight;
+		desc.depth = 1;
+		desc.mipLevels = 1;
+		desc.tag = "TextDrawer";
+		entry->texture = draw_->CreateTexture(desc);
+		cache_[key] = std::unique_ptr<TextStringEntry>(entry);
+	}
+
+	if (entry->texture) {
+		draw_->BindTexture(0, entry->texture);
+	}
+
+	// Okay, the texture is bound, let's draw.
+	float w = entry->width * fontScaleX_ * dpiScale_;
+	float h = entry->height * fontScaleY_ * dpiScale_;
+	float u = entry->width / (float)entry->bmWidth;
+	float v = entry->height / (float)entry->bmHeight;
+	DrawBuffer::DoAlign(align, &x, &y, &w, &h);
+	if (entry->texture) {
+		target.DrawTexRect(x, y, x + w, y + h, 0.0f, 0.0f, u, v, color);
+		target.Flush(true);
+	}
+}
+
+void TextDrawerUWP::RecreateFonts() {
 	for (auto &iter : fontMap_) {
 		iter.second->dpiScale = dpiScale_;
+		iter.second->Create();
 	}
-	fontMap_.clear();
+}
+
+void TextDrawerUWP::ClearCache() {
+	for (auto &iter : cache_) {
+		if (iter.second->texture)
+			iter.second->texture->Release();
+	}
+	cache_.clear();
+	sizeCache_.clear();
+}
+
+void TextDrawerUWP::OncePerFrame() {
+	frameCount_++;
+	// If DPI changed (small-mode, future proper monitor DPI support), drop everything.
+	float newDpiScale = CalculateDPIScale();
+	if (newDpiScale != dpiScale_) {
+		dpiScale_ = newDpiScale;
+		ClearCache();
+		RecreateFonts();
+	}
+
+	// Drop old strings. Use a prime number to reduce clashing with other rhythms
+	if (frameCount_ % 23 == 0) {
+		for (auto iter = cache_.begin(); iter != cache_.end();) {
+			if (frameCount_ - iter->second->lastUsedFrame > 100) {
+				if (iter->second->texture)
+					iter->second->texture->Release();
+				cache_.erase(iter++);
+			} else {
+				iter++;
+			}
+		}
+
+		for (auto iter = sizeCache_.begin(); iter != sizeCache_.end(); ) {
+			if (frameCount_ - iter->second->lastUsedFrame > 100) {
+				sizeCache_.erase(iter++);
+			} else {
+				iter++;
+			}
+		}
+	}
 }
 
 #endif

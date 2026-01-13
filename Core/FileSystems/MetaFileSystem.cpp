@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <algorithm>
+#include <set>
+
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/Serialize/SerializeMap.h"
@@ -50,7 +53,7 @@ static bool ApplyPathStringToComponentsVector(std::vector<std::string> &vector, 
 					else
 					{
 						// The PSP silently ignores attempts to .. to parent of root directory
-						WARN_LOG(Log::FileSystem, "RealPath: ignoring .. beyond root - root directory is its own parent: \"%s\"", pathString.c_str());
+						WARN_LOG(FILESYS, "RealPath: ignoring .. beyond root - root directory is its own parent: \"%s\"", pathString.c_str());
 					}
 				}
 				else
@@ -76,6 +79,7 @@ static bool RealPath(const std::string &currentDirectory, const std::string &inP
 	size_t inLen = inPath.length();
 	if (inLen == 0)
 	{
+		WARN_LOG(FILESYS, "RealPath: inPath is empty");
 		outPath = currentDirectory;
 		return true;
 	}
@@ -99,26 +103,26 @@ static bool RealPath(const std::string &currentDirectory, const std::string &inP
 		size_t curDirLen = currentDirectory.length();
 		if (curDirLen == 0)
 		{
-			ERROR_LOG(Log::FileSystem, "RealPath: inPath \"%s\" is relative, but current directory is empty", inPath.c_str());
+			ERROR_LOG(FILESYS, "RealPath: inPath \"%s\" is relative, but current directory is empty", inPath.c_str());
 			return false;
 		}
 		
 		size_t curDirColon = currentDirectory.find(':');
 		if (curDirColon == std::string::npos)
 		{
-			ERROR_LOG(Log::FileSystem, "RealPath: inPath \"%s\" is relative, but current directory \"%s\" has no prefix", inPath.c_str(), currentDirectory.c_str());
+			ERROR_LOG(FILESYS, "RealPath: inPath \"%s\" is relative, but current directory \"%s\" has no prefix", inPath.c_str(), currentDirectory.c_str());
 			return false;
 		}
 		if (curDirColon + 1 == curDirLen)
 		{
-			WARN_LOG(Log::FileSystem, "RealPath: inPath \"%s\" is relative, but current directory \"%s\" is all prefix and no path. Using \"/\" as path for current directory.", inPath.c_str(), currentDirectory.c_str());
+			WARN_LOG(FILESYS, "RealPath: inPath \"%s\" is relative, but current directory \"%s\" is all prefix and no path. Using \"/\" as path for current directory.", inPath.c_str(), currentDirectory.c_str());
 		}
 		else
 		{
 			const std::string curDirAfter = currentDirectory.substr(curDirColon + 1);
 			if (! ApplyPathStringToComponentsVector(cmpnts, curDirAfter) )
 			{
-				ERROR_LOG(Log::FileSystem,"RealPath: currentDirectory is not a valid path: \"%s\"", currentDirectory.c_str());
+				ERROR_LOG(FILESYS,"RealPath: currentDirectory is not a valid path: \"%s\"", currentDirectory.c_str());
 				return false;
 			}
 
@@ -143,7 +147,7 @@ static bool RealPath(const std::string &currentDirectory, const std::string &inP
 
 	if (! ApplyPathStringToComponentsVector(cmpnts, inAfterColon) )
 	{
-		WARN_LOG(Log::FileSystem, "RealPath: inPath is not a valid path: \"%s\"", inPath.c_str());
+		WARN_LOG(FILESYS, "RealPath: inPath is not a valid path: \"%s\"", inPath.c_str());
 		return false;
 	}
 
@@ -162,7 +166,7 @@ static bool RealPath(const std::string &currentDirectory, const std::string &inP
 	return true;
 }
 
-IFileSystem *MetaFileSystem::GetHandleOwner(u32 handle) const
+IFileSystem *MetaFileSystem::GetHandleOwner(u32 handle)
 {
 	std::lock_guard<std::recursive_mutex> guard(lock);
 	for (size_t i = 0; i < fileSystems.size(); i++)
@@ -197,7 +201,7 @@ int MetaFileSystem::MapFilePath(const std::string &_inpath, std::string &outpath
 	// Special handling: host0:command.txt (as seen in Super Monkey Ball Adventures, for example)
 	// appears to mean the current directory on the UMD. Let's just assume the current directory.
 	if (strncasecmp(inpath.c_str(), "host0:", strlen("host0:")) == 0) {
-		INFO_LOG(Log::FileSystem, "Host0 path detected, stripping: %s", inpath.c_str());
+		INFO_LOG(FILESYS, "Host0 path detected, stripping: %s", inpath.c_str());
 		// However, this causes trouble when running tests, since our test framework uses host0:.
 		// Maybe it's really just supposed to map to umd0 or something?
 		if (PSP_CoreParameter().headLess) {
@@ -217,7 +221,7 @@ int MetaFileSystem::MapFilePath(const std::string &_inpath, std::string &outpath
 		if (inpath.find(':') == std::string::npos /* means path is relative */) 
 		{
 			error = SCE_KERNEL_ERROR_NOCWD;
-			WARN_LOG(Log::FileSystem, "Path is relative, but current directory not set for thread %i. returning 8002032C(SCE_KERNEL_ERROR_NOCWD) instead.", currentThread);
+			WARN_LOG(FILESYS, "Path is relative, but current directory not set for thread %i. returning 8002032C(SCE_KERNEL_ERROR_NOCWD) instead.", currentThread);
 		}
 	}
 	else
@@ -240,7 +244,7 @@ int MetaFileSystem::MapFilePath(const std::string &_inpath, std::string &outpath
 				outpath = realpath.substr(prefixPos + 1);
 				*system = &(fileSystems[i]);
 
-				VERBOSE_LOG(Log::FileSystem, "MapFilePath: mapped \"%s\" to prefix: \"%s\", path: \"%s\"", inpath.c_str(), fileSystems[i].prefix.c_str(), outpath.c_str());
+				VERBOSE_LOG(FILESYS, "MapFilePath: mapped \"%s\" to prefix: \"%s\", path: \"%s\"", inpath.c_str(), fileSystems[i].prefix.c_str(), outpath.c_str());
 
 				return error == SCE_KERNEL_ERROR_NOCWD ? error : 0;
 			}
@@ -249,7 +253,7 @@ int MetaFileSystem::MapFilePath(const std::string &_inpath, std::string &outpath
 		error = SCE_KERNEL_ERROR_NODEV;
 	}
 
-	DEBUG_LOG(Log::FileSystem, "MapFilePath: failed mapping \"%s\", returning false", inpath.c_str());
+	DEBUG_LOG(FILESYS, "MapFilePath: failed mapping \"%s\", returning false", inpath.c_str());
 	return error;
 }
 
@@ -271,38 +275,47 @@ std::string MetaFileSystem::NormalizePrefix(std::string prefix) const {
 	return prefix;
 }
 
-void MetaFileSystem::Mount(const std::string &prefix, std::shared_ptr<IFileSystem> system) {
+void MetaFileSystem::Mount(std::string prefix, std::shared_ptr<IFileSystem> system) {
 	std::lock_guard<std::recursive_mutex> guard(lock);
+
+	MountPoint x;
+	x.prefix = prefix;
+	x.system = system;
 	for (auto &it : fileSystems) {
 		if (it.prefix == prefix) {
-			// Overwrite the old mount.
-			// shared_ptr makes sure there's no leak.
-			it.system = system;
+			// Overwrite the old mount. Don't create a new one.
+			it = x;
 			return;
 		}
 	}
 
 	// Prefix not yet mounted, do so.
-	MountPoint x;
-	x.prefix = prefix;
-	x.system = system;
 	fileSystems.push_back(x);
 }
 
-// Assumes the lock is held
 void MetaFileSystem::UnmountAll() {
 	fileSystems.clear();
 	currentDir.clear();
 }
 
-void MetaFileSystem::Unmount(const std::string &prefix) {
-	std::lock_guard<std::recursive_mutex> guard(lock);
+void MetaFileSystem::Unmount(std::string prefix) {
 	for (auto iter = fileSystems.begin(); iter != fileSystems.end(); iter++) {
 		if (iter->prefix == prefix) {
 			fileSystems.erase(iter);
 			return;
 		}
 	}
+}
+
+bool MetaFileSystem::Remount(std::string prefix, std::shared_ptr<IFileSystem> system) {
+	std::lock_guard<std::recursive_mutex> guard(lock);
+	for (auto &it : fileSystems) {
+		if (it.prefix == prefix) {
+			it.system = system;
+			return true;
+		}
+	}
+	return false;
 }
 
 IFileSystem *MetaFileSystem::GetSystemFromFilename(const std::string &filename) {
@@ -313,7 +326,6 @@ IFileSystem *MetaFileSystem::GetSystemFromFilename(const std::string &filename) 
 }
 
 IFileSystem *MetaFileSystem::GetSystem(const std::string &prefix) {
-	std::lock_guard<std::recursive_mutex> guard(lock);
 	for (auto it = fileSystems.begin(); it != fileSystems.end(); ++it) {
 		if (it->prefix == NormalizePrefix(prefix))
 			return it->system.get();
@@ -357,25 +369,19 @@ PSPFileInfo MetaFileSystem::GetFileInfo(std::string filename)
 	}
 }
 
-PSPFileInfo MetaFileSystem::GetFileInfoByHandle(u32 handle) {
-	std::lock_guard<std::recursive_mutex> guard(lock);
-	IFileSystem *sys = GetHandleOwner(handle);
-	if (sys)
-		return sys->GetFileInfoByHandle(handle);
-	return PSPFileInfo();
-}
-
-std::vector<PSPFileInfo> MetaFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> MetaFileSystem::GetDirListing(std::string path)
+{
 	std::lock_guard<std::recursive_mutex> guard(lock);
 	std::string of;
 	IFileSystem *system;
 	int error = MapFilePath(path, of, &system);
-	if (error == 0) {
-		return system->GetDirListing(of, exists);
-	} else {
+	if (error == 0)
+	{
+		return system->GetDirListing(of);
+	}
+	else
+	{
 		std::vector<PSPFileInfo> empty;
-		if (exists)
-			*exists = false;
 		return empty;
 	}
 }
@@ -411,13 +417,13 @@ int MetaFileSystem::ChDir(const std::string &dir)
 			if (strncasecmp(prefix.c_str(), dir.c_str(), prefix.size()) == 0)
 			{
 				// The PSP is completely happy with invalid current dirs as long as they have a valid device.
-				WARN_LOG(Log::FileSystem, "ChDir failed to map path \"%s\", saving as current directory anyway", dir.c_str());
+				WARN_LOG(FILESYS, "ChDir failed to map path \"%s\", saving as current directory anyway", dir.c_str());
 				currentDir[curThread] = dir;
 				return 0;
 			}
 		}
 
-		WARN_LOG_REPORT(Log::FileSystem, "ChDir failed to map device for \"%s\", failing", dir.c_str());
+		WARN_LOG_REPORT(FILESYS, "ChDir failed to map device for \"%s\", failing", dir.c_str());
 		return SCE_KERNEL_ERROR_NODEV;
 	}
 }
@@ -572,17 +578,13 @@ size_t MetaFileSystem::SeekFile(u32 handle, s32 position, FileMove type)
 	std::lock_guard<std::recursive_mutex> guard(lock);
 	IFileSystem *sys = GetHandleOwner(handle);
 	if (sys)
-		return sys->SeekFile(handle, position, type);
+		return sys->SeekFile(handle,position,type);
 	else
 		return 0;
 }
 
-int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> &data, bool quiet) {
-	FileAccess access = FILEACCESS_READ;
-	if (quiet) {
-		access = (FileAccess)(access | FILEACCESS_PPSSPP_QUIET);
-	}
-	int handle = OpenFile(filename, access);
+int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> &data) {
+	int handle = OpenFile(filename, FILEACCESS_READ);
 	if (handle < 0)
 		return handle;
 
@@ -591,7 +593,7 @@ int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> 
 	SeekFile(handle, 0, FILEMOVE_BEGIN);
 	data.resize(dataSize);
 
-	size_t result = ReadFile(handle, data.data(), dataSize);
+	size_t result = ReadFile(handle, (u8 *)&data[0], dataSize);
 	CloseFile(handle);
 
 	if (result != dataSize)
@@ -600,18 +602,20 @@ int MetaFileSystem::ReadEntireFile(const std::string &filename, std::vector<u8> 
 	return 0;
 }
 
-u64 MetaFileSystem::FreeDiskSpace(const std::string &path) {
+u64 MetaFileSystem::FreeSpace(const std::string &path)
+{
 	std::lock_guard<std::recursive_mutex> guard(lock);
 	std::string of;
 	IFileSystem *system;
 	int error = MapFilePath(path, of, &system);
 	if (error == 0)
-		return system->FreeDiskSpace(of);
+		return system->FreeSpace(of);
 	else
 		return 0;
 }
 
-void MetaFileSystem::DoState(PointerWrap &p) {
+void MetaFileSystem::DoState(PointerWrap &p)
+{
 	std::lock_guard<std::recursive_mutex> guard(lock);
 
 	auto s = p.Section("MetaFileSystem", 1);
@@ -626,12 +630,13 @@ void MetaFileSystem::DoState(PointerWrap &p) {
 	u32 n = (u32) fileSystems.size();
 	Do(p, n);
 	bool skipPfat0 = false;
-	if (n != (u32) fileSystems.size()) {
+	if (n != (u32) fileSystems.size())
+	{
 		if (n == (u32) fileSystems.size() - 1) {
 			skipPfat0 = true;
 		} else {
 			p.SetError(p.ERROR_FAILURE);
-			ERROR_LOG(Log::FileSystem, "Savestate failure: number of filesystems doesn't match.");
+			ERROR_LOG(FILESYS, "Savestate failure: number of filesystems doesn't match.");
 			return;
 		}
 	}
@@ -646,7 +651,7 @@ void MetaFileSystem::DoState(PointerWrap &p) {
 int64_t MetaFileSystem::RecursiveSize(const std::string &dirPath) {
 	u64 result = 0;
 	auto allFiles = GetDirListing(dirPath);
-	for (const auto &file : allFiles) {
+	for (auto file : allFiles) {
 		if (file.name == "." || file.name == "..")
 			continue;
 		if (file.type == FILETYPE_DIRECTORY) {
@@ -675,10 +680,4 @@ int64_t MetaFileSystem::ComputeRecursiveDirectorySize(const std::string &filenam
 	} else {
 		return false;
 	}
-}
-
-bool MetaFileSystem::ComputeRecursiveDirSizeIfFast(const std::string &path, int64_t *size) {
-	// Shouldn't be called. Can't recurse MetaFileSystem.
-	_dbg_assert_(false);
-	return false;
 }

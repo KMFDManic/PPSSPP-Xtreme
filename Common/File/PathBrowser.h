@@ -2,11 +2,12 @@
 
 #include <condition_variable>
 #include <mutex>
-#include <string_view>
+#include <string>
 #include <cstring>
 #include <thread>
 #include <vector>
 #include <cstdlib>
+
 
 #include "Common/File/DirListing.h"
 #include "Common/File/Path.h"
@@ -17,46 +18,33 @@
 class PathBrowser {
 public:
 	PathBrowser() {}
+	PathBrowser(const Path &path) { SetPath(path); }
 	~PathBrowser();
 
 	void SetPath(const Path &path);
-	void Refresh() {
-		HandlePath();
-	}
-	bool IsListingReady() const {
-		return ready_;
-	}
+	bool IsListingReady();
 	bool GetListing(std::vector<File::FileInfo> &fileInfo, const char *filter = nullptr, bool *cancel = nullptr);
 
 	bool CanNavigateUp();
 	void NavigateUp();
 
-	void Navigate(std::string_view subdir);
+	void Navigate(const std::string &subdir);
 
 	const Path &GetPath() const {
 		return path_;
 	}
+	std::string GetFriendlyPath() const;
 
-	void SetUserAgent(std::string_view s) {
-		userAgent_ = s;
-	}
-	void RestrictToRoot(const Path &root);
 	bool empty() const {
 		return path_.empty();
-	}
-	bool Success() const {
-		return success_;
 	}
 
 private:
 	void HandlePath();
 	void ResetPending();
-	void ApplyRestriction();
 
 	Path path_;
 	Path pendingPath_;
-	Path restrictedRoot_;
-	std::string userAgent_;
 	std::vector<File::FileInfo> pendingFiles_;
 	std::condition_variable pendingCond_;
 	std::mutex pendingLock_;
@@ -65,6 +53,5 @@ private:
 	bool pendingCancel_ = false;
 	bool pendingStop_ = false;
 	bool ready_ = false;
-	bool success_ = true;
 };
 

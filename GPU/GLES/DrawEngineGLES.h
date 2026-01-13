@@ -40,6 +40,16 @@ struct TransformedVertex;
 
 struct DecVtxFormat;
 
+enum {
+	TEX_SLOT_PSP_TEXTURE = 0,
+	TEX_SLOT_SHADERBLEND_SRC = 1,
+	TEX_SLOT_ALPHATEST = 2,
+	TEX_SLOT_CLUT = 3,
+	TEX_SLOT_SPLINE_POINTS = 4,
+	TEX_SLOT_SPLINE_WEIGHTS_U = 5,
+	TEX_SLOT_SPLINE_WEIGHTS_V = 6,
+};
+
 class TessellationDataTransferGLES : public TessellationDataTransfer {
 private:
 	GLRTexture *data_tex[3]{};
@@ -61,7 +71,7 @@ public:
 class DrawEngineGLES : public DrawEngineCommon {
 public:
 	DrawEngineGLES(Draw::DrawContext *draw);
-	~DrawEngineGLES();
+	virtual ~DrawEngineGLES();
 
 	void SetShaderManager(ShaderManagerGLES *shaderManager) {
 		shaderManager_ = shaderManager;
@@ -76,35 +86,59 @@ public:
 		fragmentTestCache_ = testCache;
 	}
 
-	void DeviceLost() override;
-	void DeviceRestore(Draw::DrawContext *draw) override;
+	void DeviceLost();
+	void DeviceRestore(Draw::DrawContext *draw);
 
-	void BeginFrame() override;
+	void ClearTrackedVertexArrays() override {}
+
+	void BeginFrame();
 	void EndFrame();
 
+
 	// So that this can be inlined
-	void Flush() override;
+	void Flush() {
+		if (!numDrawCalls)
+			return;
+		DoFlush();
+	}
+
 	void FinishDeferred() {
-		Flush();
+		if (!numDrawCalls)
+			return;
+		DoFlush();
+	}
+
+	bool IsCodePtrVertexDecoder(const u8 *ptr) const;
+
+	void DispatchFlush() override { Flush(); }
+
+	GLPushBuffer *GetPushVertexBuffer() {
+		return frameData_[render_->GetCurFrame()].pushVertex;
+	}
+	GLPushBuffer *GetPushIndexBuffer() {
+		return frameData_[render_->GetCurFrame()].pushIndex;
 	}
 
 	void ClearInputLayoutMap();
 
-	static bool SupportsHWTessellation() ;
+	bool SupportsHWTessellation() const;
 
 protected:
-	bool UpdateUseHWTessellation(bool enable) const override;
+	bool UpdateUseHWTessellation(bool enable) override;
+	void DecimateTrackedVertexArrays() {}
 
 private:
-	void Invalidate(InvalidationCallbackFlags flags);
-
 	void InitDeviceObjects();
 	void DestroyDeviceObjects();
 
+	void DoFlush();
 	void ApplyDrawState(int prim);
 	void ApplyDrawStateLate(bool setStencil, int stencilValue);
+	void ResetFramebufferRead();
 
-	GLRInputLayout *SetupDecFmtForDraw(const DecVtxFormat &decFmt);
+	GLRInputLayout *SetupDecFmtForDraw(LinkedShader *program, const DecVtxFormat &decFmt);
+
+	void *DecodeVertsToPushBuffer(GLPushBuffer *push, uint32_t *bindOffset, GLRBuffer **buf);
 
 	struct FrameData {
 		GLPushBuffer *pushVertex;
@@ -112,7 +146,7 @@ private:
 	};
 	FrameData frameData_[GLRenderManager::MAX_INFLIGHT_FRAMES];
 
-	DenseHashMap<uint32_t, GLRInputLayout *> inputLayoutMap_;
+	DenseHashMap<uint32_t, GLRInputLayout *, nullptr> inputLayoutMap_;
 
 	GLRInputLayout *softwareInputLayout_ = nullptr;
 	GLRenderManager *render_;
@@ -125,11 +159,10 @@ private:
 	Draw::DrawContext *draw_;
 
 	// Need to preserve the scissor for use when clearing.
-	ViewportAndScissor vpAndScissor_{};
-	// Need to preserve writemask, easiest way.
-	GenericStencilFuncState stencilState_{};
+	ViewportAndScissor vpAndScissor;
 
 	int bufferDecimationCounter_ = 0;
+
 	int lastRenderStepId_ = -1;
 
 	// Hardware tessellation

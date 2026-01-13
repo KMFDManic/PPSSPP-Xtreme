@@ -18,10 +18,9 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
-#include <cstring>
-
 #include "Common/Common.h"
 
 class PointerWrap;
@@ -54,7 +53,6 @@ struct MemBlockInfo {
 
 void NotifyMemInfo(MemBlockFlags flags, uint32_t start, uint32_t size, const char *tag, size_t tagLength);
 void NotifyMemInfoPC(MemBlockFlags flags, uint32_t start, uint32_t size, uint32_t pc, const char *tag, size_t tagLength);
-void NotifyMemInfoCopy(uint32_t destPtr, uint32_t srcPtr, uint32_t size, const char *prefix);
 
 // This lets us avoid calling strlen on string constants, instead the string length (including null,
 // so we have to subtract 1) is computed at compile time.
@@ -70,7 +68,7 @@ inline void NotifyMemInfo(MemBlockFlags flags, uint32_t start, uint32_t size, co
 std::vector<MemBlockInfo> FindMemInfo(uint32_t start, uint32_t size);
 std::vector<MemBlockInfo> FindMemInfoByFlag(MemBlockFlags flags, uint32_t start, uint32_t size);
 
-size_t FormatMemWriteTagAt(char *buf, size_t sz, const char *prefix, uint32_t start, uint32_t size);
+std::string GetMemWriteTagAt(uint32_t start, uint32_t size);
 
 void MemBlockInfoInit();
 void MemBlockInfoShutdown();

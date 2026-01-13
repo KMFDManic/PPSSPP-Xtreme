@@ -16,13 +16,12 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-
 #if PPSSPP_ARCH(AMD64)
 
+#include <emmintrin.h>
 #include "Common/x64Emitter.h"
 #include "Common/CPUDetect.h"
-#include "Common/LogReporting.h"
-#include "Common/Math/SIMDHeaders.h"
+#include "Core/Reporting.h"
 #include "GPU/GPUState.h"
 #include "GPU/Software/DrawPixel.h"
 #include "GPU/Software/SoftGpu.h"
@@ -31,6 +30,19 @@
 using namespace Gen;
 
 namespace Rasterizer {
+
+template <typename T>
+static bool Accessible(const T *t1, const T *t2) {
+	ptrdiff_t diff = (const uint8_t *)t1 - (const uint8_t *)t2;
+	return diff > -0x7FFFFFE0 && diff < 0x7FFFFFE0;
+}
+
+template <typename T>
+static OpArg MAccessibleDisp(X64Reg r, const T *tbase, const T *t) {
+	_assert_(Accessible(tbase, t));
+	ptrdiff_t diff = (const uint8_t *)t - (const uint8_t *)tbase;
+	return MDisp(r, (int)diff);
+}
 
 SingleFunc PixelJitCache::CompileSingle(const PixelFuncID &id) {
 	// Setup the reg cache and disallow spill for arguments.
@@ -43,12 +55,11 @@ SingleFunc PixelJitCache::CompileSingle(const PixelFuncID &id) {
 		RegCache::GEN_ARG_ID,
 	});
 
-	BeginWrite(64);
+	BeginWrite();
 	Describe("Init");
 	WriteConstantPool(id);
 
 	const u8 *resetPos = AlignCode16();
-	EndWrite();
 	bool success = true;
 
 #if PPSSPP_PLATFORM(WINDOWS)
@@ -102,7 +113,7 @@ SingleFunc PixelJitCache::CompileSingle(const PixelFuncID &id) {
 		regCache_.ForceRelease(RegCache::GEN_ARG_ID);
 
 	if (!success) {
-		ERROR_LOG_REPORT(Log::G3D, "Could not compile pixel func: %s", DescribePixelFuncID(id).c_str());
+		ERROR_LOG_REPORT(G3D, "Could not compile pixel func: %s", DescribePixelFuncID(id).c_str());
 
 		regCache_.Reset(false);
 		EndWrite();
@@ -138,7 +149,7 @@ RegCache::Reg PixelJitCache::GetColorOff(const PixelFuncID &id) {
 	if (!regCache_.Has(RegCache::GEN_COLOR_OFF)) {
 		Describe("GetColorOff");
 		if (id.useStandardStride && !id.dithering) {
-			bool loadDepthOff = id.depthWrite || (id.DepthTestFunc() != GE_COMP_ALWAYS && !id.earlyZChecks);
+			bool loadDepthOff = id.depthWrite || id.DepthTestFunc() != GE_COMP_ALWAYS;
 			X64Reg depthTemp = INVALID_REG;
 			X64Reg argYReg = regCache_.Find(RegCache::GEN_ARG_Y);
 			X64Reg argXReg = regCache_.Find(RegCache::GEN_ARG_X);
@@ -149,7 +160,7 @@ RegCache::Reg PixelJitCache::GetColorOff(const PixelFuncID &id) {
 
 			// Now add the pointer for the color buffer.
 			if (loadDepthOff) {
-				_assert_msg_(Accessible(&fb.data, &depthbuf.data), "fb.data and depthbuf.data too far apart: %p %p (fb=%08x d=%08x)", fb.data, depthbuf.data, gstate.getFrameBufAddress(), gstate.getDepthBufAddress());
+				_assert_(Accessible(&fb.data, &depthbuf.data));
 				depthTemp = regCache_.Alloc(RegCache::GEN_DEPTH_OFF);
 				if (RipAccessible(&fb.data) && RipAccessible(&depthbuf.data)) {
 					MOV(PTRBITS, R(argYReg), M(&fb.data));
@@ -325,10 +336,16 @@ void PixelJitCache::WriteConstantPool(const PixelFuncID &id) {
 
 	// This is used for shifted blend factors, to inverse them.
 	WriteSimpleConst8x16(constBlendInvert_11_4s_, 0xFF << 4);
+
+	// A set of 255s, used to inverse fog.
+	WriteSimpleConst8x16(const255_16s_, 0xFF);
+
+	// This is used for a multiply that divides by 255 with shifting.
+	WriteSimpleConst8x16(constBy255i_, 0x8081);
 }
 
 bool PixelJitCache::Jit_ApplyDepthRange(const PixelFuncID &id) {
-	if (id.applyDepthRange && !id.earlyZChecks) {
+	if (id.applyDepthRange) {
 		Describe("ApplyDepthR");
 		X64Reg argZReg = regCache_.Find(RegCache::GEN_ARG_Z);
 		X64Reg idReg = GetPixelID();
@@ -348,7 +365,7 @@ bool PixelJitCache::Jit_ApplyDepthRange(const PixelFuncID &id) {
 	// Since this is early on, try to free up the z reg if we don't need it anymore.
 	if (id.clearMode && !id.DepthClear())
 		regCache_.ForceRelease(RegCache::GEN_ARG_Z);
-	else if (!id.clearMode && !id.depthWrite && (id.DepthTestFunc() == GE_COMP_ALWAYS || id.earlyZChecks))
+	else if (!id.clearMode && !id.depthWrite && id.DepthTestFunc() == GE_COMP_ALWAYS)
 		regCache_.ForceRelease(RegCache::GEN_ARG_Z);
 
 	return true;
@@ -518,8 +535,7 @@ bool PixelJitCache::Jit_ApplyFog(const PixelFuncID &id) {
 
 	// Load a set of 255s at 16 bit into a reg for later...
 	X64Reg invertReg = regCache_.Alloc(RegCache::VEC_TEMP2);
-	PCMPEQW(invertReg, R(invertReg));
-	PSRLW(invertReg, 8);
+	MOVDQA(invertReg, M(const255_16s_));
 
 	// Expand (we clamped) color to 16 bit as well, so we can multiply with fog.
 	X64Reg argColorReg = regCache_.Find(RegCache::VEC_ARG_COLOR);
@@ -552,24 +568,21 @@ bool PixelJitCache::Jit_ApplyFog(const PixelFuncID &id) {
 	// We can free up the actual fog reg now.
 	regCache_.ForceRelease(RegCache::GEN_ARG_FOG);
 
-	// Our goal here is to calculate this formula:
-	// (argColor * fog + fogColor * (255 - fog) + 255) / 256
-
 	// Now we multiply the existing color by fog...
 	PMULLW(argColorReg, R(fogMultReg));
-	// Before inversing, let's add that 255 we loaded in as well, since we have it.
-	PADDW(argColorReg, R(invertReg));
-	// And then inverse the fog value using those 255s, and multiply by fog color.
-	PSUBW(invertReg, R(fogMultReg));
+	// And then inverse the fog value using those 255s we loaded, and multiply by fog color.
+	PSUBUSW(invertReg, R(fogMultReg));
 	PMULLW(fogColorReg, R(invertReg));
 	// At this point, argColorReg and fogColorReg are multiplied at 16-bit, so we need to sum.
-	PADDW(argColorReg, R(fogColorReg));
+	PADDUSW(argColorReg, R(fogColorReg));
 	regCache_.Release(fogColorReg, RegCache::VEC_TEMP1);
 	regCache_.Release(invertReg, RegCache::VEC_TEMP2);
 	regCache_.Release(fogMultReg, RegCache::VEC_TEMP3);
 
-	// Now we simply divide by 256, or in other words shift by 8.
-	PSRLW(argColorReg, 8);
+	// Now to divide by 255, we use bit tricks: multiply by 0x8081, and shift right by 16+7.
+	PMULHUW(argColorReg, M(constBy255i_));
+	// Now shift right by 7 (PMULHUW already did 16 of the shift.)
+	PSRLW(argColorReg, 7);
 
 	// Okay, put A back in, we'll shrink it to 8888 when needed.
 	PINSRW(argColorReg, R(alphaReg), 3);
@@ -708,7 +721,7 @@ bool PixelJitCache::Jit_StencilTest(const PixelFuncID &id, RegCache::Reg stencil
 }
 
 bool PixelJitCache::Jit_DepthTestForStencil(const PixelFuncID &id, RegCache::Reg stencilReg) {
-	if (id.DepthTestFunc() == GE_COMP_ALWAYS || id.earlyZChecks)
+	if (id.DepthTestFunc() == GE_COMP_ALWAYS)
 		return true;
 
 	X64Reg depthOffReg = GetDepthOff(id);
@@ -951,7 +964,7 @@ bool PixelJitCache::Jit_WriteStencilOnly(const PixelFuncID &id, RegCache::Reg st
 }
 
 bool PixelJitCache::Jit_DepthTest(const PixelFuncID &id) {
-	if (id.DepthTestFunc() == GE_COMP_ALWAYS || id.earlyZChecks)
+	if (id.DepthTestFunc() == GE_COMP_ALWAYS)
 		return true;
 
 	if (id.DepthTestFunc() == GE_COMP_NEVER) {
@@ -1036,13 +1049,7 @@ bool PixelJitCache::Jit_AlphaBlend(const PixelFuncID &id) {
 
 	// Step 1: Load and expand dest color.
 	X64Reg dstReg = regCache_.Alloc(RegCache::VEC_TEMP0);
-	if (!blendState.readsDstPixel) {
-		// Let's load colorOff just for registers to be consistent.
-		X64Reg colorOff = GetColorOff(id);
-		regCache_.Unlock(colorOff, RegCache::GEN_COLOR_OFF);
-
-		PXOR(dstReg, R(dstReg));
-	} else if (id.FBFormat() == GE_FORMAT_8888) {
+	if (id.FBFormat() == GE_FORMAT_8888) {
 		X64Reg colorOff = GetColorOff(id);
 		Describe("AlphaBlend");
 		MOVD_xmm(dstReg, MatR(colorOff));
@@ -1068,6 +1075,7 @@ bool PixelJitCache::Jit_AlphaBlend(const PixelFuncID &id) {
 
 		case GE_FORMAT_4444:
 			success = success && Jit_ConvertFrom4444(id, dstGenReg, temp1Reg, temp2Reg, blendState.usesDstAlpha);
+
 			break;
 
 		case GE_FORMAT_8888:
@@ -1109,7 +1117,7 @@ bool PixelJitCache::Jit_AlphaBlend(const PixelFuncID &id) {
 		// We also need to add a half bit later, so this gives us space.
 		if (multiplySrc || blendState.srcColorAsFactor)
 			PSLLW(argColorReg, 4);
-		if (multiplyDst || blendState.dstColorAsFactor || blendState.usesDstAlpha)
+		if (multiplyDst || blendState.dstColorAsFactor)
 			PSLLW(dstReg, 4);
 
 		// Okay, now grab our factors.  Don't bother if they're known values.
@@ -1148,7 +1156,7 @@ bool PixelJitCache::Jit_AlphaBlend(const PixelFuncID &id) {
 			if (id.AlphaBlendEq() == GE_BLENDMODE_MUL_AND_SUBTRACT_REVERSE)
 				PXOR(dstReg, R(dstReg));
 		} else if (id.AlphaBlendDst() == PixelBlendFactor::ONE) {
-			if (blendState.dstColorAsFactor || blendState.usesDstAlpha)
+			if (blendState.dstColorAsFactor)
 				PSRLW(dstReg, 4);
 		}
 
@@ -1212,6 +1220,7 @@ bool PixelJitCache::Jit_AlphaBlend(const PixelFuncID &id) {
 
 	return success;
 }
+
 
 bool PixelJitCache::Jit_BlendFactor(const PixelFuncID &id, RegCache::Reg factorReg, RegCache::Reg dstReg, PixelBlendFactor factor) {
 	X64Reg idReg = INVALID_REG;
@@ -1726,7 +1735,6 @@ bool PixelJitCache::Jit_ApplyLogicOp(const PixelFuncID &id, RegCache::Reg colorR
 	}
 
 	std::vector<FixupBranch> finishes;
-	finishes.reserve(11);
 	FixupBranch skipTable = J(true);
 	const u8 *tableValues[16]{};
 

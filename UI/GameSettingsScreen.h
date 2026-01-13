@@ -21,128 +21,189 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
-
 #include "Common/UI/UIScreen.h"
-#include "Common/UI/PopupScreens.h"
-#include "Core/ConfigValues.h"
-#include "UI/BaseScreens.h"
-#include "UI/TabbedDialogScreen.h"
-
-class Path;
+#include "UI/MiscScreens.h"
 
 // Per-game settings screen - enables you to configure graphic options, control options, etc
 // per game.
-class GameSettingsScreen : public UITabbedBaseDialogScreen {
+class GameSettingsScreen : public UIDialogScreenWithGameBackground {
 public:
 	GameSettingsScreen(const Path &gamePath, std::string gameID = "", bool editThenRestore = false);
-	~GameSettingsScreen();
 
-	const char *tag() const override { return "GameSettings"; }
+	void update() override;
+	void onFinish(DialogResult result) override;
+	std::string tag() const override { return "settings"; }
 
 protected:
+	void sendMessage(const char *message, const char *value) override;
+	void CreateViews() override;
 	void CallbackRestoreDefaults(bool yes);
+	void CallbackRenderingBackend(bool yes);
+	void CallbackRenderingDevice(bool yes);
+	void CallbackInflightFrames(bool yes);
 	void CallbackMemstickFolder(bool yes);
+	bool UseVerticalLayout() const;
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
-
-	void CreateTabs() override;
-	bool ShowSearchControls() const override { return true; }
+	void RecreateViews() override;
 
 private:
-	void PreCreateViews() override;
-
-	void CreateGraphicsSettings(UI::ViewGroup *graphicsSettings);
-	void CreateControlsSettings(UI::ViewGroup *tools);
-	void CreateAudioSettings(UI::ViewGroup *audioSettings);
-	void CreateNetworkingSettings(UI::ViewGroup *networkingSettings);
-	void CreateToolsSettings(UI::ViewGroup *tools);
-	void CreateSystemSettings(UI::ViewGroup *systemSettings);
-	void CreateVRSettings(UI::ViewGroup *vrSettings);
+	UI::LinearLayout *AddTab(const char *tag, const std::string &title, bool isSearch = false);
+	void ApplySearchFilter();
+	void TriggerRestart(const char *why);
 
 	std::string gameID_;
-	UI::CheckBox *enableReportsCheckbox_ = nullptr;
-	UI::Choice *layoutEditorChoice_ = nullptr;
-	UI::Choice *displayEditor_ = nullptr;
+	bool lastVertical_;
+	UI::CheckBox *enableReportsCheckbox_;
+	UI::Choice *layoutEditorChoice_;
+	UI::Choice *postProcChoice_;
+	UI::Choice *displayEditor_;
 	UI::Choice *backgroundChoice_ = nullptr;
-	UI::PopupMultiChoice *resolutionChoice_ = nullptr;
-	UI::CheckBox *frameSkipAuto_ = nullptr;
+	UI::PopupMultiChoice *resolutionChoice_;
+	UI::CheckBox *frameSkipAuto_;
+	SettingInfoMessage *settingInfo_;
+	UI::Choice *clearSearchChoice_;
+	UI::TextView *noSearchResults_;
 #ifdef _WIN32
-	UI::CheckBox *SavePathInMyDocumentChoice = nullptr;
-	UI::CheckBox *SavePathInOtherChoice = nullptr;
+	UI::CheckBox *SavePathInMyDocumentChoice;
+	UI::CheckBox *SavePathInOtherChoice;
 	// Used to enable/disable the above two options.
-	bool installed_ = false;
-	bool otherinstalled_ = false;
+	bool installed_;
+	bool otherinstalled_;
 #endif
 
 	std::string memstickDisplay_;
 
+	UI::TabHolder *tabHolder_;
+	std::vector<UI::LinearLayout *> settingTabContents_;
+	std::vector<UI::TextView *> settingTabFilterNotices_;
+
+	// Event handlers
+	UI::EventReturn OnControlMapping(UI::EventParams &e);
+	UI::EventReturn OnCalibrateAnalogs(UI::EventParams &e);
+	UI::EventReturn OnTouchControlLayout(UI::EventParams &e);
+	UI::EventReturn OnDumpNextFrameToLog(UI::EventParams &e);
+	UI::EventReturn OnTiltTypeChange(UI::EventParams &e);
+	UI::EventReturn OnTiltCustomize(UI::EventParams &e);
+
 	// Global settings handlers
-	void OnAutoFrameskip(UI::EventParams &e);
-	void OnTextureShader(UI::EventParams &e);
-	void OnTextureShaderChange(UI::EventParams &e);
-	void OnChangeQuickChat0(UI::EventParams &e);
-	void OnChangeQuickChat1(UI::EventParams &e);
-	void OnChangeQuickChat2(UI::EventParams &e);
-	void OnChangeQuickChat3(UI::EventParams &e);
-	void OnChangeQuickChat4(UI::EventParams &e);
-	void OnChangeBackground(UI::EventParams &e);
-	void OnFullscreenChange(UI::EventParams &e);
-	void OnFullscreenMultiChange(UI::EventParams &e);
-	void OnRestoreDefaultSettings(UI::EventParams &e);
-	void OnRenderingBackend(UI::EventParams &e);
-	void OnRenderingDevice(UI::EventParams &e);
-	void OnInflightFramesChoice(UI::EventParams &e);
-	void OnCameraDeviceChange(UI::EventParams& e);
-	void OnMicDeviceChange(UI::EventParams& e);
-	void OnAudioDevice(UI::EventParams &e);
-	void OnJitAffectingSetting(UI::EventParams &e);
-	void OnShowMemstickScreen(UI::EventParams &e);
+	UI::EventReturn OnLanguage(UI::EventParams &e);
+	UI::EventReturn OnLanguageChange(UI::EventParams &e);
+	UI::EventReturn OnAutoFrameskip(UI::EventParams &e);
+	UI::EventReturn OnPostProcShaderChange(UI::EventParams &e);
+	UI::EventReturn OnTextureShader(UI::EventParams &e);
+	UI::EventReturn OnTextureShaderChange(UI::EventParams &e);
+	UI::EventReturn OnDeveloperTools(UI::EventParams &e);
+	UI::EventReturn OnRemoteISO(UI::EventParams &e);
+	UI::EventReturn OnChangeQuickChat0(UI::EventParams &e);
+	UI::EventReturn OnChangeQuickChat1(UI::EventParams &e);
+	UI::EventReturn OnChangeQuickChat2(UI::EventParams &e);
+	UI::EventReturn OnChangeQuickChat3(UI::EventParams &e);
+	UI::EventReturn OnChangeQuickChat4(UI::EventParams &e);
+	UI::EventReturn OnChangeNickname(UI::EventParams &e);
+	UI::EventReturn OnChangeproAdhocServerAddress(UI::EventParams &e);
+	UI::EventReturn OnChangeMacAddress(UI::EventParams &e);
+	UI::EventReturn OnChangeBackground(UI::EventParams &e);
+	UI::EventReturn OnFullscreenChange(UI::EventParams &e);
+	UI::EventReturn OnFullscreenMultiChange(UI::EventParams &e);
+	UI::EventReturn OnDisplayLayoutEditor(UI::EventParams &e);
+	UI::EventReturn OnResolutionChange(UI::EventParams &e);
+	UI::EventReturn OnHwScaleChange(UI::EventParams &e);
+	UI::EventReturn OnRestoreDefaultSettings(UI::EventParams &e);
+	UI::EventReturn OnRenderingMode(UI::EventParams &e);
+	UI::EventReturn OnRenderingBackend(UI::EventParams &e);
+	UI::EventReturn OnRenderingDevice(UI::EventParams &e);
+	UI::EventReturn OnInflightFramesChoice(UI::EventParams &e);
+	UI::EventReturn OnCameraDeviceChange(UI::EventParams& e);
+	UI::EventReturn OnMicDeviceChange(UI::EventParams& e);
+	UI::EventReturn OnAudioDevice(UI::EventParams &e);
+	UI::EventReturn OnJitAffectingSetting(UI::EventParams &e);
+	UI::EventReturn OnChangeMemStickDir(UI::EventParams &e);
+	UI::EventReturn OnOpenMemStick(UI::EventParams &e);
 #if defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
-	void OnMemoryStickMyDoc(UI::EventParams &e);
-	void OnMemoryStickOther(UI::EventParams &e);
+	UI::EventReturn OnSavePathMydoc(UI::EventParams &e);
+	UI::EventReturn OnSavePathOther(UI::EventParams &e);
 #endif
-	void OnImmersiveModeChange(UI::EventParams &e);
-	void OnSustainedPerformanceModeChange(UI::EventParams &e);
+	UI::EventReturn OnScreenRotation(UI::EventParams &e);
+	UI::EventReturn OnImmersiveModeChange(UI::EventParams &e);
+	UI::EventReturn OnSustainedPerformanceModeChange(UI::EventParams &e);
 
-	void OnAdhocGuides(UI::EventParams &e);
+	UI::EventReturn OnAdhocGuides(UI::EventParams &e);
 
-	void TriggerRestartOrDo(std::function<void()> callback);
+	UI::EventReturn OnSavedataManager(UI::EventParams &e);
+	UI::EventReturn OnSysInfo(UI::EventParams &e);
+	UI::EventReturn OnChangeSearchFilter(UI::EventParams &e);
+	UI::EventReturn OnClearSearchFilter(UI::EventParams &e);
 
 	// Temporaries to convert setting types, cache enabled, etc.
-	int iAlternateSpeedPercent1_ = 0;
-	int iAlternateSpeedPercent2_ = 0;
-	int iAlternateSpeedPercentAnalog_ = 0;
-	int prevInflightFrames_ = -1;
+	int iAlternateSpeedPercent1_;
+	int iAlternateSpeedPercent2_;
+	int iAlternateSpeedPercentAnalog_;
+	int prevInflightFrames_;
 	bool enableReports_ = false;
 	bool enableReportsSet_ = false;
 	bool analogSpeedMapped_ = false;
+	std::string shaderNames_[256];
+	std::string searchFilter_;
 
-	// edit the game-specific settings and restore the global settings after exiting
-	bool editGameSpecificThenRestore_ = false;
+	//edit the game-specific settings and restore the global settings after exiting
+	bool editThenRestore_;
 
 	// Android-only
 	std::string pendingMemstickFolder_;
+
+	// If we recreate the views while this is active we show it again
+	std::string oldSettingInfo_;
 };
 
-class HostnameSelectScreen : public UI::PopupScreen {
+class DeveloperToolsScreen : public UIDialogScreenWithBackground {
 public:
-	HostnameSelectScreen(std::string *value, std::vector<std::string> *listItems, std::string_view title)
-		: UI::PopupScreen(title, "OK", "Cancel"), listItems_(listItems), value_(value) {
+	DeveloperToolsScreen() {}
+	void update() override;
+	void onFinish(DialogResult result) override;
+
+protected:
+	void CreateViews() override;
+
+private:
+	UI::EventReturn OnRunCPUTests(UI::EventParams &e);
+	UI::EventReturn OnLoggingChanged(UI::EventParams &e);
+	UI::EventReturn OnLoadLanguageIni(UI::EventParams &e);
+	UI::EventReturn OnSaveLanguageIni(UI::EventParams &e);
+	UI::EventReturn OnOpenTexturesIniFile(UI::EventParams &e);
+	UI::EventReturn OnLogConfig(UI::EventParams &e);
+	UI::EventReturn OnJitAffectingSetting(UI::EventParams &e);
+	UI::EventReturn OnJitDebugTools(UI::EventParams &e);
+	UI::EventReturn OnRemoteDebugger(UI::EventParams &e);
+	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
+	UI::EventReturn OnFramedumpTest(UI::EventParams &e);
+	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
+	UI::EventReturn OnCopyStatesToRoot(UI::EventParams &e);
+
+	bool allowDebugger_ = false;
+	bool canAllowDebugger_ = true;
+	enum class HasIni {
+		NO,
+		YES,
+		MAYBE,
+	};
+	HasIni hasTexturesIni_ = HasIni::MAYBE;
+};
+
+class HostnameSelectScreen : public PopupScreen {
+public:
+	HostnameSelectScreen(std::string *value, const std::string &title)
+		: PopupScreen(title, "OK", "Cancel"), value_(value) {
 		resolver_ = std::thread([](HostnameSelectScreen *thiz) {
 			thiz->ResolverThread();
 		}, this);
 	}
 	~HostnameSelectScreen() {
-		{
-			std::unique_lock<std::mutex> guard(resolverLock_);
-			resolverState_ = ResolverState::QUIT;
-			resolverCond_.notify_one();
-		}
+		resolverState_ = ResolverState::QUIT;
+		resolverCond_.notify_one();
 		resolver_.join();
 	}
 
 	void CreatePopupContents(UI::ViewGroup *parent) override;
-
-	const char *tag() const override { return "HostnameSelect"; }
 
 protected:
 	void OnCompleted(DialogResult result) override;
@@ -150,15 +211,14 @@ protected:
 
 private:
 	void ResolverThread();
-	void SendEditKey(InputKeyCode keyCode, KeyInputFlags flags = (KeyInputFlags)0);
-
-	void OnNumberClick(UI::EventParams &e);
-	void OnPointClick(UI::EventParams &e);
-	void OnDeleteClick(UI::EventParams &e);
-	void OnDeleteAllClick(UI::EventParams &e);
-	void OnEditClick(UI::EventParams& e);
-	void OnShowIPListClick(UI::EventParams& e);
-	void OnIPClick(UI::EventParams& e);
+	void SendEditKey(int keyCode, int flags = 0);
+	UI::EventReturn OnNumberClick(UI::EventParams &e);
+	UI::EventReturn OnPointClick(UI::EventParams &e);
+	UI::EventReturn OnDeleteClick(UI::EventParams &e);
+	UI::EventReturn OnDeleteAllClick(UI::EventParams &e);
+	UI::EventReturn OnEditClick(UI::EventParams& e);
+	UI::EventReturn OnShowIPListClick(UI::EventParams& e);
+	UI::EventReturn OnIPClick(UI::EventParams& e);
 
 	enum class ResolverState {
 		WAITING,
@@ -169,7 +229,6 @@ private:
 	};
 
 	std::string *value_;
-	std::vector<std::string> *listItems_;
 	UI::TextEdit *addrView_ = nullptr;
 	UI::TextView *progressView_ = nullptr;
 	UI::LinearLayout *ipRows_ = nullptr;
@@ -184,30 +243,8 @@ private:
 	bool lastResolvedResult_ = false;
 };
 
-class GestureMappingScreen : public UITabbedBaseDialogScreen {
+
+class GestureMappingScreen : public UIDialogScreenWithBackground {
 public:
-	GestureMappingScreen(const Path &gamePath) : UITabbedBaseDialogScreen(gamePath) {}
-
-	void CreateTabs() override;
-	const char *tag() const override { return "GestureMapping"; }
-	bool ShowSearchControls() const override { return false; }
-protected:
-	void CreateGestureTab(UI::LinearLayout *parent);
+	void CreateViews() override;
 };
-
-class RestoreSettingsScreen : public UI::PopupScreen {
-public:
-	RestoreSettingsScreen(std::string_view title);
-	void CreatePopupContents(UI::ViewGroup *parent) override;
-
-	const char *tag() const override { return "RestoreSettingsScreen"; }
-private:
-	void OnCompleted(DialogResult result) override;
-	int restoreFlags_ = (int)(RestoreSettingsBits::SETTINGS);  // RestoreSettingsBits enum
-};
-
-void TriggerRestart(const char *why, bool editThenRestore, const Path &gamePath);
-
-#if PPSSPP_PLATFORM(MAC) || PPSSPP_PLATFORM(IOS)
-void SetMemStickDirDarwin(int requesterToken);
-#endif

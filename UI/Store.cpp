@@ -20,31 +20,23 @@
 #include "Common/UI/Screen.h"
 #include "Common/UI/Context.h"
 #include "Common/UI/ViewGroup.h"
-#include "Common/UI/IconCache.h"
-#include "Common/UI/ScrollView.h"
 #include "Common/Render/DrawBuffer.h"
 
 #include "Common/Log.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Data/Format/JSONReader.h"
 #include "Common/StringUtils.h"
-#include "Common/Render/ManagedTexture.h"
-#include "Common/Net/NetBuffer.h"
 #include "Core/Config.h"
 #include "Core/System.h"
 #include "Core/Util/GameManager.h"
 #include "UI/EmuScreen.h"
 #include "UI/Store.h"
+#include "UI/TextureUtil.h"
 
-const char *storeBaseUrlHttp = "http://store.ppsspp.org/";
-const char *storeBaseUrlHttps = "https://store.ppsspp.org/";
-
-static std::string StoreBaseUrl() {
-	return System_GetPropertyBool(SYSPROP_SUPPORTS_HTTPS) ? storeBaseUrlHttps : storeBaseUrlHttp;
-}
+const std::string storeBaseUrl = "http://store.ppsspp.org/";
 
 // baseUrl is assumed to have a trailing slash, and not contain any subdirectories.
-std::string ResolveUrl(const std::string &baseUrl, const std::string &url) {
+std::string ResolveUrl(std::string baseUrl, std::string url) {
 	if (url.empty()) {
 		return baseUrl;
 	} else if (url[0] == '/') {
@@ -59,40 +51,19 @@ std::string ResolveUrl(const std::string &baseUrl, const std::string &url) {
 
 class HttpImageFileView : public UI::View {
 public:
-	HttpImageFileView(http::RequestManager *requestManager, const std::string &path, UI::ImageSizeMode sizeMode = UI::IS_DEFAULT, bool useIconCache = true, UI::LayoutParams *layoutParams = nullptr)
-		: UI::View(layoutParams), path_(path), sizeMode_(sizeMode), requestManager_(requestManager), useIconCache_(useIconCache) {
-
-		if (useIconCache && g_iconCache.MarkPending(path_)) {
-			const char *acceptMime = "image/png, image/jpeg, image/*; q=0.9, */*; q=0.8";
-			requestManager_->StartDownloadWithCallback(path_, Path(), http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, [](http::Request &download) {
-				// Can't touch 'this' in this function! Don't use captures!
-				std::string path = download.url();
-				if (download.ResultCode() == 200) {
-					std::string data;
-					download.buffer().TakeAll(&data);
-					if (!data.empty()) {
-						g_iconCache.InsertIcon(path, IconFormat::PNG, std::move(data));
-					} else {
-						g_iconCache.CancelPending(path);
-					}
-				} else {
-					g_iconCache.CancelPending(path);
-				}
-			}, acceptMime);
-		}
-	}
+	HttpImageFileView(http::Downloader *downloader, const std::string &path, UI::ImageSizeMode sizeMode = UI::IS_DEFAULT, UI::LayoutParams *layoutParams = 0)
+		: UI::View(layoutParams), path_(path), sizeMode_(sizeMode), downloader_(downloader) {}
 
 	~HttpImageFileView() {
-		if (download_) {
+		if (download_)
 			download_->Cancel();
-		}
 	}
 
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
 	std::string DescribeText() const override { return ""; }
 
-	void SetFilename(const std::string &filename);
+	void SetFilename(std::string filename);
 	void SetColor(uint32_t color) { color_ = color; }
 	void SetFixedSize(float fixW, float fixH) { fixedSizeW_ = fixW; fixedSizeH_ = fixH; }
 	void SetCanBeFocused(bool can) { canFocus_ = can; }
@@ -102,18 +73,17 @@ public:
 	const std::string &GetFilename() const { return path_; }
 
 private:
-	void DownloadCompletedCallback(http::Request &download);
+	void DownloadCompletedCallback(http::Download &download);
 
 	bool canFocus_ = false;
-	bool useIconCache_ = false;
-	std::string path_;  // or cache key
+	std::string path_;
 	uint32_t color_ = 0xFFFFFFFF;
 	UI::ImageSizeMode sizeMode_;
-	http::RequestManager *requestManager_;
-	std::shared_ptr<http::Request> download_;
+	http::Downloader *downloader_;
+	std::shared_ptr<http::Download> download_;
 
 	std::string textureData_;
-	Draw::AutoRef<Draw::Texture> texture_;
+	std::unique_ptr<ManagedTexture> texture_;
 	bool textureFailed_ = false;
 	float fixedSizeW_ = 0.0f;
 	float fixedSizeH_ = 0.0f;
@@ -127,41 +97,28 @@ void HttpImageFileView::GetContentDimensions(const UIContext &dc, float &w, floa
 		break;
 	case UI::IS_DEFAULT:
 	default:
-		if (useIconCache_) {
-			int width, height;
-			if (g_iconCache.GetDimensions(path_, &width, &height)) {
-				w = width;
-				h = height;
-			} else {
-				w = 16;
-				h = 16;
-			}
+		if (texture_) {
+			float texw = (float)texture_->Width();
+			float texh = (float)texture_->Height();
+			w = texw;
+			h = texh;
 		} else {
-			if (texture_) {
-				float texw = (float)texture_->Width();
-				float texh = (float)texture_->Height();
-				w = texw;
-				h = texh;
-			} else {
-				w = 16;
-				h = 16;
-			}
+			w = 16;
+			h = 16;
 		}
 		break;
 	}
 }
 
-void HttpImageFileView::SetFilename(const std::string &filename) {
-	if (!useIconCache_ && path_ != filename) {
+void HttpImageFileView::SetFilename(std::string filename) {
+	if (path_ != filename) {
 		textureFailed_ = false;
 		path_ = filename;
-		if (texture_) {
-			texture_.reset(nullptr);
-		}
+		texture_.reset(nullptr);
 	}
 }
 
-void HttpImageFileView::DownloadCompletedCallback(http::Request &download) {
+void HttpImageFileView::DownloadCompletedCallback(http::Download &download) {
 	if (download.IsCancelled()) {
 		// We were probably destroyed. Can't touch "this" (heh).
 		return;
@@ -175,38 +132,29 @@ void HttpImageFileView::DownloadCompletedCallback(http::Request &download) {
 
 void HttpImageFileView::Draw(UIContext &dc) {
 	using namespace Draw;
+	if (!texture_ && !textureFailed_ && !path_.empty() && !download_) {
+		auto cb = std::bind(&HttpImageFileView::DownloadCompletedCallback, this, std::placeholders::_1);
+		const char *acceptMime = "image/png, image/jpeg, image/*; q=0.9, */*; q=0.8";
+		download_ = downloader_->StartDownloadWithCallback(path_, Path(), cb, acceptMime);
+		download_->SetHidden(true);
+	}
 
-	if (!useIconCache_) {
-		if (!texture_ && !textureFailed_ && !path_.empty() && !download_) {
-			auto cb = std::bind(&HttpImageFileView::DownloadCompletedCallback, this, std::placeholders::_1);
-			const char *acceptMime = "image/png, image/jpeg, image/*; q=0.9, */*; q=0.8";
-			requestManager_->StartDownloadWithCallback(path_, Path(), http::RequestFlags::Default, cb, acceptMime);
-		}
-
-		if (!textureData_.empty()) {
-			texture_ = CreateTextureFromFileData(dc.GetDrawContext(), (const uint8_t *)(textureData_.data()), textureData_.size(), ImageFileType::DETECT, false, "store_icon");
-			if (!texture_)
-				textureFailed_ = true;
-			textureData_.clear();
-			download_.reset();
-		}
+	if (!textureData_.empty()) {
+		texture_ = CreateTextureFromFileData(dc.GetDrawContext(), (const uint8_t *)(textureData_.data()), (int)textureData_.size(), DETECT, false, "store_icon");
+		if (!texture_)
+			textureFailed_ = true;
+		textureData_.clear();
+		download_.reset();
 	}
 
 	if (HasFocus()) {
-		dc.FillRect(dc.GetTheme().itemFocusedStyle.background, bounds_.Expand(3));
+		dc.FillRect(dc.theme->itemFocusedStyle.background, bounds_.Expand(3));
 	}
 
 	// TODO: involve sizemode
-	Draw::Texture *texture = nullptr;
-	if (useIconCache_) {
-		texture = g_iconCache.BindIconTexture(&dc, path_);
-	} else {
-		texture = texture_;
-	}
-
-	if (texture) {
-		float tw = texture->Width();
-		float th = texture->Height();
+	if (texture_) {
+		float tw = texture_->Width();
+		float th = texture_->Height();
 
 		float x = bounds_.x;
 		float y = bounds_.y;
@@ -224,7 +172,7 @@ void HttpImageFileView::Draw(UIContext &dc) {
 		}
 
 		dc.Flush();
-		dc.GetDrawContext()->BindTexture(0, texture);
+		dc.GetDrawContext()->BindTexture(0, texture_->GetTexture());
 		dc.Draw()->Rect(x, y, w, h, color_);
 		dc.Flush();
 		dc.RebindTexture();
@@ -233,6 +181,8 @@ void HttpImageFileView::Draw(UIContext &dc) {
 		dc.FillRect(UI::Drawable(0x7F000000), GetBounds());
 	}
 }
+
+
 
 // This is the entry in a list. Does not have install buttons and so on.
 class ProductItemView : public UI::StickyChoice {
@@ -248,14 +198,14 @@ public:
 	StoreEntry GetEntry() const { return entry_; }
 
 private:
-	const StoreEntry entry_;
+	const StoreEntry &entry_;
 };
 
 // This is a "details" view of a game. Lets you install it.
 class ProductView : public UI::LinearLayout {
 public:
 	ProductView(const StoreEntry &entry)
-		: LinearLayout(ORIENT_VERTICAL), entry_(entry) {
+		: LinearLayout(UI::ORIENT_VERTICAL), entry_(entry) {
 		CreateViews();
 	}
 
@@ -265,20 +215,21 @@ public:
 
 private:
 	void CreateViews();
-	void OnInstall(UI::EventParams &e);
-	void OnCancel(UI::EventParams &e);
-	void OnLaunchClick(UI::EventParams &e);
+	UI::EventReturn OnInstall(UI::EventParams &e);
+	UI::EventReturn OnCancel(UI::EventParams &e);
+	UI::EventReturn OnUninstall(UI::EventParams &e);
+	UI::EventReturn OnLaunchClick(UI::EventParams &e);
 
-	bool IsGameInstalled() const {
+	bool IsGameInstalled() {
 		return g_GameManager.IsGameInstalled(entry_.file);
 	}
-	std::string DownloadURL() const;
+	std::string DownloadURL();
 
 	StoreEntry entry_;
-	UI::Button *uninstallButton_ = nullptr;
 	UI::Button *installButton_ = nullptr;
 	UI::Button *launchButton_ = nullptr;
 	UI::Button *cancelButton_ = nullptr;
+	UI::TextView *speedView_ = nullptr;
 	bool wasInstalled_ = false;
 };
 
@@ -287,13 +238,13 @@ void ProductView::CreateViews() {
 	Clear();
 
 	if (!entry_.iconURL.empty()) {
-		Add(new HttpImageFileView(&g_DownloadManager, ResolveUrl(StoreBaseUrl(), entry_.iconURL), IS_FIXED))->SetFixedSize(144, 88);
+		Add(new HttpImageFileView(&g_DownloadManager, ResolveUrl(storeBaseUrl, entry_.iconURL), IS_FIXED))->SetFixedSize(144, 88);
 	}
-	Add(new TextView(entry_.name))->SetBig(true);
+	Add(new TextView(entry_.name));
 	Add(new TextView(entry_.author));
 
-	auto st = GetI18NCategory(I18NCat::STORE);
-	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto st = GetI18NCategory("Store");
+	auto di = GetI18NCategory("Dialog");
 	wasInstalled_ = IsGameInstalled();
 	bool isDownloading = g_GameManager.IsDownloading(DownloadURL());
 	if (!wasInstalled_) {
@@ -301,19 +252,18 @@ void ProductView::CreateViews() {
 		LinearLayout *progressDisplay = new LinearLayout(ORIENT_HORIZONTAL);
 		installButton_ = progressDisplay->Add(new Button(st->T("Install")));
 		installButton_->OnClick.Handle(this, &ProductView::OnInstall);
-		uninstallButton_ = nullptr;
 
+		speedView_ = progressDisplay->Add(new TextView(""));
+		speedView_->SetVisibility(isDownloading ? V_VISIBLE : V_GONE);
 		Add(progressDisplay);
 	} else {
 		installButton_ = nullptr;
+		speedView_ = nullptr;
+		Add(new TextView(st->T("Already Installed")));
+		Add(new Button(st->T("Uninstall")))->OnClick.Handle(this, &ProductView::OnUninstall);
 		launchButton_ = new Button(st->T("Launch Game"));
 		launchButton_->OnClick.Handle(this, &ProductView::OnLaunchClick);
 		Add(launchButton_);
-		uninstallButton_ = new Button(st->T("Uninstall"));
-		Add(uninstallButton_)->OnClick.Add([=](UI::EventParams &e) {
-			g_GameManager.UninstallGameOnThread(entry_.file);
-		});
-		// Add(new TextView(st->T("Installed")));  // Not really needed
 	}
 
 	cancelButton_ = Add(new Button(di->T("Cancel")));
@@ -330,36 +280,7 @@ void ProductView::CreateViews() {
 	}
 
 	float size = entry_.size / (1024.f * 1024.f);
-	Add(new TextView(StringFromFormat("%s: %.2f %s", st->T_cstr("Size"), size, st->T_cstr("MB"))));
-
-	if (!entry_.license.empty()) {
-		LinearLayout *horiz = Add(new LinearLayout(ORIENT_HORIZONTAL));
-		horiz->Add(new TextView(StringFromFormat("%s: %s", st->T_cstr("License"), entry_.license.c_str()), new LinearLayoutParams(0.0, Gravity::G_VCENTER)));
-		horiz->Add(new Button(di->T("More info"), new LinearLayoutParams(0.0, Gravity::G_VCENTER)))->OnClick.Add([this](UI::EventParams) {
-			std::string url = StringFromFormat("https://www.ppsspp.org/docs/reference/homebrew-store-distribution/#%s", entry_.file.c_str());
-			System_LaunchUrl(LaunchUrlType::BROWSER_URL, url.c_str());
-		});
-	}
-	if (!entry_.websiteURL.empty()) {
-		// Display in a few different ways depending on the URL
-		size_t slashes = std::count(entry_.websiteURL.begin(), entry_.websiteURL.end(), '/');
-		std::string buttonText;
-		if (slashes == 2) {
-			// Just strip https and show the URL.
-			std::string_view name = StripPrefix("https://", entry_.websiteURL);
-			name = StripPrefix("http://", name);
-			if (name.size() < entry_.websiteURL.size()) {
-				buttonText = name;
-			}
-		}
-		if (buttonText.empty()) {
-			// Fall back
-			buttonText = st->T("Website");
-		}
-		Add(new Button(buttonText))->OnClick.Add([this](UI::EventParams) {
-			System_LaunchUrl(LaunchUrlType::BROWSER_URL, entry_.websiteURL.c_str());
-		});
-	}
+	Add(new TextView(StringFromFormat("%s: %.2f %s", st->T("Size"), size, st->T("MB"))));
 }
 
 void ProductView::Update() {
@@ -369,29 +290,33 @@ void ProductView::Update() {
 	if (installButton_) {
 		installButton_->SetEnabled(g_GameManager.GetState() == GameManagerState::IDLE);
 	}
-	if (uninstallButton_) {
-		uninstallButton_->SetEnabled(g_GameManager.GetState() == GameManagerState::IDLE);
-	}
-	if (g_GameManager.GetState() != GameManagerState::DOWNLOADING) {
+	if (g_GameManager.GetState() == GameManagerState::DOWNLOADING) {
+		if (speedView_) {
+			float speed = g_GameManager.DownloadSpeedKBps();
+			speedView_->SetText(StringFromFormat("%0.1f KB/s", speed));
+		}
+	} else {
 		if (cancelButton_)
 			cancelButton_->SetVisibility(UI::V_GONE);
+		if (speedView_)
+			speedView_->SetVisibility(UI::V_GONE);
 	}
 	if (launchButton_)
 		launchButton_->SetEnabled(g_GameManager.GetState() == GameManagerState::IDLE);
-	ViewGroup::Update();
+	View::Update();
 }
 
-std::string ProductView::DownloadURL() const {
+std::string ProductView::DownloadURL() {
 	if (entry_.downloadURL.empty()) {
 		// Construct the URL.
-		return StoreBaseUrl() + "files/" + entry_.file + ".zip";
+		return storeBaseUrl + "files/" + entry_.file + ".zip";
 	} else {
 		// Use the provided URL, for external hosting.
 		return entry_.downloadURL;
 	}
 }
 
-void ProductView::OnInstall(UI::EventParams &e) {
+UI::EventReturn ProductView::OnInstall(UI::EventParams &e) {
 	std::string fileUrl = DownloadURL();
 	if (installButton_) {
 		installButton_->SetEnabled(false);
@@ -399,18 +324,30 @@ void ProductView::OnInstall(UI::EventParams &e) {
 	if (cancelButton_) {
 		cancelButton_->SetVisibility(UI::V_VISIBLE);
 	}
-	INFO_LOG(Log::System, "Triggering install of '%s'", fileUrl.c_str());
+	if (speedView_) {
+		speedView_->SetVisibility(UI::V_VISIBLE);
+		speedView_->SetText("");
+	}
+	INFO_LOG(SYSTEM, "Triggering install of '%s'", fileUrl.c_str());
 	g_GameManager.DownloadAndInstall(fileUrl);
+	return UI::EVENT_DONE;
 }
 
-void ProductView::OnCancel(UI::EventParams &e) {
+UI::EventReturn ProductView::OnCancel(UI::EventParams &e) {
 	g_GameManager.CancelDownload();
+	return UI::EVENT_DONE;
 }
 
-void ProductView::OnLaunchClick(UI::EventParams &e) {
+UI::EventReturn ProductView::OnUninstall(UI::EventParams &e) {
+	g_GameManager.Uninstall(entry_.file);
+	CreateViews();
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn ProductView::OnLaunchClick(UI::EventParams &e) {
 	if (g_GameManager.GetState() != GameManagerState::IDLE) {
 		// Button should have been disabled. Just a safety check.
-		return;
+		return UI::EVENT_DONE;
 	}
 
 	Path pspGame = GetSysDirectory(DIRECTORY_GAME);
@@ -420,15 +357,18 @@ void ProductView::OnLaunchClick(UI::EventParams &e) {
 	e2.s = path.ToString();
 	// Insta-update - here we know we are already on the right thread.
 	OnClickLaunch.Trigger(e2);
+	return UI::EVENT_DONE;
 }
 
-StoreScreen::StoreScreen() : UISimpleBaseDialogScreen(Path(), SimpleDialogFlags::Default) {
+StoreScreen::StoreScreen() {
+	StoreFilter noFilter;
+	SetFilter(noFilter);
 	lang_ = g_Config.sLanguageIni;
 	loading_ = true;
 
-	std::string indexPath = StoreBaseUrl() + "index.json";
+	std::string indexPath = storeBaseUrl + "index.json";
 	const char *acceptMime = "application/json, */*; q=0.8";
-	listing_ = g_DownloadManager.StartDownload(indexPath, Path(), http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, acceptMime);
+	listing_ = g_DownloadManager.StartDownload(indexPath, Path(), acceptMime);
 }
 
 StoreScreen::~StoreScreen() {
@@ -437,11 +377,11 @@ StoreScreen::~StoreScreen() {
 
 // Handle async download tasks
 void StoreScreen::update() {
-	UIBaseDialogScreen::update();
+	UIDialogScreenWithBackground::update();
 
 	g_DownloadManager.Update();
 
-	if (listing_.get() && listing_->Done()) {
+	if (listing_.get() != 0 && listing_->Done()) {
 		resultCode_ = listing_->ResultCode();
 		if (listing_->ResultCode() == 200) {
 			std::string listingJson;
@@ -454,7 +394,7 @@ void StoreScreen::update() {
 			RecreateViews();
 		} else {
 			// Failed to contact store. Don't do anything.
-			ERROR_LOG(Log::IO, "Download failed : error code %d", resultCode_);
+			ERROR_LOG(IO, "Download failed : error code %d", resultCode_);
 			connectionError_ = true;
 			loading_ = false;
 			RecreateViews();
@@ -463,13 +403,26 @@ void StoreScreen::update() {
 		// Forget the listing.
 		listing_.reset();
 	}
+
+	const char *storeName = "PPSSPP Homebrew Store";
+	switch (g_GameManager.GetState()) {
+	case GameManagerState::DOWNLOADING:
+		titleText_->SetText(std::string(storeName) + " - downloading");
+		break;
+	case GameManagerState::INSTALLING:
+		titleText_->SetText(std::string(storeName) + " - installing");
+		break;
+	default:
+		titleText_->SetText(storeName);
+		break;
+	}
 }
 
-void StoreScreen::ParseListing(const std::string &json) {
+void StoreScreen::ParseListing(std::string json) {
 	using namespace json;
 	JsonReader reader(json.c_str(), json.size());
 	if (!reader.ok() || !reader.root()) {
-		ERROR_LOG(Log::IO, "Error parsing JSON from store");
+		ERROR_LOG(IO, "Error parsing JSON from store");
 		connectionError_ = true;
 		RecreateViews();
 		return;
@@ -480,24 +433,16 @@ void StoreScreen::ParseListing(const std::string &json) {
 		entries_.clear();
 		for (const JsonNode *pgame : entries->value) {
 			JsonGet game = pgame->value;
-			StoreEntry e{};
+			StoreEntry e;
 			e.type = ENTRY_PBPZIP;
 			e.name = GetTranslatedString(game, "name");
 			e.description = GetTranslatedString(game, "description", "");
-			e.author = ReplaceAll(game.getStringOr("author", "?"), "&&", "&");  // Can't remove && in the JSON source data due to old app versions, so we do the opposite replacement here.
+			e.author = game.getString("author", "?");
 			e.size = game.getInt("size");
-			e.downloadURL = game.getStringOr("download-url", "");
-			e.iconURL = game.getStringOr("icon-url", "");
-			e.contentRating = game.getInt("content-rating", 0);
-			e.websiteURL = game.getStringOr("website-url", "");
-			e.license = game.getStringOr("license", "");
-#if PPSSPP_PLATFORM(IOS_APP_STORE)
-			if (e.contentRating >= 100) {
-				continue;
-			}
-#endif
-			e.hidden = false;  // NOTE: Handling of the "hidden" flag is broken in old versions of PPSSPP. Do not use.
-			const char *file = game.getStringOr("file", nullptr);
+			e.downloadURL = game.getString("download-url", "");
+			e.iconURL = game.getString("icon-url", "");
+			e.hidden = game.getBool("hidden", false);
+			const char *file = game.getString("file", nullptr);
 			if (!file)
 				continue;
 			e.file = file;
@@ -506,24 +451,28 @@ void StoreScreen::ParseListing(const std::string &json) {
 	}
 }
 
-std::string_view StoreScreen::GetTitle() const {
-	auto mm = GetI18NCategory(I18NCat::MAINMENU);
-	return mm->T("Homebrew store");
-}
-
-void StoreScreen::CreateDialogViews(UI::ViewGroup *parent) {
+void StoreScreen::CreateViews() {
 	using namespace UI;
 
-	auto di = GetI18NCategory(I18NCat::DIALOG);
+	root_ = new LinearLayout(ORIENT_VERTICAL);
+	
+	auto di = GetI18NCategory("Dialog");
+	auto st = GetI18NCategory("Store");
+
+	// Top bar
+	LinearLayout *topBar = root_->Add(new LinearLayout(ORIENT_HORIZONTAL));
+	topBar->Add(new Button(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+	titleText_ = new TextView("PPSSPP Homebrew Store");
+	topBar->Add(titleText_);
+	UI::Drawable solid(0xFFbd9939);
+	topBar->SetBG(solid);
 
 	LinearLayout *content;
 	if (connectionError_ || loading_) {
-		auto st = GetI18NCategory(I18NCat::STORE);
 		content = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
-		content->Add(new TextView(loading_ ? std::string(st->T("Loading...")) : StringFromFormat("%s: %d", st->T_cstr("Connection Error"), resultCode_)));
-		if (!loading_) {
-			content->Add(new Button(di->T("Retry")))->OnClick.Handle(this, &StoreScreen::OnRetry);
-		}
+		content->Add(new TextView(loading_ ? std::string(st->T("Loading...")) : StringFromFormat("%s: %d", st->T("Connection Error"), resultCode_)));
+		content->Add(new Button(di->T("Retry")))->OnClick.Handle(this, &StoreScreen::OnRetry);
+		content->Add(new Button(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 
 		scrollItemView_ = nullptr;
 		productPanel_ = nullptr;
@@ -535,7 +484,8 @@ void StoreScreen::CreateDialogViews(UI::ViewGroup *parent) {
 		scrollItemView_ = new LinearLayoutList(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT));
 		leftScroll->Add(scrollItemView_);
 
-		for (size_t i = 0; i < entries_.size(); i++) {
+		std::vector<StoreEntry> entries = FilterEntries();
+		for (size_t i = 0; i < entries.size(); i++) {
 			scrollItemView_->Add(new ProductItemView(entries_[i]))->OnClick.Handle(this, &StoreScreen::OnGameSelected);
 		}
 
@@ -552,18 +502,25 @@ void StoreScreen::CreateDialogViews(UI::ViewGroup *parent) {
 
 			selectedItem->Press();
 		} else {
-			lastSelectedName_.clear();
+			lastSelectedName_ = "";
 		}
 	}
-	parent->Add(content);
+	root_->Add(content);
+}
+
+std::vector<StoreEntry> StoreScreen::FilterEntries() {
+	std::vector<StoreEntry> filtered;
+	for (size_t i = 0; i < entries_.size(); i++) {
+		// TODO: Actually filter by category etc.
+		if (!entries_[i].hidden)
+			filtered.push_back(entries_[i]);
+	}
+	return filtered;
 }
 
 ProductItemView *StoreScreen::GetSelectedItem() {
 	for (int i = 0; i < scrollItemView_->GetNumSubviews(); ++i) {
 		ProductItemView *item = static_cast<ProductItemView *>(scrollItemView_->GetViewByIndex(i));
-		if (!item) {
-			continue;
-		}
 		if (item->GetEntry().name == lastSelectedName_)
 			return item;
 	}
@@ -571,10 +528,10 @@ ProductItemView *StoreScreen::GetSelectedItem() {
 	return nullptr;
 }
 
-void StoreScreen::OnGameSelected(UI::EventParams &e) {
+UI::EventReturn StoreScreen::OnGameSelected(UI::EventParams &e) {
 	ProductItemView *item = static_cast<ProductItemView *>(e.v);
 	if (!item)
-		return;
+		return UI::EVENT_DONE;
 
 	productPanel_->Clear();
 	ProductView *productView = new ProductView(item->GetEntry());
@@ -585,18 +542,26 @@ void StoreScreen::OnGameSelected(UI::EventParams &e) {
 	if (previousItem && previousItem != item)
 		previousItem->Release();
 	lastSelectedName_ = item->GetEntry().name;
+	return UI::EVENT_DONE;
 }
 
-void StoreScreen::OnGameLaunch(UI::EventParams &e) {
+UI::EventReturn StoreScreen::OnGameLaunch(UI::EventParams &e) {
 	std::string path = e.s;
 	screenManager()->switchScreen(new EmuScreen(Path(path)));
+	return UI::EVENT_DONE;
 }
 
-void StoreScreen::OnRetry(UI::EventParams &e) {
+void StoreScreen::SetFilter(const StoreFilter &filter) {
+	filter_ = filter;
 	RecreateViews();
 }
 
-std::string StoreScreen::GetTranslatedString(const json::JsonGet json, const std::string &key, const char *fallback) const {
+UI::EventReturn StoreScreen::OnRetry(UI::EventParams &e) {
+	SetFilter(filter_);
+	return UI::EVENT_DONE;
+}
+
+std::string StoreScreen::GetTranslatedString(const json::JsonGet json, std::string key, const char *fallback) const {
 	json::JsonGet dict = json.getDict("en_US");
 	if (dict && json.hasChild(lang_.c_str(), JSON_OBJECT)) {
 		if (json.getDict(lang_.c_str()).hasChild(key.c_str(), JSON_STRING)) {
@@ -605,7 +570,7 @@ std::string StoreScreen::GetTranslatedString(const json::JsonGet json, const std
 	}
 	const char *str = nullptr;
 	if (dict) {
-		str = dict.getStringOr(key.c_str(), nullptr);
+		str = dict.getString(key.c_str(), nullptr);
 	}
 	if (str) {
 		return std::string(str);

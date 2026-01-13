@@ -1,3 +1,5 @@
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
 #pragma once
 
 //////////////////////////////////////////////////////////////////////////
@@ -16,7 +18,7 @@
 //To get a class instance to be able to access it, just use 
 //  CtrlRegisterList::getFrom(GetDlgItem(yourdialog, IDC_yourid)).
 
-#include "Core/MIPS/MIPSDebugInterface.h"
+#include "../../Core/Debugger/DebugInterface.h"
 
 class CtrlRegisterList
 {
@@ -32,7 +34,7 @@ class CtrlRegisterList
 	
 	bool selecting = false;
 	bool hasFocus = false;
-	MIPSDebugInterface *cpu = nullptr;
+	DebugInterface *cpu = nullptr;
 	static TCHAR szClassName[];
 
 	u32 lastPC = 0;
@@ -60,15 +62,17 @@ public:
 
 	int yToIndex(int y);
 
-	void setCPU(MIPSDebugInterface *deb) {
+	void setCPU(DebugInterface *deb)
+	{
 		cpu = deb;
-		constexpr int regs = MIPSDebugInterface::GetNumRegsInCategory(0);
+
+		int regs = cpu->GetNumRegsInCategory(0);
 		lastCat0Values = new u32[regs+3];
 		changedCat0Regs = new bool[regs+3];
 		memset(lastCat0Values, 0, (regs+3) * sizeof(u32));
 		memset(changedCat0Regs, 0, (regs+3) * sizeof(bool));
 	}
-	MIPSDebugInterface *getCPU()
+	DebugInterface *getCPU()
 	{
 		return cpu;
 	}

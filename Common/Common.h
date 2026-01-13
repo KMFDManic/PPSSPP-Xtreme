@@ -38,22 +38,15 @@
 
 #ifndef ENUM_CLASS_BITOPS
 #define ENUM_CLASS_BITOPS(T) \
-	static inline constexpr T operator |(const T &lhs, const T &rhs) { \
+	static inline T operator |(const T &lhs, const T &rhs) { \
 		return T((int)lhs | (int)rhs); \
 	} \
 	static inline T &operator |= (T &lhs, const T &rhs) { \
 		lhs = lhs | rhs; \
 		return lhs; \
 	} \
-	static inline constexpr bool operator &(const T &lhs, const T &rhs) { \
+	static inline bool operator &(const T &lhs, const T &rhs) { \
 		return ((int)lhs & (int)rhs) != 0; \
-	} \
-	static inline T &operator &= (T &lhs, const T &rhs) { \
-		lhs = (T)((int)lhs & (int)rhs); \
-		return lhs; \
-	} \
-	static inline constexpr T operator ~(const T &rhs) { \
-		return (T)(~((int)rhs)); \
 	}
 #endif
 
@@ -88,5 +81,16 @@
 #define __forceinline inline __attribute__((always_inline))
 #endif
 
-// Easy way to printf string_views (note: The formatting specifier is "%.*s", not "%s")
-#define STR_VIEW(sv) (int)(sv).size(), (sv).data()
+#if defined __SSE4_2__
+# define _M_SSE 0x402
+#elif defined __SSE4_1__
+# define _M_SSE 0x401
+#elif defined __SSSE3__
+# define _M_SSE 0x301
+#elif defined __SSE3__
+# define _M_SSE 0x300
+#elif defined __SSE2__
+# define _M_SSE 0x200
+#elif !defined(__GNUC__) && (defined(_M_X64) || defined(_M_IX86))
+# define _M_SSE 0x402
+#endif

@@ -1,11 +1,5 @@
-; Note: The buildbot runs the following (though of course with dynamically inserted values):
-; "ppsspp.iss /FPPSSPPSetup /D"ApplicationName"="PPSSPP" /D"ApplicationVersion"="1.19"
-
-#define ApplicationName     "PPSSPP"
-#define ApplicationVersion  GetFileVersion('PPSSPPWindows64.exe')
-#define StartYearCopyright  "2012"
-#define CurrentYear         GetDateTimeString('yyyy','','')
-#define ApplicationAuthor   "PPSSPP Project"
+#define ApplicationName 'PPSSPP'
+#define ApplicationVersion GetFileVersion('PPSSPPWindows.exe')
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
@@ -42,33 +36,15 @@ Name: "uk"; MessagesFile: "compiler:Languages\Ukrainian.isl"
 [Setup]
 ; Installer - name for title and wizard pages
 AppName={#ApplicationName}
+; Installer - version
+VersionInfoVersion={#ApplicationVersion}
+
+; Programs and Features - Name
+AppVerName={#ApplicationName}
 ; Programs and Features - Version
 AppVersion={#ApplicationVersion}
-; Programs and Features - Name
-AppVerName={#ApplicationName} {#ApplicationVersion}
-
-; Installer - Exe file properties - App Version
-VersionInfoVersion={#ApplicationVersion}
-; Installer - Exe file properties - File Version
-VersionInfoProductName={#ApplicationName}
-; Installer - Exe file properties - Application description
-VersionInfoDescription={#ApplicationName} installer
-; Installer - Exe file properties - Copyright info
-AppCopyright={#StartYearCopyright}-{#CurrentYear}  {#ApplicationAuthor}
-
-; Windows control Panel - Uninstaller program name icon and author
-UninstallDisplayName={#ApplicationName}
-UninstallDisplayIcon={app}\PPSSPPWindows.exe
-AppPublisher={#ApplicationAuthor}
-
-; Languages dialog settings
-ShowLanguageDialog=yes
-UsePreviousLanguage=no
-LanguageDetectionMethod=uilanguage
-
-; Modern interface
-WizardStyle=modern
-
+; Programs and Features - Publisher
+AppPublisher=PPSSPP Team
 ; Programs and Features - Help link
 AppSupportURL=https://forums.ppsspp.org
 ; Programs and Features - Support link
@@ -80,6 +56,7 @@ DefaultDirName={pf}\PPSSPP
 ; Since no icons will be created in "{group}", we don't need the wizard
 ; to ask for a Start Menu folder name:
 DisableProgramGroupPage=yes
+UninstallDisplayIcon={app}\PPSSPPWindows.exe
 ; Detect the correct directory for Program Files x86/64
 ArchitecturesInstallIn64BitMode=x64
 
@@ -96,14 +73,13 @@ Source: "README.md"; DestName: "README.txt"; DestDir: "{app}"; Flags: isreadme
 ; configuration etc in the user's directory, not in our own subdirectory.
 Source: "notinstalled.txt"; DestName: "installed.txt"; DestDir: "{app}";
 Source: "assets\*.*"; DestDir: "{app}\assets"
-Source: "assets\ui_images\*.*"; DestDir: "{app}\assets\ui_images"
 Source: "assets\shaders\*.*"; DestDir: "{app}\assets\shaders"
 Source: "assets\themes\*.*"; DestDir: "{app}\assets\themes"
 Source: "assets\debugger\*"; DestDir: "{app}\assets\debugger"; Flags: recursesubdirs
-Source: "assets\upload\*"; DestDir: "{app}\assets\upload"; Flags: recursesubdirs
 Source: "assets\lang\*.ini"; DestDir: "{app}\assets\lang"
 Source: "assets\flash0\font\*.*"; DestDir: "{app}\assets\flash0\font"
-Source: "assets\vfpu\*.*"; DestDir: "{app}\assets\vfpu"
+Source: "dx9sdk\8.1\Redist\D3D\x64\d3dcompiler_47.dll"; DestDir: "{app}"
+Source: "dx9sdk\8.1\Redist\D3D\x86\d3dcompiler_47.dll"; DestName: "d3dcompiler_47.x86.dll"; DestDir: "{app}"
 
 [Run]
 Filename: {app}\PPSSPPWindows.exe; Description: {cm:LaunchProgram,{#ApplicationName}}; Flags: nowait postinstall skipifsilent; Check: not IsWin64

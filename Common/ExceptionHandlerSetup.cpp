@@ -81,19 +81,15 @@ void InstallExceptionHandler(BadAccessHandler badAccessHandler) {
 		return;
 	}
 
-	INFO_LOG(Log::System, "Installing exception handler");
+	INFO_LOG(SYSTEM, "Installing exception handler");
 	g_badAccessHandler = badAccessHandler;
-#ifdef USE_ASAN
-	g_vectoredExceptionHandle = AddVectoredExceptionHandler(FALSE, GlobalExceptionHandler);
-#else
 	g_vectoredExceptionHandle = AddVectoredExceptionHandler(TRUE, GlobalExceptionHandler);
-#endif
 }
 
 void UninstallExceptionHandler() {
 	if (g_vectoredExceptionHandle) {
 		RemoveVectoredExceptionHandler(g_vectoredExceptionHandle);
-		INFO_LOG(Log::System, "Removed exception handler");
+		INFO_LOG(SYSTEM, "Removed exception handler");
 		g_vectoredExceptionHandle = nullptr;
 	}
 	g_badAccessHandler = nullptr;
@@ -131,7 +127,7 @@ static void ExceptionThread(mach_port_t port) {
 #pragma pack()
 	memset(&msg_in, 0xee, sizeof(msg_in));
 	memset(&msg_out, 0xee, sizeof(msg_out));
-	mach_msg_header_t* send_msg = &msg_out.Head;
+	mach_msg_header_t* send_msg = nullptr;
 	mach_msg_size_t send_size = 0;
 	mach_msg_option_t option = MACH_RCV_MSG;
 	while (true) {
@@ -190,7 +186,7 @@ void InstallExceptionHandler(BadAccessHandler badAccessHandler) {
 	}
 	g_badAccessHandler = badAccessHandler;
 
-	INFO_LOG(Log::System, "Installing exception handler");
+	INFO_LOG(SYSTEM, "Installing exception handler");
 	mach_port_t port;
 	CheckKR("mach_port_allocate",
 		mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port));
@@ -288,23 +284,18 @@ void InstallExceptionHandler(BadAccessHandler badAccessHandler) {
 		g_badAccessHandler = badAccessHandler;
 		return;
 	}
-	
-	size_t altStackSize = SIGSTKSZ;
 
-	// Add some extra room.
-	altStackSize += 65536;
-
-	INFO_LOG(Log::System, "Installed exception handler. stack size: %d", (int)altStackSize);
+	INFO_LOG(SYSTEM, "Installed exception handler");
 	g_badAccessHandler = badAccessHandler;
 
 	stack_t signal_stack{};
-	altStack = malloc(altStackSize);
+	altStack = malloc(SIGSTKSZ);
 #ifdef __FreeBSD__
 	signal_stack.ss_sp = (char*)altStack;
 #else
 	signal_stack.ss_sp = altStack;
 #endif
-	signal_stack.ss_size = altStackSize;
+	signal_stack.ss_size = SIGSTKSZ;
 	signal_stack.ss_flags = 0;
 	if (sigaltstack(&signal_stack, nullptr)) {
 		_assert_msg_(false, "sigaltstack failed");
@@ -327,7 +318,7 @@ void UninstallExceptionHandler() {
 	stack_t signal_stack{};
 	signal_stack.ss_flags = SS_DISABLE;
 	if (0 != sigaltstack(&signal_stack, nullptr)) {
-		ERROR_LOG(Log::System, "Could not remove signal altstack");
+		ERROR_LOG(SYSTEM, "Could not remove signal altstack");
 	}
 	if (altStack) {
 		free(altStack);
@@ -337,7 +328,7 @@ void UninstallExceptionHandler() {
 #ifdef __APPLE__
 	sigaction(SIGBUS, &old_sa_bus, nullptr);
 #endif
-	INFO_LOG(Log::System, "Uninstalled exception handler");
+	INFO_LOG(SYSTEM, "Uninstalled exception handler");
 	g_badAccessHandler = nullptr;
 }
 
@@ -346,7 +337,7 @@ void UninstallExceptionHandler() {
 #else  // !MACHINE_CONTEXT_SUPPORTED
 
 void InstallExceptionHandler(BadAccessHandler badAccessHandler) {
-	ERROR_LOG(Log::System, "Exception handler not implemented on this platform, can't install");
+	ERROR_LOG(SYSTEM, "Exception handler not implemented on this platform, can't install");
 }
 void UninstallExceptionHandler() { }
 

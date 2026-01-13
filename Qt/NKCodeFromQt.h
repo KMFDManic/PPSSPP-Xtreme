@@ -1,11 +1,10 @@
 #pragma once
 
 #include "Common/Data/Collections/ConstMap.h"
-#include "Common/Input/KeyCodes.h"
 #include <map>
 
 // TODO: Add any missing keys
-static const std::map<int, InputKeyCode> KeyMapRawQttoNative = InitConstMap<int, InputKeyCode>
+static const std::map<int, int> KeyMapRawQttoNative = InitConstMap<int, int>
 	(Qt::Key_P, NKCODE_P)
 	(Qt::Key_O, NKCODE_O)
 	(Qt::Key_I, NKCODE_I)

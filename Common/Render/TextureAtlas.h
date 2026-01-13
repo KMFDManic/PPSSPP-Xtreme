@@ -3,9 +3,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include <string_view>
-
-#define ATLAS_MAGIC ('A' | ('T' << 8) | ('L' << 16) | ('A' << 24))
+#define ATLAS_MAGIC ('A' + ('T' << 8) + ('L' << 16) | ('A' << 24))
 
 // Metadata file structure v0:
 //
@@ -23,31 +21,34 @@ struct Atlas;
 
 struct ImageID {
 public:
-	ImageID() {}
-	explicit ImageID(std::string_view _id) : id(_id) {}
+	ImageID() : id(nullptr) {}
+	explicit ImageID(const char *_id) : id(_id) {}
 
 	static inline ImageID invalid() {
-		return ImageID{""};
+		return ImageID{ nullptr };
 	}
 
 	bool isValid() const {
-		return !id.empty();
+		return id != nullptr;
 	}
 
 	bool isInvalid() const {
-		return id.empty();
+		return id == nullptr;
 	}
 
 	bool operator ==(const ImageID &other) {
-		return id == other.id;
+		return (id == other.id) || !strcmp(id, other.id);
 	}
 
 	bool operator !=(const ImageID &other) {
-		return id != other.id;
+		if (id == other.id) {
+			return false;
+		}
+		return strcmp(id, other.id) != 0;
 	}
 
 private:
-	std::string_view id;
+	const char *id;
 	friend struct Atlas;
 };
 
@@ -109,7 +110,7 @@ struct AtlasFont {
 	char name[32];
 
 	// Returns 0 on no match.
-	const AtlasChar *getChar(int utf32) const;
+	const AtlasChar *getChar(int utf32) const ;
 };
 
 struct AtlasImage {
@@ -127,11 +128,10 @@ struct AtlasHeader {
 
 struct Atlas {
 	~Atlas();
-	bool LoadMeta(const uint8_t *data, size_t data_size);
-	bool IsMetadataLoaded() const {
+	bool Load(const uint8_t *data, size_t data_size);
+	bool IsMetadataLoaded() {
 		return images != nullptr;
 	}
-	void Clear();
 
 	AtlasFont *fonts = nullptr;
 	int num_fonts = 0;

@@ -27,7 +27,6 @@ PSPPlaceholderDialog::~PSPPlaceholderDialog() {
 
 int PSPPlaceholderDialog::Init() {
 	ChangeStatus(SCE_UTILITY_STATUS_INITIALIZE, 0);
-	InitCommon();
 	return 0;
 }
 
@@ -39,7 +38,6 @@ int PSPPlaceholderDialog::Update(int animSpeed) {
 	} else if (ReadStatus() == SCE_UTILITY_STATUS_FINISHED) {
 		ChangeStatus(SCE_UTILITY_STATUS_SHUTDOWN, 0);
 	}
-	UpdateCommon();
 
 	return 0;
 }

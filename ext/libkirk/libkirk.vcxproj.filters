@@ -47,9 +47,6 @@
     <ClInclude Include="amctrl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="kirk_common.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />

@@ -23,14 +23,34 @@ bool CompileShader(const char *source, GLuint shader, const char *filename, std:
 		GLsizei len;
 		glGetShaderInfoLog(shader, MAX_INFO_LOG_SIZE, &len, infoLog);
 		infoLog[len] = '\0';
-		ERROR_LOG(Log::G3D, "Error in shader compilation of %s!\n", filename);
-		ERROR_LOG(Log::G3D, "Info log: %s\n", infoLog);
-		ERROR_LOG(Log::G3D, "Shader source:\n%s\n", (const char *)source);
+		ERROR_LOG(G3D, "Error in shader compilation of %s!\n", filename);
+		ERROR_LOG(G3D, "Info log: %s\n", infoLog);
+		ERROR_LOG(G3D, "Shader source:\n%s\n", (const char *)source);
 		if (error_message)
 			*error_message = infoLog;
 		return false;
 	}
 	return true;
+}
+
+GLSLProgram *glsl_create(const char *vshader, const char *fshader, std::string *error_message) {
+	GLSLProgram *program = new GLSLProgram();
+	program->program_ = 0;
+	program->vsh_ = 0;
+	program->fsh_ = 0;
+	program->vshader_source = 0;
+	program->fshader_source = 0;
+	strcpy(program->name, vshader + strlen(vshader) - 15);
+	strcpy(program->vshader_filename, vshader);
+	strcpy(program->fshader_filename, fshader);
+	if (glsl_recompile(program, error_message)) {
+		active_programs.insert(program);
+	} else {
+		ERROR_LOG(G3D, "Failed compiling GLSL program: %s %s", vshader, fshader);
+		delete program;
+		return 0;
+	}
+	return program;
 }
 
 GLSLProgram *glsl_create_source(const char *vshader_src, const char *fshader_src, std::string *error_message) {
@@ -46,7 +66,7 @@ GLSLProgram *glsl_create_source(const char *vshader_src, const char *fshader_src
 	if (glsl_recompile(program, error_message)) {
 		active_programs.insert(program);
 	} else {
-		ERROR_LOG(Log::G3D, "Failed compiling GLSL program from source strings");
+		ERROR_LOG(G3D, "Failed compiling GLSL program from source strings");
 		delete program;
 		return 0;
 	}
@@ -63,7 +83,9 @@ struct AutoCharArrayBuf {
 		buf_ = nullptr;
 	}
 	void reset(char *buf) {
-		delete[] buf_;
+		if (buf_) {
+			delete[] buf_;
+		}
 		buf_ = buf;
 	}
 	operator char *() {
@@ -100,10 +122,10 @@ bool glsl_recompile(GLSLProgram *program, std::string *error_message) {
 
 	if (!program->vshader_source && !vsh_src) {
 		size_t sz;
-		vsh_src.reset((char *)g_VFS.ReadFile(program->vshader_filename, &sz));
+		vsh_src.reset((char *)VFSReadFile(program->vshader_filename, &sz));
 	}
 	if (!program->vshader_source && !vsh_src) {
-		ERROR_LOG(Log::G3D, "File missing: %s", program->vshader_filename);
+		ERROR_LOG(G3D, "File missing: %s", program->vshader_filename);
 		if (error_message) {
 			*error_message = std::string("File missing: ") + program->vshader_filename;
 		}
@@ -111,10 +133,10 @@ bool glsl_recompile(GLSLProgram *program, std::string *error_message) {
 	}
 	if (!program->fshader_source && !fsh_src) {
 		size_t sz;
-		fsh_src.reset((char *)g_VFS.ReadFile(program->fshader_filename, &sz));
+		fsh_src.reset((char *)VFSReadFile(program->fshader_filename, &sz));
 	}
 	if (!program->fshader_source && !fsh_src) {
-		ERROR_LOG(Log::G3D, "File missing: %s", program->fshader_filename);
+		ERROR_LOG(G3D, "File missing: %s", program->fshader_filename);
 		if (error_message) {
 			*error_message = std::string("File missing: ") + program->fshader_filename;
 		}
@@ -148,15 +170,15 @@ bool glsl_recompile(GLSLProgram *program, std::string *error_message) {
 		if (bufLength) {
 			char* buf = new char[bufLength + 1];  // safety
 			glGetProgramInfoLog(prog, bufLength, NULL, buf);
-			INFO_LOG(Log::G3D, "vsh: %i   fsh: %i", vsh, fsh);
-			ERROR_LOG(Log::G3D, "Could not link shader program (linkstatus=%i):\n %s  \n", linkStatus, buf);
+			INFO_LOG(G3D, "vsh: %i   fsh: %i", vsh, fsh);
+			ERROR_LOG(G3D, "Could not link shader program (linkstatus=%i):\n %s  \n", linkStatus, buf);
 			if (error_message) {
 				*error_message = buf;
 			}
 			delete [] buf;
 		} else {
-			INFO_LOG(Log::G3D, "vsh: %i   fsh: %i", vsh, fsh);
-			ERROR_LOG(Log::G3D, "Could not link shader program (linkstatus=%i). No OpenGL error log was available.", linkStatus);
+			INFO_LOG(G3D, "vsh: %i   fsh: %i", vsh, fsh);
+			ERROR_LOG(G3D, "Could not link shader program (linkstatus=%i). No OpenGL error log was available.", linkStatus);
 			if (error_message) {
 				*error_message = "(no error message available)";
 			}
@@ -179,8 +201,8 @@ bool glsl_recompile(GLSLProgram *program, std::string *error_message) {
 	program->sampler1 = glGetUniformLocation(program->program_, "sampler1");
 
 	program->a_position	= glGetAttribLocation(program->program_, "a_position");
-	program->a_color = glGetAttribLocation(program->program_, "a_color");
-	program->a_normal = glGetAttribLocation(program->program_, "a_normal");
+	program->a_color		 = glGetAttribLocation(program->program_, "a_color");
+	program->a_normal		= glGetAttribLocation(program->program_, "a_normal");
 	program->a_texcoord0 = glGetAttribLocation(program->program_, "a_texcoord0");
 	program->a_texcoord1 = glGetAttribLocation(program->program_, "a_texcoord1");
 
@@ -191,7 +213,7 @@ bool glsl_recompile(GLSLProgram *program, std::string *error_message) {
 	program->u_sundir = glGetUniformLocation(program->program_, "u_sundir");
 	program->u_camerapos = glGetUniformLocation(program->program_, "u_camerapos");
 
-	//INFO_LOG(Log::G3D, "Shader compilation success: %s %s",
+	//INFO_LOG(G3D, "Shader compilation success: %s %s",
 	//		 program->vshader_filename,
 	//		 program->fshader_filename);
 	return true;
@@ -212,7 +234,7 @@ void glsl_destroy(GLSLProgram *program) {
 		glDeleteProgram(program->program_);
 		active_programs.erase(program);
 	} else {
-		ERROR_LOG(Log::G3D, "Deleting null GLSL program!");
+		ERROR_LOG(G3D, "Deleting null GLSL program!");
 	}
 	delete program;
 }

@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 
 /** Simple dialog to pick file. */
 public class SimpleFileChooser {
@@ -17,7 +16,7 @@ public class SimpleFileChooser {
 		void onFileSelected(File file);
 	}
 
-	private final FileSelectedListener mFileListener;
+	private FileSelectedListener mFileListener;
 
 	private final Activity mActivity;
 	private static final String PARENT_DIR = "..";
@@ -43,7 +42,7 @@ public class SimpleFileChooser {
 	// Create list of files and directories.
 	private void rebuildFileList(File path) {
 		this.mCurrentPath = path;
-		List<String> r = new ArrayList<>();
+		List<String> r = new ArrayList<String>();
 
 		if (path.getParentFile() != null)
 			r.add(PARENT_DIR);
@@ -55,7 +54,7 @@ public class SimpleFileChooser {
 				r.add(file.getName());
 			}
 		}
-		mFileList = r.toArray(new String[0]);
+		mFileList = (String[]) r.toArray(new String[0]);
 	}
 
 	// Get selected file, dir, or parent dir.
@@ -68,7 +67,7 @@ public class SimpleFileChooser {
 
 	// Comparator for Arrays.sort(). Separate folders from files, order
 	// alphabetically, ignore case.
-	private final Comparator<File> fileArrayComparator = new Comparator<>() {
+	private Comparator<File> fileArrayComparator = new Comparator<File>() {
 		public int compare(File file1, File file2) {
 			if (file1 == null || file2 == null) // if either null, assume equal
 				return 0;
@@ -79,12 +78,12 @@ public class SimpleFileChooser {
 				return 1;
 			else
 				// when both are folders or both are files, sort by name
-				return file1.getName().toUpperCase(Locale.ROOT).compareTo(file2.getName().toUpperCase(Locale.ROOT));
+				return file1.getName().toUpperCase().compareTo(file2.getName().toUpperCase());
 		}
 	};
 
 	// Event when user click item on dialog
-	private final DialogInterface.OnClickListener onDialogItemClickedListener = new DialogInterface.OnClickListener() {
+	private DialogInterface.OnClickListener onDialogItemClickedListener = new DialogInterface.OnClickListener() {
 		public void onClick(DialogInterface dialog, int which) {
 			String selectedFileName = mFileList[which];
 			File selectedFile = getSelectedFile(selectedFileName);

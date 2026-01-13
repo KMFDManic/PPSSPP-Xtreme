@@ -17,9 +17,6 @@
 
 #pragma once
 
-#include <map>
-#include <string>
-
 class PointerWrap;
 
 // Valid values for PSP_SYSTEMPARAM_ID_INT_LANGUAGE
@@ -53,6 +50,8 @@ class PointerWrap;
 
 // Return values for the SystemParam functions
 #define PSP_SYSTEMPARAM_RETVAL_OK                       0
+#define PSP_SYSTEMPARAM_RETVAL_STRING_TOO_LONG          0x80110102
+#define PSP_SYSTEMPARAM_RETVAL_FAIL                     0x80110103
 
 // Valid values for PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL
 #define PSP_SYSTEMPARAM_ADHOC_CHANNEL_AUTOMATIC     0
@@ -77,36 +76,6 @@ class PointerWrap;
 #define PSP_SYSTEMPARAM_BUTTON_CIRCLE  0
 #define PSP_SYSTEMPARAM_BUTTON_CROSS   1
 
-// Valid values for NetParam
-#define PSP_NETPARAM_NAME               0 // string
-#define PSP_NETPARAM_SSID               1 // string
-#define PSP_NETPARAM_SECURE             2 // int
-#define PSP_NETPARAM_WEPKEY             3 // string
-#define PSP_NETPARAM_IS_STATIC_IP       4 // int
-#define PSP_NETPARAM_IP                 5 // string
-#define PSP_NETPARAM_NETMASK            6 // string
-#define PSP_NETPARAM_ROUTE              7 // string
-#define PSP_NETPARAM_MANUAL_DNS         8 // int
-#define PSP_NETPARAM_PRIMARYDNS         9 // string
-#define PSP_NETPARAM_SECONDARYDNS       10 // string
-#define PSP_NETPARAM_PROXY_USER         11 // string
-#define PSP_NETPARAM_PROXY_PASS         12 // string
-#define PSP_NETPARAM_USE_PROXY          13 // int
-#define PSP_NETPARAM_PROXY_SERVER       14 // string
-#define PSP_NETPARAM_PROXY_PORT         15 // int
-#define PSP_NETPARAM_VERSION            16 // int
-#define PSP_NETPARAM_UNKNOWN            17 // int
-#define PSP_NETPARAM_8021X_AUTH_TYPE    18 // int
-#define PSP_NETPARAM_8021X_USER         19 // string
-#define PSP_NETPARAM_8021X_PASS         20 // string
-#define PSP_NETPARAM_WPA_TYPE           21 // int
-#define PSP_NETPARAM_WPA_KEY            22 // string
-#define PSP_NETPARAM_BROWSER            23 // int
-#define PSP_NETPARAM_WIFI_CONFIG        24 // int
-
-// X-Men Legends 2, and some homebrew may support up to 10 net config entries, but we currently only have 1 faked net config
-#define PSP_NETPARAM_MAX_NUMBER_DUMMY_ENTRIES   1
-
 enum class UtilityDialogType {
 	NONE,
 	SAVEDATA,
@@ -116,7 +85,6 @@ enum class UtilityDialogType {
 	SCREENSHOT,
 	GAMESHARING,
 	GAMEDATAINSTALL,
-	NPSIGNIN,
 };
 
 void __UtilityInit();
@@ -126,24 +94,4 @@ void __UtilityShutdown();
 void UtilityDialogInitialize(UtilityDialogType type, int delayUs, int priority);
 void UtilityDialogShutdown(UtilityDialogType type, int delayUs, int priority);
 
-typedef void (*ModuleLoadCallback)(int state, u32 loadAddr, u32 loadSize);
-
-struct ModuleLoadInfo {
-	ModuleLoadInfo(int m, u32 s, const char *name, ModuleLoadCallback cb = nullptr);
-	ModuleLoadInfo(int m, u32 s, const char *name, const int *d, ModuleLoadCallback cb = nullptr);
-	const char *name;
-	const int mod;
-	const u32 size;
-	const int *const dependencies;
-	ModuleLoadCallback notify;
-};
-
-const std::map<int, u32> &__UtilityGetLoadedModules();  // ->first gets the module ID, for use in the following two functions.
-const ModuleLoadInfo *__UtilityModuleInfo(int moduleID);
-bool __UtilityModuleGetMemoryRange(int moduleID, u32 *startPtr, u32 *sizePtr);
-
 void Register_sceUtility();
-
-// Return value is one of PSP_SYSTEMPARAM_LANGUAGE_*.
-const std::map<std::string, std::pair<std::string, int>, std::less<>> &GetLangValuesMapping();
-int GetPSPLanguage();

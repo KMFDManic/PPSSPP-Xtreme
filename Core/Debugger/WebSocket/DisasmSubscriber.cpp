@@ -29,15 +29,14 @@
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSAsm.h"
 #include "Core/MIPS/MIPSDebugInterface.h"
-#include "Core/Reporting.h"
 
 class WebSocketDisasmState : public DebuggerSubscriber {
 public:
 	WebSocketDisasmState() {
-		g_disassemblyManager.setCpu(currentDebugMIPS);
+		disasm_.setCpu(currentDebugMIPS);
 	}
-	~WebSocketDisasmState() {
-		g_disassemblyManager.clear();
+	~WebSocketDisasmState() override {
+		disasm_.clear();
 	}
 
 	void Base(DebuggerRequest &req);
@@ -48,14 +47,17 @@ public:
 protected:
 	void WriteDisasmLine(JsonWriter &json, const DisassemblyLineInfo &l);
 	void WriteBranchGuide(JsonWriter &json, const BranchLine &l);
+
+	DisassemblyManager disasm_;
 };
 
 DebuggerSubscriber *WebSocketDisasmInit(DebuggerEventHandlerMap &map) {
 	auto p = new WebSocketDisasmState();
-	map["memory.base"] = [p](DebuggerRequest &req) { p->Base(req); };
-	map["memory.disasm"] = [p](DebuggerRequest &req) { p->Disasm(req); };
-	map["memory.searchDisasm"] = [p](DebuggerRequest &req) { p->SearchDisasm(req); };
-	map["memory.assemble"] = [p](DebuggerRequest &req) { p->Assemble(req); };
+	map["memory.base"] = std::bind(&WebSocketDisasmState::Base, p, std::placeholders::_1);
+	map["memory.disasm"] = std::bind(&WebSocketDisasmState::Disasm, p, std::placeholders::_1);
+	map["memory.searchDisasm"] = std::bind(&WebSocketDisasmState::SearchDisasm, p, std::placeholders::_1);
+	map["memory.assemble"] = std::bind(&WebSocketDisasmState::Assemble, p, std::placeholders::_1);
+
 	return p;
 }
 
@@ -97,7 +99,7 @@ void WebSocketDisasmState::WriteDisasmLine(JsonWriter &json, const DisassemblyLi
 	} else {
 		json.writeNull("macroEncoding");
 	}
-	int c = currentDebugMIPS->getColor(addr, false) & 0x00FFFFFF;
+	int c = currentDebugMIPS->getColor(addr) & 0x00FFFFFF;
 	json.writeString("backgroundColor", StringFromFormat("#%02x%02x%02x", c & 0xFF, (c >> 8) & 0xFF, c >> 16));
 	json.writeString("name", l.name);
 	json.writeString("params", l.params);
@@ -135,7 +137,7 @@ void WebSocketDisasmState::WriteDisasmLine(JsonWriter &json, const DisassemblyLi
 	bool enabled = false;
 	int breakpointOffset = -1;
 	for (u32 i = 0; i < l.totalSize; i += 4) {
-		if (g_breakpoints.IsAddressBreakPoint(addr + i, &enabled))
+		if (CBreakPoints::IsAddressBreakPoint(addr + i, &enabled))
 			breakpointOffset = i;
 		if (breakpointOffset != -1 && enabled)
 			break;
@@ -145,7 +147,7 @@ void WebSocketDisasmState::WriteDisasmLine(JsonWriter &json, const DisassemblyLi
 		json.pushDict("breakpoint");
 		json.writeBool("enabled", enabled);
 		json.writeUint("address", addr + breakpointOffset);
-		auto cond = g_breakpoints.GetBreakPointCondition(addr + breakpointOffset);
+		auto cond = CBreakPoints::GetBreakPointCondition(addr + breakpointOffset);
 		if (cond)
 			json.writeString("condition", cond->expressionString);
 		else
@@ -259,8 +261,7 @@ void WebSocketDisasmState::WriteBranchGuide(JsonWriter &json, const BranchLine &
 //  - addressHex: string indicating base address in hexadecimal (may be 64 bit.)
 void WebSocketDisasmState::Base(DebuggerRequest &req) {
 	JsonWriter &json = req.Respond();
-	Reporting::NotifyDebugger();
-	json.writeString("addressHex", StringFromFormat("%016llx", (uint64_t)(uintptr_t)Memory::base));
+	json.writeString("addressHex", StringFromFormat("%016llx", (uintptr_t)Memory::base));
 }
 
 // Disassemble a range of memory as CPU instructions (memory.disasm)
@@ -313,18 +314,18 @@ void WebSocketDisasmState::Disasm(DebuggerRequest &req) {
 	if (count != 0) {
 		count = std::min(count, MAX_RANGE);
 		// Let's assume everything is two instructions.
-		g_disassemblyManager.analyze(start - 4, count * 8 + 8);
-		start = g_disassemblyManager.getStartAddress(start);
+		disasm_.analyze(start - 4, count * 8 + 8);
+		start = disasm_.getStartAddress(start);
 		if (start == -1)
 			req.ParamU32("address", &start);
-		end = g_disassemblyManager.getNthNextAddress(start, count);
+		end = disasm_.getNthNextAddress(start, count);
 	} else if (req.ParamU32("end", &end)) {
 		end = std::max(start, end);
 		if (end - start > MAX_RANGE * 4)
 			end = start + MAX_RANGE * 4;
 		// Let's assume everything is two instructions at most.
-		g_disassemblyManager.analyze(start - 4, end - start + 8);
-		start = g_disassemblyManager.getStartAddress(start);
+		disasm_.analyze(start - 4, end - start + 8);
+		start = disasm_.getStartAddress(start);
 		if (start == -1)
 			req.ParamU32("address", &start);
 		// Correct end and calculate count based on it.
@@ -333,11 +334,11 @@ void WebSocketDisasmState::Disasm(DebuggerRequest &req) {
 		u32 next = start;
 		count = 0;
 		if (stop < start) {
-			for (next = start; next > stop; next = g_disassemblyManager.getNthNextAddress(next, 1)) {
+			for (next = start; next > stop; next = disasm_.getNthNextAddress(next, 1)) {
 				count++;
 			}
 		}
-		for (end = next; end < stop && end >= next; end = g_disassemblyManager.getNthNextAddress(end, 1)) {
+		for (end = next; end < stop && end >= next; end = disasm_.getNthNextAddress(end, 1)) {
 			count++;
 		}
 	} else {
@@ -359,7 +360,7 @@ void WebSocketDisasmState::Disasm(DebuggerRequest &req) {
 	DisassemblyLineInfo line;
 	uint32_t addr = start;
 	for (uint32_t i = 0; i < count; ++i) {
-		g_disassemblyManager.getLine(addr, displaySymbols, line, cpuDebug);
+		disasm_.getLine(addr, displaySymbols, line, cpuDebug);
 		WriteDisasmLine(json, line);
 		addr += line.totalSize;
 
@@ -370,13 +371,13 @@ void WebSocketDisasmState::Disasm(DebuggerRequest &req) {
 	json.pop();
 
 	json.pushArray("branchGuides");
-	auto branchGuides = g_disassemblyManager.getBranchLines(start, end - start);
+	auto branchGuides = disasm_.getBranchLines(start, end - start);
 	for (auto bl : branchGuides)
 		WriteBranchGuide(json, bl);
 	json.pop();
 }
 
-// Search disassembly for some text (memory.searchDisasm)
+// Search disassembly for some text (cpu.searchDisasm)
 //
 // Parameters:
 //  - thread: optional number indicating the thread id (may not affect search much.)
@@ -425,7 +426,7 @@ void WebSocketDisasmState::SearchDisasm(DebuggerRequest &req) {
 	bool found = false;
 	uint32_t addr = start;
 	do {
-		g_disassemblyManager.getLine(addr, displaySymbols, line, cpuDebug);
+		disasm_.getLine(addr, displaySymbols, line, cpuDebug);
 		const std::string addressSymbol = g_symbolMap->GetLabelString(addr);
 
 		std::string mergeForSearch;
@@ -458,7 +459,7 @@ void WebSocketDisasmState::SearchDisasm(DebuggerRequest &req) {
 		json.writeNull("address");
 }
 
-// Assemble an instruction (memory.assemble)
+// Assemble an instruction (cpu.assemble)
 //
 // Parameters:
 //  - address: number indicating the address to write to.
@@ -478,12 +479,9 @@ void WebSocketDisasmState::Assemble(DebuggerRequest &req) {
 	if (!req.ParamString("code", &code))
 		return;
 
-	std::string error;
-	if (!MipsAssembleOpcode(code, currentDebugMIPS, address, &error)) {
-		return req.Fail(StringFromFormat("Could not assemble: %s", error.c_str()));
-	}
+	if (!MIPSAsm::MipsAssembleOpcode(code.c_str(), currentDebugMIPS, address))
+		return req.Fail(StringFromFormat("Could not assemble: %s", ConvertWStringToUTF8(MIPSAsm::GetAssembleError()).c_str()));
 
 	JsonWriter &json = req.Respond();
-	Reporting::NotifyDebugger();
 	json.writeUint("encoding", Memory::Read_Instruction(address).encoding);
 }

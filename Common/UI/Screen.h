@@ -21,14 +21,12 @@
 
 #include "Common/Common.h"
 #include "Common/Input/InputState.h"
-#include "Common/System/System.h"
 
 namespace UI {
 	class View;
 }
 
 enum DialogResult {
-	DR_NONE,
 	DR_OK,
 	DR_CANCEL,
 	DR_YES,
@@ -43,89 +41,55 @@ namespace Draw {
 	class DrawContext;
 }
 
-enum class ScreenFocusChange {
-	FOCUS_LOST_TOP,  // Another screen was pushed on top
-	FOCUS_BECAME_TOP,  // Became the top screen again
-};
-
-enum class ScreenRenderMode {
-	DEFAULT = 0,
-	FIRST = 1,
-	BEHIND = 4,
-	TOP = 8,
-};
-ENUM_CLASS_BITOPS(ScreenRenderMode);
-
-enum class ScreenRenderFlags {
-	NONE = 0,
-	HANDLED_THROTTLING = 1,
-};
-ENUM_CLASS_BITOPS(ScreenRenderFlags);
-
-
-enum class ScreenRenderRole {
-	NONE = 0,
-	CAN_BE_BACKGROUND = 1,
-	MUST_BE_FIRST = 2,
-};
-ENUM_CLASS_BITOPS(ScreenRenderRole);
-
 class Screen {
 public:
 	Screen() : screenManager_(nullptr) { }
-	virtual ~Screen();
+	virtual ~Screen() {
+		screenManager_ = nullptr;
+	}
 
 	virtual void onFinish(DialogResult reason) {}
 	virtual void update() {}
-	virtual ScreenRenderFlags render(ScreenRenderMode mode) = 0;
+	virtual void preRender() {}
+	virtual void render() {}
+	virtual void postRender() {}
 	virtual void resized() {}
 	virtual void dialogFinished(const Screen *dialog, DialogResult result) {}
-	virtual void sendMessage(UIMessage message, const char *value) {}
+	virtual bool touch(const TouchInput &touch) { return false;  }
+	virtual bool key(const KeyInput &key) { return false; }
+	virtual bool axis(const AxisInput &touch) { return false; }
+	virtual void sendMessage(const char *msg, const char *value) {}
 	virtual void deviceLost() {}
-	virtual void deviceRestored(Draw::DrawContext *draw) {}
-	virtual ScreenRenderRole renderRole(bool isTop) const { return ScreenRenderRole::NONE; }
-	virtual bool wantBrightBackground() const { return false; }  // special hack for DisplayLayoutScreen.
-
-	virtual void focusChanged(ScreenFocusChange focusChange);
-
-	// Return value of UnsyncTouch is only used to let the overlay screen block touches.
-	virtual bool UnsyncTouch(const TouchInput &touch) = 0;
-	// Return value of UnsyncKey is used to not block certain system keys like volume when unhandled, on Android.
-	virtual bool UnsyncKey(const KeyInput &touch) = 0;
-	virtual void UnsyncAxis(const AxisInput *axes, size_t count) = 0;
+	virtual void deviceRestored() {}
 
 	virtual void RecreateViews() {}
 
 	ScreenManager *screenManager() { return screenManager_; }
-	const ScreenManager *screenManager() const { return screenManager_; }
 	void setScreenManager(ScreenManager *sm) { screenManager_ = sm; }
 
-	virtual const char *tag() const = 0;
+	// This one is icky to use because you can't know what's in it until you know
+	// what screen it is.
+	virtual void *dialogData() { return 0; }
+
+	virtual std::string tag() const { return std::string(""); }
 
 	virtual bool isTransparent() const { return false; }
 	virtual bool isTopLevel() const { return false; }
 
 	virtual TouchInput transformTouch(const TouchInput &touch) { return touch; }
 
-protected:
-	int GetRequesterToken();
-	void WipeRequesterToken() {
-		token_ = -1;
-	}
-
 private:
 	ScreenManager *screenManager_;
-	int token_ = -1;
-
 	DISALLOW_COPY_AND_ASSIGN(Screen);
 };
 
 class Transition {
 public:
-	Transition() = default;
+	Transition() {}
 };
 
 enum {
+	LAYER_SIDEMENU = 1,
 	LAYER_TRANSPARENT = 2,
 };
 
@@ -133,6 +97,7 @@ typedef void(*PostRenderCallback)(UIContext *ui, void *userdata);
 
 class ScreenManager {
 public:
+	ScreenManager();
 	virtual ~ScreenManager();
 
 	void switchScreen(Screen *screen);
@@ -140,19 +105,21 @@ public:
 
 	void setUIContext(UIContext *context) { uiContext_ = context; }
 	UIContext *getUIContext() { return uiContext_; }
-	Draw::DrawContext *getDrawContext() { return draw_; }
+
+	void setDrawContext(Draw::DrawContext *context) { thin3DContext_ = context; }
+	Draw::DrawContext *getDrawContext() { return thin3DContext_; }
 
 	void setPostRenderCallback(PostRenderCallback cb, void *userdata) {
 		postRenderCb_ = cb;
 		postRenderUserdata_ = userdata;
 	}
 
-	ScreenRenderFlags render();
+	void render();
 	void resized();
 	void shutdown();
 
 	void deviceLost();
-	void deviceRestored(Draw::DrawContext *draw);
+	void deviceRestored();
 
 	// Push a dialog box in front. Currently 1-level only.
 	void push(Screen *screen, int layerFlags = 0);
@@ -165,25 +132,16 @@ public:
 	Screen *dialogParent(const Screen *dialog) const;
 
 	// Instant touch, separate from the update() mechanism.
-	void touch(const TouchInput &touch);
+	bool touch(const TouchInput &touch);
 	bool key(const KeyInput &key);
-	void axis(const AxisInput *axes, size_t count);
+	bool axis(const AxisInput &touch);
 
-	void sendMessage(UIMessage message, const char *value);
+	// Generic facility for gross hacks :P
+	void sendMessage(const char *msg, const char *value);
 
-	const Screen *topScreen() const {
-		return stack_.empty() ? nullptr : stack_.back().screen;
-	}
-	Screen *topScreen() {
-		return stack_.empty() ? nullptr : stack_.back().screen;
-	}
-
-	void cancelScreensAbove(Screen *screen);
+	Screen *topScreen() const;
 
 	void getFocusPosition(float &x, float &y, float &z);
-
-	// Will delete any existing overlay screen.
-	void SetBackgroundOverlayScreens(Screen *backgroundScreen, Screen *overlayScreen);
 
 	std::recursive_mutex inputLock_;
 
@@ -192,19 +150,14 @@ private:
 	void switchToNext();
 	void processFinishDialog();
 
-	UIContext *uiContext_ = nullptr;
-	Draw::DrawContext *draw_ = nullptr;
+	UIContext *uiContext_;
+	Draw::DrawContext *thin3DContext_;
 
 	PostRenderCallback postRenderCb_ = nullptr;
 	void *postRenderUserdata_ = nullptr;
 
-	const Screen *dialogFinished_ = nullptr;
-	DialogResult dialogResult_{};
-
-	Screen *backgroundScreen_ = nullptr;
-	Screen *overlayScreen_ = nullptr;
-
-	Screen *cancelScreensAbove_ = nullptr;
+	const Screen *dialogFinished_;
+	DialogResult dialogResult_;
 
 	struct Layer {
 		Screen *screen;

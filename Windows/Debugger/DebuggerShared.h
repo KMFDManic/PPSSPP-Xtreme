@@ -9,8 +9,7 @@ enum { WM_DEB_GOTOWPARAM = WM_USER+2,
 	WM_DEB_SETDEBUGLPARAM,
 	WM_DEB_UPDATE,
 	WM_DEB_SETSTATUSBARTEXT,
-	WM_DEB_GOTOHEXEDIT,
-	WM_DEB_AFTERSTEP,
+	WM_DEB_GOTOHEXEDIT
 };
 
 bool executeExpressionWindow(HWND hwnd, DebugInterface* cpu, u32& dest);

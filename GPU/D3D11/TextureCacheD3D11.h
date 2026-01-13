@@ -20,79 +20,83 @@
 #include "Common/CommonWindows.h"
 
 #include <d3d11.h>
-#include <wrl/client.h>
 
 #include "GPU/GPU.h"
+#include "GPU/GPUInterface.h"
+#include "GPU/D3D11/TextureScalerD3D11.h"
 #include "GPU/Common/TextureCacheCommon.h"
 
 struct VirtualFramebuffer;
 
 class FramebufferManagerD3D11;
-class TextureShaderCache;
+class DepalShaderCacheD3D11;
 class ShaderManagerD3D11;
 
 class SamplerCacheD3D11 {
 public:
 	SamplerCacheD3D11() {}
 	~SamplerCacheD3D11();
-	HRESULT GetOrCreateSampler(ID3D11Device *device, const SamplerCacheKey &key, ID3D11SamplerState **);
-	void Destroy() {
-		cache_.clear();
-	}
+	ID3D11SamplerState *GetOrCreateSampler(ID3D11Device *device, const SamplerCacheKey &key);
 
 private:
-	std::map<SamplerCacheKey, Microsoft::WRL::ComPtr<ID3D11SamplerState>> cache_;
+	std::map<SamplerCacheKey, ID3D11SamplerState *> cache_;
 };
-
-#define D3D11_INVALID_TEX (ID3D11ShaderResourceView *)(-1LL)
 
 class TextureCacheD3D11 : public TextureCacheCommon {
 public:
-	TextureCacheD3D11(Draw::DrawContext *draw, Draw2D *draw2D);
+	TextureCacheD3D11(Draw::DrawContext *draw);
 	~TextureCacheD3D11();
 
+	void StartFrame();
+
 	void SetFramebufferManager(FramebufferManagerD3D11 *fbManager);
+	void SetDepalShaderCache(DepalShaderCacheD3D11 *dpCache) {
+		depalShaderCache_ = dpCache;
+	}
+	void SetShaderManager(ShaderManagerD3D11 *sm) {
+		shaderManager_ = sm;
+	}
 
 	void ForgetLastTexture() override;
+	void InvalidateLastTexture() override;
 
-	bool GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level, bool *isFramebuffer) override;
-
-	void DeviceLost() override;
-	void DeviceRestore(Draw::DrawContext *draw) override;
-
-	void InitDeviceObjects();
-	void DestroyDeviceObjects();
+	bool GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level) override;
 
 protected:
 	void BindTexture(TexCacheEntry *entry) override;
 	void Unbind() override;
 	void ReleaseTexture(TexCacheEntry *entry, bool delete_them) override;
-	void BindAsClutTexture(Draw::Texture *tex, bool smooth) override;
-	void ApplySamplingParams(const SamplerCacheKey &key) override;
-	void *GetNativeTextureView(const TexCacheEntry *entry, bool flat) const override;
 
 private:
+	void LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &replaced, int level, int maxLevel, int scaleFactor, DXGI_FORMAT dstFmt);
 	DXGI_FORMAT GetDestFormat(GETextureFormat format, GEPaletteFormat clutFormat) const;
+	static CheckAlphaResult CheckAlpha(const u32 *pixelData, u32 dstFmt, int w);
 	void UpdateCurrentClut(GEPaletteFormat clutFormat, u32 clutBase, bool clutIndexIsSimple) override;
 
+	void ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer, GETextureFormat texFormat, FramebufferNotificationChannel channel) override;
 	void BuildTexture(TexCacheEntry *const entry) override;
 
 	ID3D11Device *device_;
 	ID3D11DeviceContext *context_;
 
-	ID3D11Resource *&DxTex(const TexCacheEntry *entry) const {
-		return (ID3D11Resource *&)entry->texturePtr;
+	ID3D11Texture2D *&DxTex(TexCacheEntry *entry) {
+		return (ID3D11Texture2D *&)entry->texturePtr;
 	}
-	ID3D11ShaderResourceView *DxView(const TexCacheEntry *entry) const {
+	ID3D11ShaderResourceView *DxView(TexCacheEntry *entry) {
 		return (ID3D11ShaderResourceView *)entry->textureView;
 	}
 
+	TextureScalerD3D11 scaler;
+
 	SamplerCacheD3D11 samplerCache_;
 
-	ID3D11ShaderResourceView *lastBoundTexture_ = D3D11_INVALID_TEX;
-	Microsoft::WRL::ComPtr<ID3D11Buffer> depalConstants_;
-	Microsoft::WRL::ComPtr<ID3D11SamplerState> samplerPoint2DClamp_;
-	Microsoft::WRL::ComPtr<ID3D11SamplerState> samplerLinear2DClamp_;
+	ID3D11ShaderResourceView *lastBoundTexture;
+	ID3D11Buffer *depalConstants_;
+
+	FramebufferManagerD3D11 *framebufferManagerD3D11_;
+	DepalShaderCacheD3D11 *depalShaderCache_;
+	ShaderManagerD3D11 *shaderManager_;
+
 };
 
 DXGI_FORMAT GetClutDestFormatD3D11(GEPaletteFormat format);

@@ -22,24 +22,26 @@
 #include <cstdint>
 #include <atomic>
 
+#include "Common/Serialize/Serializer.h"
 #include "Common/CommonTypes.h"
 
 struct AudioDebugStats;
 
 class StereoResampler {
 public:
-	StereoResampler() noexcept;
+	StereoResampler();
 	~StereoResampler();
 
 	// Called from audio threads
-	void Mix(s16 *samples, unsigned int numSamples, bool consider_framelimit, int sampleRate);
+	unsigned int Mix(short* samples, unsigned int numSamples, bool consider_framelimit, int sampleRate);
 
 	// Called from main thread
 	// This clamps the samples to 16-bit before starting to work on them.
-	// Volume is a multiplier from 0.0f to 1.0f.
-	void PushSamples(const s32* samples, unsigned int num_samples, float volume);
+	void PushSamples(const s32* samples, unsigned int num_samples);
 
 	void Clear();
+
+	void DoState(PointerWrap &p);
 
 	void GetAudioDebugStats(char *buf, size_t bufSize);
 	void ResetStatCounters();
@@ -47,19 +49,17 @@ public:
 private:
 	void UpdateBufferSize();
 
-	int maxBufsize_;
-	int targetBufsize_;
+	int m_maxBufsize;
+	int m_targetBufsize;
 
-	// This can be adjusted, for the case of non-60hz output (a few hz off).
-	int inputSampleRateHz_ = 44100;
+	unsigned int m_input_sample_rate = 44100;
+	int16_t *m_buffer;
+	std::atomic<u32> m_indexW;
+	std::atomic<u32> m_indexR;
+	float m_numLeftI = 0.0f;
 
-	int16_t *buffer_ = nullptr;
-	std::atomic<u32> indexW_;
-	std::atomic<u32> indexR_;
-	float numLeftI_ = 0.0f;
-
-	u32 frac_ = 0;
-	float outputSampleRateHz_ = 0.0;
+	u32 m_frac = 0;
+	float output_sample_rate_ = 0.0;
 	int lastBufSize_ = 0;
 	int lastPushSize_ = 0;
 	u32 ratio_ = 0;

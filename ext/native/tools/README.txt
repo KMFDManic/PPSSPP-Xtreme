@@ -35,21 +35,19 @@ example one line in one of out configuration files is:
 
 <glyphregions> defines which glyphs should be copied into the atlas, can use any combination
 	       of the following:
-		U - Basic Latin (US ASCII)
-		W - Latin-1 Supplement
-		E - Latin Extended-A (various European languages, Slavic, Hungarian, Romanian, Turkish, etc.)
-		e - Latin Extended-B (additions for European languages, some Romanized African and Asian languages)
-		G - Greek and Coptic
-		R - Cyrillic (Russian, Bulgarian, etc.)
-		H - Hebrew
-		S - Select symbols
+		U - US ASCII
+		W - Latin-1 extras 1
+		E - Latin-1 Extended A (needed for Hungarian etc)
+		e - Latin-1 Extended B (for some African and latinized asian languages?)
 		k - Katakana
 		h - Hiragana
-		J - Shift JIS (for Japanese fonts)
+		s - ShiftJIS symbols
+		H - Hebrew
+		G - Greek
+		R - Russian
 		c - All Kanji, filtered though!
 		T - Thai
 		K - Korean (hangul)
-		V - Vietnamese (needs 'e' too)
 
 <height> height in pixels of the glyphs in the font atlas
 

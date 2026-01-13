@@ -18,64 +18,66 @@
 #pragma once
 
 #include <string>
-
-#include "Common/Math/expression_parser.h"
+#include <cstring>
+#include <cstdio>
 #include "Core/MIPS/MIPS.h"
 #include "Core/Debugger/DebugInterface.h"
 
-
-class MIPSDebugInterface : public DebugInterface {
+class MIPSDebugInterface : public DebugInterface
+{
 	MIPSState *cpu;
 public:
 	MIPSDebugInterface(MIPSState *_cpu) { cpu = _cpu; }
-	int getInstructionSize(int instruction) { return 4; }
-	bool isAlive();
-	bool isBreakpoint(unsigned int address);
-	void setBreakpoint(unsigned int address);
-	void clearBreakpoint(unsigned int address);
-	void clearAllBreakpoints();
-	void toggleBreakpoint(unsigned int address);
-	unsigned int readMemory(unsigned int address);
-	int getColor(unsigned int address, bool darkMode) const;
-	std::string getDescription(unsigned int address);
+	const char *disasm(unsigned int address, unsigned int align) override;
+	int getInstructionSize(int instruction) override { return 4; }
+	bool isAlive() override;
+	bool isBreakpoint(unsigned int address) override;
+	void setBreakpoint(unsigned int address) override;
+	void clearBreakpoint(unsigned int address) override;
+	void clearAllBreakpoints() override;
+	void toggleBreakpoint(unsigned int address) override;
+	unsigned int readMemory(unsigned int address) override;
+	unsigned int getPC() override { return cpu->pc; }
+	void setPC(unsigned int address) override { cpu->pc = address; }
+	void step() override {}
+	void runToBreakpoint() override;
+	int getColor(unsigned int address) override;
+	std::string getDescription(unsigned int address) override;
+	bool initExpression(const char* exp, PostfixExpression& dest) override;
+	bool parseExpression(PostfixExpression& exp, u32& dest) override;
 
-	u32 GetGPR32Value(int reg) const override { return cpu->r[reg]; }
-	float GetFPR32Value(int reg) const { return cpu->f[reg]; }
-	void SetGPR32Value(int reg, u32 value) { cpu->r[reg] = value; }
-
-	u32 GetPC() const override { return cpu->pc; }
-	u32 GetRA() const override { return cpu->r[MIPS_REG_RA]; }
-	u32 GetFPCond() const override { return cpu->fpcond; }
+	//overridden functions
+	const char *GetName() override;
+	int GetGPRSize() override { return GPR_SIZE_32; }
+	u32 GetGPR32Value(int reg) override { return cpu->r[reg]; }
+	u32 GetPC() override { return cpu->pc; }
+	u32 GetLR() override { return cpu->r[MIPS_REG_RA]; }
 	void SetPC(u32 _pc) override { cpu->pc = _pc; }
 
-	static const char *GetCategoryName(int cat) {
+	const char *GetCategoryName(int cat) override {
 		static const char *const names[3] = { "GPR", "FPU", "VFPU" };
 		return names[cat];
 	}
-	static int GetNumCategories() { return 3; }
-	static constexpr int GetNumRegsInCategory(int cat) {
-		constexpr int r[3] = { 32, 32, 128 };
+	int GetNumCategories() override { return 3; }
+	int GetNumRegsInCategory(int cat) override {
+		static int r[3] = { 32, 32, 128 };
 		return r[cat];
 	}
-	static std::string GetRegName(int cat, int index);
+	const char *GetRegName(int cat, int index) override;
 
-	void PrintRegValue(int cat, int index, char *out, size_t outSize) const override {
+	void PrintRegValue(int cat, int index, char *out) override {
 		switch (cat) {
-		case 0: snprintf(out, outSize, "%08X", cpu->r[index]); break;
-		case 1: snprintf(out, outSize, "%f", cpu->f[index]); break;
-		case 2: snprintf(out, outSize, "N/A"); break;
+		case 0: sprintf(out, "%08X", cpu->r[index]); break;
+		case 1: sprintf(out, "%f", cpu->f[index]); break;
+		case 2: sprintf(out, "N/A"); break;
 		}
 	}
 
-	u32 GetHi() const override {
+	u32 GetHi() override {
 		return cpu->hi;
 	}
 
-	u32 GetLLBit() const override {
-		return cpu->llBit;
-	}
-
-	u32 GetLo() const override {
+	u32 GetLo() override {
 		return cpu->lo;
 	}
 	
@@ -87,7 +89,7 @@ public:
 		cpu->lo = val;
 	}
 
-	u32 GetRegValue(int cat, int index) const override {
+	u32 GetRegValue(int cat, int index) override {
 		switch (cat) {
 		case 0:
 			return cpu->r[index];
@@ -123,7 +125,3 @@ public:
 		}
 	}
 };
-
-bool initExpression(const DebugInterface *debug, const char* exp, PostfixExpression& dest);
-bool parseExpression(const DebugInterface *debug, PostfixExpression& exp, u32& dest);
-void DisAsm(u32 pc, char *out, size_t outSize);

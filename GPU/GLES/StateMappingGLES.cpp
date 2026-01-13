@@ -20,16 +20,23 @@
 // https://github.com/hrydgard/ppsspp/issues/3768
 
 #include "ppsspp_config.h"
-#include "GPU/GLES/StateMappingGLES.h"
+#include "StateMappingGLES.h"
 #include "Common/Profiler/Profiler.h"
 #include "Common/GPU/OpenGL/GLDebugLog.h"
 #include "Common/GPU/OpenGL/GLRenderManager.h"
 #include "Common/Data/Convert/SmallDataConvert.h"
 
+#include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
+#include "Core/System.h"
+#include "Core/Config.h"
+#include "Core/Reporting.h"
 #include "GPU/GLES/GPU_GLES.h"
+#include "GPU/GLES/ShaderManagerGLES.h"
+#include "GPU/GLES/TextureCacheGLES.h"
 #include "GPU/GLES/FramebufferManagerGLES.h"
+#include "GPU/Common/FragmentShaderGenerator.h"
 
 static const GLushort glBlendFactorLookup[(size_t)BlendFactor::COUNT] = {
 	GL_ZERO,
@@ -115,6 +122,14 @@ static const GLushort logicOps[] = {
 };
 #endif
 
+inline void DrawEngineGLES::ResetFramebufferRead() {
+	if (fboTexBound_) {
+		GLRenderManager *renderManager = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
+		renderManager->BindTexture(TEX_SLOT_SHADERBLEND_SRC, nullptr);
+		fboTexBound_ = false;
+	}
+}
+
 void DrawEngineGLES::ApplyDrawState(int prim) {
 	GLRenderManager *renderManager = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 
@@ -126,60 +141,53 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 	// Start profiling here to skip SetTexture which is already accounted for
 	PROFILE_THIS_SCOPE("applydrawstate");
 
-	uint64_t dirtyRequiresRecheck_ = 0;
 	bool useBufferedRendering = framebufferManager_->UseBufferedRendering();
 
 	if (gstate_c.IsDirty(DIRTY_BLEND_STATE)) {
+		gstate_c.Clean(DIRTY_BLEND_STATE);
+		gstate_c.SetAllowFramebufferRead(!g_Config.bDisableSlowFramebufEffects);
+
 		if (gstate.isModeClear()) {
 			// Color Test
 			bool colorMask = gstate.isClearModeColorMask();
 			bool alphaMask = gstate.isClearModeAlphaMask();
 			renderManager->SetNoBlendAndMask((colorMask ? 7 : 0) | (alphaMask ? 8 : 0));
 		} else {
-			pipelineState_.Convert(draw_->GetShaderLanguageDesc().bitwiseOps, gstate_c.Use(GPU_USE_SHADER_BLENDING));
-			GenericMaskState &maskState = pipelineState_.maskState;
-			GenericBlendState &blendState = pipelineState_.blendState;
-			GenericLogicState &logicState = pipelineState_.logicState;
+			// Do the large chunks of state conversion. We might be able to hide these two behind a dirty-flag each,
+			// to avoid recomputing heavy stuff unnecessarily every draw call.
 
-			if (pipelineState_.FramebufferRead()) {
-				FBOTexState fboTexBindState = FBO_TEX_NONE;
-				ApplyFramebufferRead(&fboTexBindState);
+			GenericMaskState maskState;
+			ConvertMaskState(maskState, gstate_c.allowFramebufferRead);
+
+			GenericBlendState blendState;
+			ConvertBlendState(blendState, gstate_c.allowFramebufferRead, maskState.applyFramebufferRead);
+
+			if (blendState.applyFramebufferRead || maskState.applyFramebufferRead) {
+				ApplyFramebufferRead(&fboTexNeedsBind_);
 				// The shader takes over the responsibility for blending, so recompute.
 				ApplyStencilReplaceAndLogicOpIgnoreBlend(blendState.replaceAlphaWithStencil, blendState);
 
 				// We copy the framebuffer here, as doing so will wipe any blend state if we do it later.
-				// fboTexNeedsBind_ won't be set if we can read directly from the target.
-				if (fboTexBindState == FBO_TEX_COPY_BIND_TEX) {
+				if (fboTexNeedsBind_) {
 					// Note that this is positions, not UVs, that we need the copy from.
-					framebufferManager_->BindFramebufferAsColorTexture(1, framebufferManager_->GetCurrentRenderVFB(), BINDFBCOLOR_MAY_COPY | BINDFBCOLOR_UNCACHED, 0);
+					framebufferManager_->BindFramebufferAsColorTexture(1, framebufferManager_->GetCurrentRenderVFB(), BINDFBCOLOR_MAY_COPY);
 					// If we are rendering at a higher resolution, linear is probably best for the dest color.
 					renderManager->SetTextureSampler(1, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_LINEAR, GL_LINEAR, 0.0f);
 					fboTexBound_ = true;
+					fboTexNeedsBind_ = false;
 
 					framebufferManager_->RebindFramebuffer("RebindFramebuffer - ApplyDrawState");
 					// Must dirty blend state here so we re-copy next time.  Example: Lunar's spell effects.
-					dirtyRequiresRecheck_ |= DIRTY_BLEND_STATE;
 					gstate_c.Dirty(DIRTY_BLEND_STATE);
-				} else if (fboTexBindState == FBO_TEX_READ_FRAMEBUFFER) {
-					// No action needed here.
-					fboTexBindState = FBO_TEX_NONE;
 				}
-				dirtyRequiresRecheck_ |= DIRTY_FRAGMENTSHADER_STATE;
 				gstate_c.Dirty(DIRTY_FRAGMENTSHADER_STATE);
-			} else {
-				if (fboTexBound_) {
-					GLRenderManager *renderManager = (GLRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
-					renderManager->BindTexture(TEX_SLOT_SHADERBLEND_SRC, nullptr);
-					fboTexBound_ = false;
-					dirtyRequiresRecheck_ |= DIRTY_FRAGMENTSHADER_STATE;
-					gstate_c.Dirty(DIRTY_FRAGMENTSHADER_STATE);
-				}
+			} else if (blendState.resetFramebufferRead) {
+				ResetFramebufferRead();
 			}
 
-			if (blendState.blendEnabled) {
+			if (blendState.enabled) {
 				if (blendState.dirtyShaderBlendFixValues) {
 					// Not quite sure how necessary this is.
-					dirtyRequiresRecheck_ |= DIRTY_SHADERBLEND;
 					gstate_c.Dirty(DIRTY_SHADERBLEND);
 				}
 				if (blendState.useBlendColor) {
@@ -190,9 +198,9 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 				}
 			}
 
-			int mask = (int)maskState.channelMask;
-			if (blendState.blendEnabled) {
-				renderManager->SetBlendAndMask(mask, blendState.blendEnabled,
+			int mask = (int)maskState.rgba[0] | ((int)maskState.rgba[1] << 1) | ((int)maskState.rgba[2] << 2) | ((int)maskState.rgba[3] << 3);
+			if (blendState.enabled) {
+				renderManager->SetBlendAndMask(mask, blendState.enabled,
 					glBlendFactorLookup[(size_t)blendState.srcColor], glBlendFactorLookup[(size_t)blendState.dstColor],
 					glBlendFactorLookup[(size_t)blendState.srcAlpha], glBlendFactorLookup[(size_t)blendState.dstAlpha],
 					glBlendEqLookup[(size_t)blendState.eqColor], glBlendEqLookup[(size_t)blendState.eqAlpha]);
@@ -200,16 +208,18 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 				renderManager->SetNoBlendAndMask(mask);
 			}
 
-			// TODO: Get rid of the ifdef
 #ifndef USING_GLES2
-			if (gstate_c.Use(GPU_USE_LOGIC_OP)) {
-				renderManager->SetLogicOp(logicState.logicOpEnabled, logicOps[(int)logicState.logicOp]);
+			if (gstate_c.Supports(GPU_SUPPORTS_LOGIC_OP)) {
+				renderManager->SetLogicOp(gstate.isLogicOpEnabled() && gstate.getLogicOp() != GE_LOGIC_COPY,
+					logicOps[gstate.getLogicOp()]);
 			}
 #endif
 		}
 	}
 
 	if (gstate_c.IsDirty(DIRTY_RASTER_STATE)) {
+		gstate_c.Clean(DIRTY_RASTER_STATE);
+
 		// Dither
 		bool dither = gstate.isDitherEnabled();
 		bool cullEnable;
@@ -225,7 +235,7 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 			if (gstate.getDepthRangeMin() == 0 || gstate.getDepthRangeMax() == 65535) {
 				// TODO: Still has a bug where we clamp to depth range if one is not the full range.
 				// But the alternate is not clamping in either direction...
-				depthClampEnable = gstate.isDepthClampEnabled() && gstate_c.Use(GPU_USE_DEPTH_CLAMP);
+				depthClampEnable = gstate.isDepthClampEnabled() && gstate_c.Supports(GPU_SUPPORTS_DEPTH_CLAMP);
 			} else {
 				// We just want to clip in this case, the clamp would be clipped anyway.
 				depthClampEnable = false;
@@ -236,37 +246,29 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 	}
 
 	if (gstate_c.IsDirty(DIRTY_DEPTHSTENCIL_STATE)) {
-		ConvertStencilFuncState(stencilState_);
+		gstate_c.Clean(DIRTY_DEPTHSTENCIL_STATE);
+		GenericStencilFuncState stencilState;
+		ConvertStencilFuncState(stencilState);
 
 		if (gstate.isModeClear()) {
-			renderManager->SetStencil(
-				gstate.isClearModeAlphaMask(), GL_ALWAYS, 0xFF, 0xFF,
-				stencilState_.writeMask, GL_REPLACE, GL_REPLACE, GL_REPLACE);
+			// Depth Test
+			if (gstate.isClearModeDepthMask()) {
+				framebufferManager_->SetDepthUpdated();
+			}
+			renderManager->SetStencilFunc(gstate.isClearModeAlphaMask(), GL_ALWAYS, 0xFF, 0xFF);
+			renderManager->SetStencilOp(stencilState.writeMask, GL_REPLACE, GL_REPLACE, GL_REPLACE);
 			renderManager->SetDepth(true, gstate.isClearModeDepthMask() ? true : false, GL_ALWAYS);
 		} else {
 			// Depth Test
-			bool depthTestUsed = !IsDepthTestEffectivelyDisabled();
-			renderManager->SetDepth(depthTestUsed, gstate.isDepthWriteEnabled(), compareOps[gstate.getDepthTestFunction()]);
-			if (depthTestUsed)
-				UpdateEverUsedEqualDepth(gstate.getDepthTestFunction());
+			renderManager->SetDepth(gstate.isDepthTestEnabled(), gstate.isDepthWriteEnabled(), compareOps[gstate.getDepthTestFunction()]);
+			if (gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled()) {
+				framebufferManager_->SetDepthUpdated();
+			}
 
 			// Stencil Test
-			if (stencilState_.enabled) {
-				renderManager->SetStencil(
-					stencilState_.enabled, compareOps[stencilState_.testFunc], stencilState_.testRef, stencilState_.testMask,
-					stencilState_.writeMask, stencilOps[stencilState_.sFail], stencilOps[stencilState_.zFail], stencilOps[stencilState_.zPass]);
-
-				// Nasty special case for Spongebob and similar where it tries to write zeros to alpha/stencil during
-				// depth-fail. We can't write to alpha then because the pixel is killed. However, we can invert the depth
-				// test and modify the alpha function...
-				if (SpongebobDepthInverseConditions(stencilState_)) {
-					renderManager->SetBlendAndMask(0x8, true, GL_ZERO, GL_ZERO, GL_ZERO, GL_ZERO, GL_FUNC_ADD, GL_FUNC_ADD);
-					renderManager->SetDepth(true, false, GL_LESS);
-					renderManager->SetStencil(true, GL_ALWAYS, 0xFF, 0xFF, 0xFF, GL_ZERO, GL_KEEP, GL_ZERO);
-
-					dirtyRequiresRecheck_ |= DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE;
-					gstate_c.Dirty(DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE);
-				}
+			if (stencilState.enabled) {
+				renderManager->SetStencilFunc(stencilState.enabled, compareOps[stencilState.testFunc], stencilState.testRef, stencilState.testMask);
+				renderManager->SetStencilOp(stencilState.writeMask, stencilOps[stencilState.sFail], stencilOps[stencilState.zFail], stencilOps[stencilState.zPass]);
 			} else {
 				renderManager->SetStencilDisabled();
 			}
@@ -274,35 +276,35 @@ void DrawEngineGLES::ApplyDrawState(int prim) {
 	}
 
 	if (gstate_c.IsDirty(DIRTY_VIEWPORTSCISSOR_STATE)) {
-		ConvertViewportAndScissor(
-			framebufferManager_->GetDisplayLayoutConfigCopy(),
-			useBufferedRendering,
+		gstate_c.Clean(DIRTY_VIEWPORTSCISSOR_STATE);
+		ConvertViewportAndScissor(useBufferedRendering,
 			framebufferManager_->GetRenderWidth(), framebufferManager_->GetRenderHeight(),
 			framebufferManager_->GetTargetBufferWidth(), framebufferManager_->GetTargetBufferHeight(),
-			vpAndScissor_);
-		UpdateCachedViewportState(vpAndScissor_);
+			vpAndScissor);
 
-		renderManager->SetScissor(GLRect2D{ vpAndScissor_.scissorX, vpAndScissor_.scissorY, vpAndScissor_.scissorW, vpAndScissor_.scissorH });
+		renderManager->SetScissor(GLRect2D{ vpAndScissor.scissorX, vpAndScissor.scissorY, vpAndScissor.scissorW, vpAndScissor.scissorH });
 		renderManager->SetViewport({
-			vpAndScissor_.viewportX, vpAndScissor_.viewportY,
-			vpAndScissor_.viewportW, vpAndScissor_.viewportH,
-			vpAndScissor_.depthRangeMin, vpAndScissor_.depthRangeMax });
-	}
+			vpAndScissor.viewportX, vpAndScissor.viewportY,
+			vpAndScissor.viewportW, vpAndScissor.viewportH,
+			vpAndScissor.depthRangeMin, vpAndScissor.depthRangeMax });
 
-	gstate_c.Clean(DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_RASTER_STATE | DIRTY_BLEND_STATE);
-	gstate_c.Dirty(dirtyRequiresRecheck_);
-	dirtyRequiresRecheck_ = 0;
+		if (vpAndScissor.dirtyProj) {
+			gstate_c.Dirty(DIRTY_PROJMATRIX);
+		}
+		if (vpAndScissor.dirtyDepth) {
+			gstate_c.Dirty(DIRTY_DEPTHRANGE);
+		}
+	}
 }
 
 void DrawEngineGLES::ApplyDrawStateLate(bool setStencilValue, int stencilValue) {
 	if (setStencilValue) {
-		render_->SetStencil(stencilState_.writeMask, GL_ALWAYS, stencilValue, 255, 0xFF, GL_REPLACE, GL_REPLACE, GL_REPLACE);
-		gstate_c.Dirty(DIRTY_DEPTHSTENCIL_STATE);  // For the next time.
+		render_->SetStencilFunc(GL_TRUE, GL_ALWAYS, stencilValue, 255);
 	}
 
 	// At this point, we know if the vertices are full alpha or not.
 	// TODO: Set the nearest/linear here (since we correctly know if alpha/color tests are needed)?
-	if (!gstate.isModeClear() && gstate_c.Use(GPU_USE_FRAGMENT_TEST_CACHE)) {
+	if (!gstate.isModeClear()) {
 		// Apply last, once we know the alpha params of the texture.
 		if (gstate.isAlphaTestEnabled() || gstate.isColorTestEnabled()) {
 			fragmentTestCache_->BindTestTexture(TEX_SLOT_ALPHATEST);

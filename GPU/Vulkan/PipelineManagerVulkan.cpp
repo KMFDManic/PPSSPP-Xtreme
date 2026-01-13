@@ -8,47 +8,42 @@
 #include "Common/Log.h"
 #include "Common/StringUtils.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
+#include "GPU/Vulkan/VulkanUtil.h"
 #include "GPU/Vulkan/PipelineManagerVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
-#include "GPU/Common/ShaderId.h"
-#include "GPU/GPUDefinitions.h"
+#include "GPU/Common/DrawEngineCommon.h"
 #include "Common/GPU/thin3d.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
 #include "Common/GPU/Vulkan/VulkanQueueRunner.h"
 
 using namespace PPSSPP_VK;
 
-u32 VulkanPipeline::GetVariantsBitmask() const {
-	return pipeline->GetVariantsBitmask();
-}
-
 PipelineManagerVulkan::PipelineManagerVulkan(VulkanContext *vulkan) : pipelines_(256), vulkan_(vulkan) {
 	// The pipeline cache is created on demand (or explicitly through Load).
 }
 
 PipelineManagerVulkan::~PipelineManagerVulkan() {
-	// Block on all pipelines to make sure any background compiles are done.
-	// This is very important to do before we start trying to tear down the shaders - otherwise, we might
-	// be deleting shaders before queued pipeline creations that use them are performed.
-	pipelines_.Iterate([&](const VulkanPipelineKey &key, VulkanPipeline *value) {
-		if (value->pipeline) {
-			value->pipeline->BlockUntilCompiled();
-		}
-	});
-
 	Clear();
 	if (pipelineCache_ != VK_NULL_HANDLE)
 		vulkan_->Delete().QueueDeletePipelineCache(pipelineCache_);
-	vulkan_ = nullptr;
 }
 
 void PipelineManagerVulkan::Clear() {
+	// This should kill off all the shaders at once.
+	// This could also be an opportunity to store the whole cache to disk. Will need to also
+	// store the keys.
+
 	pipelines_.Iterate([&](const VulkanPipelineKey &key, VulkanPipeline *value) {
-		if (!value->pipeline) {
-			// Something went wrong.
-			ERROR_LOG(Log::G3D, "Null pipeline found in PipelineManagerVulkan::Clear - didn't wait for asyncs?");
+		if (value->pipeline) {
+			VkPipeline pipeline = value->pipeline->pipeline;
+			vulkan_->Delete().QueueDeletePipeline(pipeline);
+			vulkan_->Delete().QueueCallback([](void *p) {
+				VKRGraphicsPipeline *pipeline = (VKRGraphicsPipeline *)p;
+				delete pipeline;
+			}, value->pipeline);
 		} else {
-			value->pipeline->QueueForDeletion(vulkan_);
+			// Something went wrong.
+			ERROR_LOG(G3D, "Null pipeline found in PipelineManagerVulkan::Clear - didn't wait for asyncs?");
 		}
 		delete value;
 	});
@@ -56,17 +51,10 @@ void PipelineManagerVulkan::Clear() {
 	pipelines_.Clear();
 }
 
-void PipelineManagerVulkan::InvalidateMSAAPipelines() {
-	pipelines_.Iterate([&](const VulkanPipelineKey &key, VulkanPipeline *value) {
-		value->pipeline->DestroyVariants(vulkan_, true);
-	});
-}
-
 void PipelineManagerVulkan::DeviceLost() {
 	Clear();
 	if (pipelineCache_ != VK_NULL_HANDLE)
 		vulkan_->Delete().QueueDeletePipelineCache(pipelineCache_);
-	vulkan_ = nullptr;
 }
 
 void PipelineManagerVulkan::DeviceRestore(VulkanContext *vulkan) {
@@ -132,7 +120,7 @@ static int SetupVertexAttribs(VkVertexInputAttributeDescription attrs[], const D
 		VertexAttribSetup(&attrs[count++], decFmt.nrmfmt, decFmt.nrmoff, PspAttributeLocation::NORMAL);
 	}
 	// Position is always there.
-	VertexAttribSetup(&attrs[count++], DecVtxFormat::PosFmt(), decFmt.posoff, PspAttributeLocation::POSITION);
+	VertexAttribSetup(&attrs[count++], decFmt.posfmt, decFmt.posoff, PspAttributeLocation::POSITION);
 	return count;
 }
 
@@ -164,7 +152,7 @@ static bool UsesBlendConstant(int factor) {
 	}
 }
 
-static std::string CutFromMain(const std::string &str) {
+static std::string CutFromMain(std::string str) {
 	std::vector<std::string> lines;
 	SplitString(str, '\n', lines);
 
@@ -185,31 +173,10 @@ static std::string CutFromMain(const std::string &str) {
 }
 
 static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, VkPipelineCache pipelineCache,
-	VKRPipelineLayout *layout, PipelineFlags pipelineFlags, VkSampleCountFlagBits sampleCount, const VulkanPipelineRasterStateKey &key,
-	const DecVtxFormat *decFmt, VulkanVertexShader *vs, VulkanFragmentShader *fs, VulkanGeometryShader *gs, bool useHwTransform, u32 variantBitmask, bool cacheLoad) {
-	_assert_(fs && vs);
-
-	if (!fs || !fs->GetModule()) {
-		ERROR_LOG(Log::G3D, "Fragment shader missing in CreateVulkanPipeline");
-		return nullptr;
-	}
-	if (!vs || !vs->GetModule()) {
-		ERROR_LOG(Log::G3D, "Vertex shader missing in CreateVulkanPipeline");
-		return nullptr;
-	}
-	if (gs && !gs->GetModule()) {
-		ERROR_LOG(Log::G3D, "Geometry shader missing in CreateVulkanPipeline");
-		return nullptr;
-	}
-
-	VulkanPipeline *vulkanPipeline = new VulkanPipeline();
-	vulkanPipeline->desc = new VKRGraphicsPipelineDesc();
-	VKRGraphicsPipelineDesc *desc = vulkanPipeline->desc;
+		VkPipelineLayout layout, VkRenderPass renderPass, const VulkanPipelineRasterStateKey &key,
+		const DecVtxFormat *decFmt, VulkanVertexShader *vs, VulkanFragmentShader *fs, bool useHwTransform) {
+	VKRGraphicsPipelineDesc *desc = new VKRGraphicsPipelineDesc();
 	desc->pipelineCache = pipelineCache;
-
-	desc->fragmentShader = fs->GetModule();
-	desc->vertexShader = vs->GetModule();
-	desc->geometryShader = gs ? gs->GetModule() : nullptr;
 
 	PROFILE_THIS_SCOPE("pipelinebuild");
 	bool useBlendConstant = false;
@@ -256,7 +223,7 @@ static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, 
 	VkDynamicState *dynamicStates = &desc->dynamicStates[0];
 	int numDyn = 0;
 	if (key.blendEnable &&
-		(UsesBlendConstant(key.srcAlpha) || UsesBlendConstant(key.srcColor) || UsesBlendConstant(key.destAlpha) || UsesBlendConstant(key.destColor))) {
+		  (UsesBlendConstant(key.srcAlpha) || UsesBlendConstant(key.srcColor) || UsesBlendConstant(key.destAlpha) || UsesBlendConstant(key.destColor))) {
 		dynamicStates[numDyn++] = VK_DYNAMIC_STATE_BLEND_CONSTANTS;
 		useBlendConstant = true;
 	}
@@ -267,12 +234,12 @@ static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, 
 		dynamicStates[numDyn++] = VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK;
 		dynamicStates[numDyn++] = VK_DYNAMIC_STATE_STENCIL_REFERENCE;
 	}
-
+	
 	VkPipelineDynamicStateCreateInfo &ds = desc->ds;
 	ds.flags = 0;
 	ds.pDynamicStates = dynamicStates;
 	ds.dynamicStateCount = numDyn;
-
+	
 	VkPipelineRasterizationStateCreateInfo &rs = desc->rs;
 	rs.flags = 0;
 	rs.depthBiasEnable = false;
@@ -283,22 +250,39 @@ static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, 
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
 	rs.depthClampEnable = key.depthClampEnable;
 
-	if (renderManager->GetVulkanContext()->GetDeviceFeatures().enabled.provokingVertex.provokingVertexLast) {
-		ChainStruct(rs, &desc->rs_provoking);
-		desc->rs_provoking.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+	VkPipelineMultisampleStateCreateInfo &ms = desc->ms;
+	ms.pSampleMask = nullptr;
+	ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkPipelineShaderStageCreateInfo *ss = &desc->shaderStageInfo[0];
+	ss[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	ss[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	ss[0].pSpecializationInfo = nullptr;
+	ss[0].module = vs->GetModule();
+	ss[0].pName = "main";
+	ss[0].flags = 0;
+	ss[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	ss[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	ss[1].pSpecializationInfo = nullptr;
+	ss[1].module = fs->GetModule();
+	ss[1].pName = "main";
+	ss[1].flags = 0;
+
+	if (!ss[0].module || !ss[1].module) {
+		ERROR_LOG(G3D, "Failed creating graphics pipeline - bad shaders");
+		// Create a placeholder to avoid creating over and over if shader compiler broken.
+		VulkanPipeline *nullPipeline = new VulkanPipeline();
+		nullPipeline->pipeline = VK_NULL_HANDLE;
+		nullPipeline->flags = 0;
+		return nullPipeline;
 	}
 
-	desc->fragmentShaderSource = fs->GetShaderString(SHADER_STRING_SOURCE_CODE);
-	desc->vertexShaderSource = vs->GetShaderString(SHADER_STRING_SOURCE_CODE);
-	if (gs) {
-		desc->geometryShaderSource = gs->GetShaderString(SHADER_STRING_SOURCE_CODE);
-	}
-
-	_dbg_assert_(key.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
-	_dbg_assert_(key.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
-	desc->topology = (VkPrimitiveTopology)key.topology;
-
+	VkPipelineInputAssemblyStateCreateInfo &inputAssembly = desc->inputAssembly;
+	inputAssembly.flags = 0;
+	inputAssembly.topology = (VkPrimitiveTopology)key.topology;
+	inputAssembly.primitiveRestartEnable = false;
 	int vertexStride = 0;
+
 	VkVertexInputAttributeDescription *attrs = &desc->attrs[0];
 
 	int attributeCount;
@@ -306,9 +290,10 @@ static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, 
 		attributeCount = SetupVertexAttribs(attrs, *decFmt);
 		vertexStride = decFmt->stride;
 	} else {
-		bool needsUV = true;
+		bool needsUV = vs->GetID().Bit(VS_BIT_DO_TEXTURE);
 		bool needsColor1 = vs->GetID().Bit(VS_BIT_LMODE);
-		attributeCount = SetupVertexAttribsPretransformed(attrs, needsUV, needsColor1, true);
+		bool needsFog = vs->GetID().Bit(VS_BIT_ENABLE_FOG);
+		attributeCount = SetupVertexAttribsPretransformed(attrs, needsUV, needsColor1, needsFog);
 		vertexStride = (int)sizeof(TransformedVertex);
 	}
 
@@ -331,30 +316,45 @@ static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, 
 	views.pViewports = nullptr;  // dynamic
 	views.pScissors = nullptr;  // dynamic
 
-	desc->pipelineLayout = layout;
+	VkGraphicsPipelineCreateInfo &pipe = desc->pipe;
+	pipe.flags = 0;
+	pipe.stageCount = 2;
+	pipe.pStages = ss;
+	pipe.basePipelineIndex = 0;
 
-	std::string tag = "game";
-#ifdef _DEBUG
-	tag = FragmentShaderDesc(fs->GetID()) + " VS " + VertexShaderDesc(vs->GetID());
-#endif
+	pipe.pColorBlendState = &desc->cbs;
+	pipe.pDepthStencilState = &desc->dss;
+	pipe.pRasterizationState = &desc->rs;
 
-	VKRGraphicsPipeline *pipeline = renderManager->CreateGraphicsPipeline(desc, pipelineFlags, variantBitmask, sampleCount, cacheLoad, tag.c_str());
+	// We will use dynamic viewport state.
+	pipe.pVertexInputState = &desc->vis;
+	pipe.pViewportState = &desc->views;
+	pipe.pTessellationState = nullptr;
+	pipe.pDynamicState = &desc->ds;
+	pipe.pInputAssemblyState = &desc->inputAssembly;
+	pipe.pMultisampleState = &desc->ms;
+	pipe.layout = layout;
+	pipe.basePipelineHandle = VK_NULL_HANDLE;
+	pipe.basePipelineIndex = 0;
+	pipe.renderPass = renderPass;
+	pipe.subpass = 0;
 
+	VKRGraphicsPipeline *pipeline = renderManager->CreateGraphicsPipeline(desc);
+
+	VulkanPipeline *vulkanPipeline = new VulkanPipeline();
 	vulkanPipeline->pipeline = pipeline;
-	if (useBlendConstant) {
-		pipelineFlags |= PipelineFlags::USES_BLEND_CONSTANT;
-	}
-	if (gs) {
-		pipelineFlags |= PipelineFlags::USES_GEOMETRY_SHADER;
-	}
+	vulkanPipeline->flags = 0;
+	if (useBlendConstant)
+		vulkanPipeline->flags |= PIPELINE_FLAG_USES_BLEND_CONSTANT;
+	if (key.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || key.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP)
+		vulkanPipeline->flags |= PIPELINE_FLAG_USES_LINES;
 	if (dss.depthTestEnable || dss.stencilTestEnable) {
-		pipelineFlags |= PipelineFlags::USES_DEPTH_STENCIL;
+		vulkanPipeline->flags |= PIPELINE_FLAG_USES_DEPTH_STENCIL;
 	}
-	vulkanPipeline->pipelineFlags = pipelineFlags;
 	return vulkanPipeline;
 }
 
-VulkanPipeline *PipelineManagerVulkan::GetOrCreatePipeline(VulkanRenderManager *renderManager, VKRPipelineLayout *layout, const VulkanPipelineRasterStateKey &rasterKey, const DecVtxFormat *decFmt, VulkanVertexShader *vs, VulkanFragmentShader *fs, VulkanGeometryShader *gs, bool useHwTransform, u32 variantBitmask, int multiSampleLevel, bool cacheLoad) {
+VulkanPipeline *PipelineManagerVulkan::GetOrCreatePipeline(VulkanRenderManager *renderManager, VkPipelineLayout layout, VkRenderPass renderPass, const VulkanPipelineRasterStateKey &rasterKey, const DecVtxFormat *decFmt, VulkanVertexShader *vs, VulkanFragmentShader *fs, bool useHwTransform) {
 	if (!pipelineCache_) {
 		VkPipelineCacheCreateInfo pc{ VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
 		VkResult res = vkCreatePipelineCache(vulkan_->GetDevice(), &pc, nullptr, &pipelineCache_);
@@ -362,37 +362,22 @@ VulkanPipeline *PipelineManagerVulkan::GetOrCreatePipeline(VulkanRenderManager *
 	}
 
 	VulkanPipelineKey key{};
+	_assert_msg_(renderPass, "Can't create a pipeline with a null renderpass");
 
 	key.raster = rasterKey;
+	key.renderPass = renderPass;
 	key.useHWTransform = useHwTransform;
 	key.vShader = vs->GetModule();
 	key.fShader = fs->GetModule();
-	key.gShader = gs ? gs->GetModule() : VK_NULL_HANDLE;
 	key.vtxFmtId = useHwTransform ? decFmt->id : 0;
 
-	VulkanPipeline *pipeline;
-	if (pipelines_.Get(key, &pipeline)) {
-		return pipeline;
-	}
+	auto iter = pipelines_.Get(key);
+	if (iter)
+		return iter;
 
-	PipelineFlags pipelineFlags = (PipelineFlags)0;
-	if (fs->Flags() & FragmentShaderFlags::USES_DISCARD) {
-		pipelineFlags |= PipelineFlags::USES_DISCARD;
-	}
-	if (fs->Flags() & FragmentShaderFlags::USES_FLAT_SHADING) {
-		pipelineFlags |= PipelineFlags::USES_FLAT_SHADING;
-	}
-	if (vs->Flags() & VertexShaderFlags::MULTI_VIEW) {
-		pipelineFlags |= PipelineFlags::USES_MULTIVIEW;
-	}
-
-	VkSampleCountFlagBits sampleCount = MultiSampleLevelToFlagBits(multiSampleLevel);
-
-	pipeline = CreateVulkanPipeline(
-		renderManager, pipelineCache_, layout, pipelineFlags, sampleCount,
-		rasterKey, decFmt, vs, fs, gs, useHwTransform, variantBitmask, cacheLoad);
-
-	// If the above failed, we got a null pipeline. We still insert it to keep track.
+	VulkanPipeline *pipeline = CreateVulkanPipeline(
+		renderManager, pipelineCache_, layout, renderPass,
+		rasterKey, decFmt, vs, fs, useHwTransform);
 	pipelines_.Insert(key, pipeline);
 
 	// Don't return placeholder null pipelines.
@@ -403,12 +388,11 @@ VulkanPipeline *PipelineManagerVulkan::GetOrCreatePipeline(VulkanRenderManager *
 	}
 }
 
-std::vector<std::string> PipelineManagerVulkan::DebugGetObjectIDs(DebugShaderType type) const {
+std::vector<std::string> PipelineManagerVulkan::DebugGetObjectIDs(DebugShaderType type) {
 	std::vector<std::string> ids;
 	switch (type) {
 	case SHADER_TYPE_PIPELINE:
 	{
-		ids.reserve(pipelines_.size());
 		pipelines_.Iterate([&](const VulkanPipelineKey &key, VulkanPipeline *value) {
 			std::string id;
 			key.ToString(&id);
@@ -423,10 +407,10 @@ std::vector<std::string> PipelineManagerVulkan::DebugGetObjectIDs(DebugShaderTyp
 }
 
 static const char *const topologies[8] = {
-	"POINTS",
-	"LINES",
+	"POINTLIST",
+	"LINELIST",
 	"LINESTRIP",
-	"TRIS",
+	"TRILIST",
 	"TRISTRIP",
 	"TRIFAN",
 };
@@ -434,7 +418,7 @@ static const char *const topologies[8] = {
 static const char *const blendOps[8] = {
 	"ADD",
 	"SUB",
-	"RSUB",
+	"REVSUB",
 	"MIN",
 	"MAX",
 };
@@ -472,9 +456,9 @@ static const char *const logicOps[] = {
 static const char *const stencilOps[8] = {
 	"KEEP",
 	"ZERO",
-	"REPL",
-	"INC_SAT",
-	"DEC_SAT",
+	"REPLACE",
+	"INC_CLAMP",
+	"DEC_CLAMP",
 	"INVERT",
 	"INC_WRAP",
 	"DEC_WRAP",
@@ -483,127 +467,103 @@ static const char *const stencilOps[8] = {
 static const char *const blendFactors[19] = {
 	"ZERO",
 	"ONE",
-	"SRC_COL",
-	"INV_SRC_COL",
-	"DST_COL",
-	"INV_DST_COL",
-	"SRC_A",
-	"INV_SRC_A",
-	"DST_A",
-	"INV_DST_A",
-	"CONSTANT_COL",
-	"INV_CONST_COL",
-	"CONSTANT_A",
-	"INV_CONST_A",
-	"SRC_A_SAT",
-	"SRC1_COL",
-	"INV_SRC1_COL",
-	"SRC1_A",
-	"INV_SRC1_A",
+	"SRC_COLOR",
+	"ONE_MINUS_SRC_COLOR",
+	"DST_COLOR",
+	"ONE_MINUS_DST_COLOR",
+	"SRC_ALPHA",
+	"ONE_MINUS_SRC_ALPHA",
+	"DST_ALPHA",
+	"ONE_MINUS_DST_ALPHA",
+	"CONSTANT_COLOR",
+	"ONE_MINUS_CONSTANT_COLOR",
+	"CONSTANT_ALPHA",
+	"ONE_MINUS_CONSTANT_ALPHA",
+	"SRC_ALPHA_SATURATE",
+	"SRC1_COLOR",
+	"ONE_MINUS_SRC1_COLOR",
+	"SRC1_ALPHA",
+	"ONE_MINUS_SRC1_ALPHA",
 };
 
-std::string PipelineManagerVulkan::DebugGetObjectString(const std::string &id, DebugShaderType type, DebugShaderStringType stringType, ShaderManagerVulkan *shaderManager) {
+std::string PipelineManagerVulkan::DebugGetObjectString(std::string id, DebugShaderType type, DebugShaderStringType stringType) {
 	if (type != SHADER_TYPE_PIPELINE)
 		return "N/A";
 
 	VulkanPipelineKey pipelineKey;
 	pipelineKey.FromString(id);
 
-	VulkanPipeline *pipeline;
-	if (!pipelines_.Get(pipelineKey, &pipeline)) {
-		return "N/A (missing)";
+	VulkanPipeline *iter = pipelines_.Get(pipelineKey);
+	if (!iter) {
+		return "";
 	}
-	_assert_(pipeline != nullptr);
-	u32 variants = pipeline->GetVariantsBitmask();
 
-	std::string keyDescription = pipelineKey.GetDescription(stringType, shaderManager);
-	return StringFromFormat("%s. v: %08x", keyDescription.c_str(), variants);
+	std::string str = pipelineKey.GetDescription(stringType);
+	return StringFromFormat("%p: %s", iter, str.c_str());
 }
 
-std::string VulkanPipelineKey::GetRasterStateDesc(bool lineBreaks) const {
-	std::stringstream str;
-	str << topologies[raster.topology] << " ";
-	if (useHWTransform) {
-		str << "HWX ";
-	}
-	if (vtxFmtId) {
-		str << "Vfmt(" << StringFromFormat("%08x", vtxFmtId) << ") ";  // TODO: Format nicer.
-	} else {
-		str << "SWX ";
-	}
-	if (lineBreaks) str << std::endl;
-	if (raster.blendEnable) {
-		str << "Blend(C:" << blendOps[raster.blendOpColor] << "/"
-			<< blendFactors[raster.srcColor] << ":" << blendFactors[raster.destColor] << " ";
-		if (raster.blendOpAlpha != VK_BLEND_OP_ADD ||
-			raster.srcAlpha != VK_BLEND_FACTOR_ONE ||
-			raster.destAlpha != VK_BLEND_FACTOR_ZERO) {
-			str << "A:" << blendOps[raster.blendOpAlpha] << "/"
-				<< blendFactors[raster.srcColor] << ":" << blendFactors[raster.destColor] << " ";
-		}
-		str << ") ";
-		if (lineBreaks) str << std::endl;
-	}
-	if (raster.colorWriteMask != 0xF) {
-		str << "Mask(";
-		for (int i = 0; i < 4; i++) {
-			if (raster.colorWriteMask & (1 << i)) {
-				str << "RGBA"[i];
-			} else {
-				str << "_";
-			}
-		}
-		str << ") ";
-		if (lineBreaks) str << std::endl;
-	}
-	if (raster.depthTestEnable) {
-		str << "Z(";
-		if (raster.depthWriteEnable)
-			str << "W, ";
-		if (raster.depthCompareOp)
-			str << compareOps[raster.depthCompareOp & 7];
-		str << ") ";
-		if (lineBreaks) str << std::endl;
-	}
-	if (raster.stencilTestEnable) {
-		str << "Stenc(";
-		str << compareOps[raster.stencilCompareOp & 7] << " ";
-		str << stencilOps[raster.stencilPassOp & 7] << "/";
-		str << stencilOps[raster.stencilFailOp & 7] << "/";
-		str << stencilOps[raster.stencilDepthFailOp & 7];
-		str << ") ";
-		if (lineBreaks) str << std::endl;
-	}
-	if (raster.logicOpEnable) {
-		str << "Logic(" << logicOps[raster.logicOp & 15] << ") ";
-		if (lineBreaks) str << std::endl;
-	}
-	return str.str();
-}
-
-std::string VulkanPipelineKey::GetDescription(DebugShaderStringType stringType, ShaderManagerVulkan *shaderManager) const {
+std::string VulkanPipelineKey::GetDescription(DebugShaderStringType stringType) const {
 	switch (stringType) {
 	case SHADER_STRING_SHORT_DESC:
-		// Just show the raster state. Also show brief VS/FS IDs?
-		return GetRasterStateDesc(false);
-
-	case SHADER_STRING_SOURCE_CODE:
 	{
-		// More detailed description of all the parts of the pipeline.
-		VkShaderModule fsModule = this->fShader->BlockUntilReady();
-		VkShaderModule vsModule = this->vShader->BlockUntilReady();
-		VkShaderModule gsModule = this->gShader ? this->gShader->BlockUntilReady() : VK_NULL_HANDLE;
-
 		std::stringstream str;
-		str << "VS: " << VertexShaderDesc(shaderManager->GetVertexShaderFromModule(vsModule)->GetID()) << std::endl;
-		str << "FS: " << FragmentShaderDesc(shaderManager->GetFragmentShaderFromModule(fsModule)->GetID()) << std::endl;
-		if (gsModule) {
-			str << "GS: " << GeometryShaderDesc(shaderManager->GetGeometryShaderFromModule(gsModule)->GetID()) << std::endl;
+		str << topologies[raster.topology] << " ";
+		if (raster.blendEnable) {
+			str << "Blend(C:" << blendOps[raster.blendOpColor] << "/"
+				<< blendFactors[raster.srcColor] << ":" << blendFactors[raster.destColor] << " ";
+			if (raster.blendOpAlpha != VK_BLEND_OP_ADD ||
+				raster.srcAlpha != VK_BLEND_FACTOR_ONE ||
+				raster.destAlpha != VK_BLEND_FACTOR_ZERO) {
+				str << "A:" << blendOps[raster.blendOpAlpha] << "/"
+					<< blendFactors[raster.srcColor] << ":" << blendFactors[raster.destColor] << " ";
+			}
+			str << ") ";
 		}
-		str << GetRasterStateDesc(true);
+		if (raster.colorWriteMask != 0xF) {
+			str << "Mask(";
+			for (int i = 0; i < 4; i++) {
+				if (raster.colorWriteMask & (1 << i)) {
+					str << "RGBA"[i];
+				} else {
+					str << "_";
+				}
+			}
+			str << ") ";
+		}
+		if (raster.depthTestEnable) {
+			str << "Depth(";
+			if (raster.depthWriteEnable)
+				str << "W, ";
+			if (raster.depthCompareOp)
+				str << compareOps[raster.depthCompareOp & 7];
+			str << ") ";
+		}
+		if (raster.stencilTestEnable) {
+			str << "Stencil(";
+			str << compareOps[raster.stencilCompareOp & 7] << " ";
+			str << stencilOps[raster.stencilPassOp & 7] << "/";
+			str << stencilOps[raster.stencilFailOp & 7] << "/";
+			str << stencilOps[raster.stencilDepthFailOp& 7];
+			str << ") ";
+		}
+		if (raster.logicOpEnable) {
+			str << "Logic(" << logicOps[raster.logicOp & 15] << ") ";
+		}
+		if (useHWTransform) {
+			str << "HWX ";
+		}
+		if (vtxFmtId) {
+			str << "V(" << StringFromFormat("%08x", vtxFmtId) << ") ";  // TODO: Format nicer.
+		} else {
+			str << "SWX ";
+		}
 		return str.str();
 	}
 
+	case SHADER_STRING_SOURCE_CODE:
+	{
+		return "N/A";
+	}
 	default:
 		return "N/A";
 	}
@@ -622,10 +582,10 @@ struct StoredVulkanPipelineKey {
 	VulkanPipelineRasterStateKey raster;
 	VShaderID vShaderID;
 	FShaderID fShaderID;
-	GShaderID gShaderID;
 	uint32_t vtxFmtId;
-	uint32_t variants;
-	bool useHWTransform;  // TODO: Still needed?
+	bool useHWTransform;
+	bool backbufferPass;
+	VulkanQueueRunner::RPKey renderPassKey;
 
 	// For std::set. Better zero-initialize the struct properly for this to work.
 	bool operator < (const StoredVulkanPipelineKey &other) const {
@@ -635,7 +595,7 @@ struct StoredVulkanPipelineKey {
 
 // If you're looking for how to invalidate the cache, it's done in ShaderManagerVulkan, look for CACHE_VERSION and increment it.
 // (Header of the same file this is stored in).
-void PipelineManagerVulkan::SavePipelineCache(FILE *file, bool saveRawPipelineCache, ShaderManagerVulkan *shaderManager, Draw::DrawContext *drawContext) {
+void PipelineManagerVulkan::SaveCache(FILE *file, bool saveRawPipelineCache, ShaderManagerVulkan *shaderManager, Draw::DrawContext *drawContext) {
 	VulkanRenderManager *rm = (VulkanRenderManager *)drawContext->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 	VulkanQueueRunner *queueRunner = rm->GetQueueRunner();
 
@@ -651,15 +611,15 @@ void PipelineManagerVulkan::SavePipelineCache(FILE *file, bool saveRawPipelineCa
 			fwrite(&size, sizeof(size), 1, file);
 			return;
 		}
-		auto buffer = std::make_unique<uint8_t[]>(dataSize);
+		std::unique_ptr<uint8_t[]> buffer(new uint8_t[dataSize]);
 		vkGetPipelineCacheData(vulkan_->GetDevice(), pipelineCache_, &dataSize, buffer.get());
 		size = (uint32_t)dataSize;
 		fwrite(&size, sizeof(size), 1, file);
 		fwrite(buffer.get(), 1, size, file);
-		NOTICE_LOG(Log::G3D, "Saved Vulkan pipeline cache (%d bytes).", (int)size);
+		NOTICE_LOG(G3D, "Saved Vulkan pipeline cache (%d bytes).", (int)size);
 	}
 
-	int64_t seekPosOnFailure = File::Ftell(file);
+	size_t seekPosOnFailure = ftell(file);
 
 	bool failed = false;
 	bool writeFailed = false;
@@ -671,29 +631,28 @@ void PipelineManagerVulkan::SavePipelineCache(FILE *file, bool saveRawPipelineCa
 	pipelines_.Iterate([&](const VulkanPipelineKey &pkey, VulkanPipeline *value) {
 		if (failed)
 			return;
-		VulkanVertexShader *vshader = shaderManager->GetVertexShaderFromModule(pkey.vShader->BlockUntilReady());
-		VulkanFragmentShader *fshader = shaderManager->GetFragmentShaderFromModule(pkey.fShader->BlockUntilReady());
-		VulkanGeometryShader *gshader = nullptr;
-		if (pkey.gShader) {
-			gshader = shaderManager->GetGeometryShaderFromModule(pkey.gShader->BlockUntilReady());
-			if (!gshader)
-				failed = true;
-		}
-		if (!vshader || !fshader || failed) {
+		VulkanVertexShader *vshader = shaderManager->GetVertexShaderFromModule(pkey.vShader);
+		VulkanFragmentShader *fshader = shaderManager->GetFragmentShaderFromModule(pkey.fShader);
+		if (!vshader || !fshader) {
 			failed = true;
 			return;
 		}
-		_dbg_assert_(pkey.raster.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && pkey.raster.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
 		StoredVulkanPipelineKey key{};
 		key.raster = pkey.raster;
 		key.useHWTransform = pkey.useHWTransform;
 		key.fShaderID = fshader->GetID();
 		key.vShaderID = vshader->GetID();
-		key.gShaderID = gshader ? gshader->GetID() : GShaderID();
-		key.variants = value->GetVariantsBitmask();
 		if (key.useHWTransform) {
 			// NOTE: This is not a vtype, but a decoded vertex format.
 			key.vtxFmtId = pkey.vtxFmtId;
+		}
+		// Figure out what kind of renderpass this pipeline uses.
+		if (pkey.renderPass == queueRunner->GetBackbufferRenderPass()) {
+			key.backbufferPass = true;
+			key.renderPassKey = {};
+		} else {
+			key.backbufferPass = false;
+			queueRunner->GetRenderPassKey(pkey.renderPass, &key.renderPassKey);
 		}
 		keys.insert(key);
 	});
@@ -708,48 +667,47 @@ void PipelineManagerVulkan::SavePipelineCache(FILE *file, bool saveRawPipelineCa
 	}
 
 	if (failed) {
-		ERROR_LOG(Log::G3D, "Failed to write pipeline cache, some shader was missing");
+		ERROR_LOG(G3D, "Failed to write pipeline cache, some shader was missing");
 		// Write a zero in the right place so it doesn't try to load the pipelines next time.
 		size = 0;
-		File::Fseek(file, seekPosOnFailure, SEEK_SET);
+		fseek(file, (long)seekPosOnFailure, SEEK_SET);
 		writeFailed = fwrite(&size, sizeof(size), 1, file) != 1;
 		if (writeFailed) {
-			ERROR_LOG(Log::G3D, "Failed to write pipeline cache, disk full?");
+			ERROR_LOG(G3D, "Failed to write pipeline cache, disk full?");
 		}
 		return;
 	}
 	if (writeFailed) {
-		ERROR_LOG(Log::G3D, "Failed to write pipeline cache, disk full?");
+		ERROR_LOG(G3D, "Failed to write pipeline cache, disk full?");
 	} else {
-		NOTICE_LOG(Log::G3D, "Saved Vulkan pipeline ID cache (%d unique pipelines/%d).", (int)keys.size(), (int)pipelines_.size());
+		NOTICE_LOG(G3D, "Saved Vulkan pipeline ID cache (%d unique pipelines/%d).", (int)keys.size(), (int)pipelines_.size());
 	}
 }
 
-bool PipelineManagerVulkan::LoadPipelineCache(FILE *file, bool loadRawPipelineCache, ShaderManagerVulkan *shaderManager, Draw::DrawContext *drawContext, VKRPipelineLayout *layout, int multiSampleLevel) {
+bool PipelineManagerVulkan::LoadCache(FILE *file, bool loadRawPipelineCache, ShaderManagerVulkan *shaderManager, Draw::DrawContext *drawContext, VkPipelineLayout layout) {
 	VulkanRenderManager *rm = (VulkanRenderManager *)drawContext->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 	VulkanQueueRunner *queueRunner = rm->GetQueueRunner();
 
 	uint32_t size = 0;
 	if (loadRawPipelineCache) {
-		NOTICE_LOG(Log::G3D, "WARNING: Using the badly tested raw pipeline cache path!!!!");
 		// WARNING: Do not use this path until after reading and implementing https://zeux.io/2019/07/17/serializing-pipeline-cache/ !
 		bool success = fread(&size, sizeof(size), 1, file) == 1;
 		if (!size || !success) {
-			WARN_LOG(Log::G3D, "Zero-sized Vulkan pipeline cache.");
+			WARN_LOG(G3D, "Zero-sized Vulkan pipeline cache.");
 			return true;
 		}
-		auto buffer = std::make_unique<uint8_t[]>(size);
+		std::unique_ptr<uint8_t[]> buffer(new uint8_t[size]);
 		success = fread(buffer.get(), 1, size, file) == size;
 		// Verify header.
 		VkPipelineCacheHeader *header = (VkPipelineCacheHeader *)buffer.get();
 		if (!success || header->version != VK_PIPELINE_CACHE_HEADER_VERSION_ONE) {
 			// Bad header, don't do anything.
-			WARN_LOG(Log::G3D, "Bad Vulkan pipeline cache header - ignoring");
+			WARN_LOG(G3D, "Bad Vulkan pipeline cache header - ignoring");
 			return false;
 		}
 		if (0 != memcmp(header->uuid, vulkan_->GetPhysicalDeviceProperties().properties.pipelineCacheUUID, VK_UUID_SIZE)) {
 			// Wrong hardware/driver/etc.
-			WARN_LOG(Log::G3D, "Bad Vulkan pipeline cache UUID - ignoring");
+			WARN_LOG(G3D, "Bad Vulkan pipeline cache UUID - ignoring");
 			return false;
 		}
 
@@ -767,14 +725,12 @@ bool PipelineManagerVulkan::LoadPipelineCache(FILE *file, bool loadRawPipelineCa
 		} else {
 			vkMergePipelineCaches(vulkan_->GetDevice(), pipelineCache_, 1, &cache);
 		}
-		NOTICE_LOG(Log::G3D, "Loaded Vulkan binary pipeline cache (%d bytes).", (int)size);
-		// Note that after loading the cache, it's still a good idea to pre-create the various pipelines.
+		NOTICE_LOG(G3D, "Loaded Vulkan pipeline cache (%d bytes).", (int)size);
 	} else {
 		if (!pipelineCache_) {
 			VkPipelineCacheCreateInfo pc{ VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
 			VkResult res = vkCreatePipelineCache(vulkan_->GetDevice(), &pc, nullptr, &pipelineCache_);
 			if (res != VK_SUCCESS) {
-				WARN_LOG(Log::G3D, "vkCreatePipelineCache failed (%08x), highly unexpected", (u32)res);
 				return false;
 			}
 		}
@@ -783,57 +739,46 @@ bool PipelineManagerVulkan::LoadPipelineCache(FILE *file, bool loadRawPipelineCa
 	// Read the number of pipelines.
 	bool failed = fread(&size, sizeof(size), 1, file) != 1;
 
-	NOTICE_LOG(Log::G3D, "Creating %d pipelines from cache (%dx MSAA)...", size, (1 << multiSampleLevel));
+	NOTICE_LOG(G3D, "Creating %d pipelines...", size);
 	int pipelineCreateFailCount = 0;
-	int shaderFailCount = 0;
 	for (uint32_t i = 0; i < size; i++) {
-		if (failed) {
+		if (failed || cancelCache_) {
 			break;
 		}
 		StoredVulkanPipelineKey key;
 		failed = failed || fread(&key, sizeof(key), 1, file) != 1;
 		if (failed) {
-			ERROR_LOG(Log::G3D, "Truncated Vulkan pipeline cache file, stopping.");
-			break;
-		}
-
-		if (key.raster.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || key.raster.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST) {
-			WARN_LOG(Log::G3D, "Bad raster key in cache, ignoring");
+			ERROR_LOG(G3D, "Truncated Vulkan pipeline cache file");
 			continue;
 		}
-
 		VulkanVertexShader *vs = shaderManager->GetVertexShaderFromID(key.vShaderID);
 		VulkanFragmentShader *fs = shaderManager->GetFragmentShaderFromID(key.fShaderID);
-		VulkanGeometryShader *gs = shaderManager->GetGeometryShaderFromID(key.gShaderID);
-		if (!vs || !fs || (!gs && key.gShaderID.Bit(GS_BIT_ENABLED))) {
-			// We just ignore this one, it'll get created later if needed.
-			// Probably some useFlags mismatch.
-			WARN_LOG(Log::G3D, "Failed to find vs or fs in pipeline %d in cache, skipping pipeline", (int)i);
+		if (!vs || !fs) {
+			failed = true;
+			ERROR_LOG(G3D, "Failed to find vs or fs in of pipeline %d in cache", (int)i);
 			continue;
 		}
 
-		// Avoid creating multisampled shaders if it's not enabled, as that results in an invalid combination.
-		// Note that variantsToBuild is NOT directly a RenderPassType! instead, it's a collection of (1 << RenderPassType).
-		u32 variantsToBuild = key.variants;
-		if (multiSampleLevel == 0) {
-			for (u32 i = 0; i < (int)RenderPassType::TYPE_COUNT; i++) {
-				if (RenderPassTypeHasMultisample((RenderPassType)i)) {
-					variantsToBuild &= ~(1 << i);
-				}
-			}
+		VkRenderPass rp;
+		if (key.backbufferPass) {
+			rp = queueRunner->GetBackbufferRenderPass();
+		} else {
+			rp = queueRunner->GetRenderPass(key.renderPassKey);
 		}
 
 		DecVtxFormat fmt;
 		fmt.InitializeFromID(key.vtxFmtId);
-		VulkanPipeline *pipeline = GetOrCreatePipeline(
-			rm, layout, key.raster, key.useHWTransform ? &fmt : 0, vs, fs, gs, key.useHWTransform, variantsToBuild, multiSampleLevel, true);
+		VulkanPipeline *pipeline = GetOrCreatePipeline(rm, layout, rp, key.raster,
+			key.useHWTransform ? &fmt : 0,
+			vs, fs, key.useHWTransform);
 		if (!pipeline) {
 			pipelineCreateFailCount += 1;
 		}
 	}
-
-	rm->NudgeCompilerThread();
-
-	// The rest of the work is async, we can't know here if it'll succeed.
+	NOTICE_LOG(G3D, "Recreated Vulkan pipeline cache (%d pipelines, %d failed).", (int)size, pipelineCreateFailCount);
 	return true;
+}
+
+void PipelineManagerVulkan::CancelCache() {
+	cancelCache_ = true;
 }

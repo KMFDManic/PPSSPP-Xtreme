@@ -1,28 +1,28 @@
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+
 #pragma once
 
-// CtrlDisAsmView
-//  
-// This Win32 control is made to be flexible and usable with
-// every kind of CPU architecture that has fixed width instruction words.
-// Just supply it an instance of a class derived from Debugger, with all methods
-// overridden for full functionality. Look at the ppc one for an example.
-// 
-// To add to a dialog box, just draw a User Control in the dialog editor,
-// and set classname to "CtrlDisAsmView". you also need to call CtrlDisAsmView::init()
-// before opening this dialog, to register the window class.
-// 
-// To get a class instance to be able to access it, just use 
-//   CtrlDisAsmView::getFrom(GetDlgItem(yourdialog, IDC_yourid)).
+//////////////////////////////////////////////////////////////////////////
+//CtrlDisAsmView
+// CtrlDisAsmView.cpp
+//////////////////////////////////////////////////////////////////////////
+//This Win32 control is made to be flexible and usable with
+//every kind of CPU architechture that has fixed width instruction words.
+//Just supply it an instance of a class derived from Debugger, with all methods
+//overridden for full functionality. Look at the ppc one for an example.
+//
+//To add to a dialog box, just draw a User Control in the dialog editor,
+//and set classname to "CtrlDisAsmView". you also need to call CtrlDisAsmView::init()
+//before opening this dialog, to register the window class.
+//
+//To get a class instance to be able to access it, just use 
+//  CtrlDisAsmView::getFrom(GetDlgItem(yourdialog, IDC_yourid)).
 
-#include <algorithm>
 #include <vector>
-#include <string>
-#include <set>
-#include <map>
-
+#include <algorithm>
 #include "Common/CommonWindows.h"
 #include "Common/Log.h"
-#include "Core/MIPS/MIPSDebugInterface.h"
+#include "Core/Debugger/DebugInterface.h"
 #include "Core/Debugger/DisassemblyManager.h"
 
 class CtrlDisAsmView
@@ -32,6 +32,7 @@ class CtrlDisAsmView
 	HFONT boldfont;
 	RECT rect;
 
+	DisassemblyManager manager;
 	u32 curAddress;
 	u32 selectRangeStart;
 	u32 selectRangeEnd;
@@ -40,7 +41,7 @@ class CtrlDisAsmView
 
 	bool hasFocus;
 	bool showHex;
-	MIPSDebugInterface *debugger;
+	DebugInterface *debugger;
 	static TCHAR szClassName[];
 
 	u32 windowStart;
@@ -63,21 +64,16 @@ class CtrlDisAsmView
 	bool dontRedraw;
 	bool keyTaken;
 
-	enum class CopyInstructionsMode {
-		OPCODES,
-		DISASM,
-		ADDRESSES,
-	};
-
-	void assembleOpcode(u32 address, const std::string &defaultText);
+	void assembleOpcode(u32 address, std::string defaultText);
+	std::string disassembleRange(u32 start, u32 size);
 	void disassembleToFile();
 	void search(bool continueSearch);
 	void followBranch();
 	void calculatePixelPositions();
+	bool getDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData);
 	void updateStatusBarText();
-	void drawBranchLine(HDC hdc, std::map<u32, int> &addressPositions, const BranchLine &line);
-	void CopyInstructions(u32 startAddr, u32 endAddr, CopyInstructionsMode mode);
-	void NopInstructions(u32 startAddr, u32 endAddr);
+	void drawBranchLine(HDC hdc, std::map<u32,int>& addressPositions, BranchLine& line);
+	void copyInstructions(u32 startAddr, u32 endAddr, bool withDisasm);
 	std::set<std::string> getSelectedLineArguments();
 	void drawArguments(HDC hdc, const DisassemblyLineInfo &line, int x, int y, int textColor, const std::set<std::string> &currentArguments);
 
@@ -100,19 +96,19 @@ public:
 	void scrollAddressIntoView();
 	bool curAddressIsVisible();
 	void redraw();
-	void scanVisibleFunctions();
-	void clearFunctions() { g_disassemblyManager.clear(); };
+	void scanFunctions();
+	void clearFunctions() { manager.clear(); };
 
 	void getOpcodeText(u32 address, char* dest, int bufsize);
 	int getRowHeight() { return rowHeight; };
 	u32 yToAddress(int y);
 
 	void setDontRedraw(bool b) { dontRedraw = b; };
-	void setDebugger(MIPSDebugInterface *deb)
+	void setDebugger(DebugInterface *deb)
 	{
 		debugger=deb;
-		curAddress=debugger->GetPC();
-		g_disassemblyManager.setCpu(deb);
+		curAddress=debugger->getPC();
+		manager.setCpu(deb);
 	}
 	DebugInterface *getDebugger()
 	{
@@ -126,21 +122,21 @@ public:
 	{
 		if (positionLocked_ != 0)
 			return;
-		u32 windowEnd = g_disassemblyManager.getNthNextAddress(windowStart,visibleRows);
-		u32 newAddress = g_disassemblyManager.getStartAddress(addr);
+		u32 windowEnd = manager.getNthNextAddress(windowStart,visibleRows);
+		u32 newAddress = manager.getStartAddress(addr);
 
 		if (newAddress < windowStart || newAddress >= windowEnd)
 		{
-			windowStart = g_disassemblyManager.getNthPreviousAddress(newAddress,visibleRows/2);
+			windowStart = manager.getNthPreviousAddress(newAddress,visibleRows/2);
 		}
 
 		setCurAddress(newAddress);
-		scanVisibleFunctions();
+		scanFunctions();
 		redraw();
 	}
 	void gotoPC()
 	{
-		gotoAddr(debugger->GetPC());
+		gotoAddr(debugger->getPC());
 	}
 	u32 getSelection()
 	{
@@ -158,18 +154,18 @@ public:
 	void scrollWindow(int lines)
 	{
 		if (lines < 0)
-			windowStart = g_disassemblyManager.getNthPreviousAddress(windowStart,abs(lines));
+			windowStart = manager.getNthPreviousAddress(windowStart,abs(lines));
 		else
-			windowStart = g_disassemblyManager.getNthNextAddress(windowStart,lines);
+			windowStart = manager.getNthNextAddress(windowStart,lines);
 
-		scanVisibleFunctions();
+		scanFunctions();
 		redraw();
 	}
 
 	void setCurAddress(u32 newAddress, bool extend = false)
 	{
-		newAddress = g_disassemblyManager.getStartAddress(newAddress);
-		const u32 after = g_disassemblyManager.getNthNextAddress(newAddress,1);
+		newAddress = manager.getStartAddress(newAddress);
+		u32 after = manager.getNthNextAddress(newAddress,1);
 		curAddress = newAddress;
 		selectRangeStart = extend ? std::min(selectRangeStart, newAddress) : newAddress;
 		selectRangeEnd = extend ? std::max(selectRangeEnd, after) : after;

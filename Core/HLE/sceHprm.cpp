@@ -22,38 +22,46 @@
 #include "Core/MIPS/MIPS.h"
 
 static u32 sceHprmPeekCurrentKey(u32 keyAddress) {
+	DEBUG_LOG(HLE,"0=sceHprmPeekCurrentKey(ptr)");
 	Memory::Write_U32(0, keyAddress);
-	return hleLogDebug(Log::HLE, 0);
+	return 0;
 }
 
 // TODO: Might make sense to reflect the headphone status of the host here,
 // if the games adjust their sound.
 static u32 sceHprmIsHeadphoneExist() {
-	return hleLogDebug(Log::HLE, 0);
+	DEBUG_LOG(HLE, "sceHprmIsHeadphoneExist()");
+	return 0;
 }
 
 static u32 sceHprmIsMicrophoneExist() {
-	return hleLogDebug(Log::HLE, 0);
+	DEBUG_LOG(HLE, "sceHprmIsMicrophoneExist()");
+	return 0;
 }
 
 static u32 sceHprmIsRemoteExist() {
-	return hleLogDebug(Log::HLE, 0);
+	DEBUG_LOG(HLE, "sceHprmIsRemoteExist()");
+	return 0;
 }
 
 static u32 sceHprmRegisterCallback() {
-	return hleLogError(Log::HLE, 0, "UNIMPL");
+	ERROR_LOG(HLE, "UNIMPL %s", __FUNCTION__);
+	return 0;
 }
 
 static u32 sceHprmUnregisterCallback() {
-	return hleLogError(Log::HLE, 0, "UNIMPL");
+	ERROR_LOG(HLE, "UNIMPL %s", __FUNCTION__);
+	return 0;
 }
 
 static u32 sceHprmPeekLatch(u32 latchAddr) {
-	return hleLogDebug(Log::HLE,0, "latchAddr %08x", latchAddr);
+	DEBUG_LOG(HLE,"sceHprmPeekLatch latchAddr %08x",latchAddr);
+	return 0;
 }
 
 static u32 sceHprmReadLatch(u32 latchAddr) {
-	return hleLogDebug(Log::HLE, 0, "latchAddr %08x", latchAddr);
+	DEBUG_LOG(HLE,"sceHprmReadLatch latchAddr %08x",latchAddr);
+	return 0;
 }
 
 const HLEFunction sceHprm[] = 
@@ -72,5 +80,5 @@ const HLEFunction sceHprm[] =
 
 void Register_sceHprm()
 {
-	RegisterHLEModule("sceHprm", ARRAY_SIZE(sceHprm), sceHprm);
+	RegisterModule("sceHprm", ARRAY_SIZE(sceHprm), sceHprm);
 }

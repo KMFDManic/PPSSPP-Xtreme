@@ -17,9 +17,11 @@
 
 #include "Common/GPU/thin3d.h"
 #include "Common/GPU/OpenGL/GLDebugLog.h"
+#include "Core/Config.h"
 #include "GPU/GLES/FragmentTestCacheGLES.h"
 #include "GPU/GPUState.h"
 #include "GPU/Common/GPUStateUtils.h"
+#include "GPU/Common/ShaderId.h"
 
 // These are small, let's give them plenty of frames.
 static const int FRAGTEST_TEXTURE_OLD_AGE = 307;
@@ -38,6 +40,10 @@ void FragmentTestCacheGLES::DeviceRestore(Draw::DrawContext *draw) {
 }
 
 void FragmentTestCacheGLES::BindTestTexture(int slot) {
+	if (!g_Config.bFragmentTestCache) {
+		return;
+	}
+
 	bool alphaNeedsTexture = gstate.isAlphaTestEnabled() && !IsAlphaTestAgainstZero() && !IsAlphaTestTriviallyTrue();
 	bool colorNeedsTexture = gstate.isColorTestEnabled() && !IsColorTestAgainstZero() && !IsColorTestTriviallyTrue();
 	if (!alphaNeedsTexture && !colorNeedsTexture) {
@@ -83,7 +89,7 @@ void FragmentTestCacheGLES::BindTestTexture(int slot) {
 	cache_[id] = item;
 }
 
-FragmentTestID FragmentTestCacheGLES::GenerateTestID() {
+FragmentTestID FragmentTestCacheGLES::GenerateTestID() const {
 	FragmentTestID id;
 	// Let's just keep it simple, it's all in here.
 	id.alpha = gstate.isAlphaTestEnabled() ? gstate.alphatest : 0;
@@ -138,19 +144,19 @@ GLRTexture *FragmentTestCacheGLES::CreateTestTexture(const GEComparison funcs[4]
 		}
 	}
 
-	GLRTexture *tex = render_->CreateTexture(GL_TEXTURE_2D, 256, 1, 1, 1);
-	render_->TextureImage(tex, 0, 256, 1, 1, Draw::DataFormat::R8G8B8A8_UNORM, data);
+	GLRTexture *tex = render_->CreateTexture(GL_TEXTURE_2D, 256, 1, 1);
+	render_->TextureImage(tex, 0, 256, 1, Draw::DataFormat::R8G8B8A8_UNORM, data);
 	return tex;
 }
 
 void FragmentTestCacheGLES::Clear(bool deleteThem) {
 	if (deleteThem) {
-		for (const auto &[_, v] : cache_) {
-			render_->DeleteTexture(v.texture);
+		for (auto tex = cache_.begin(); tex != cache_.end(); ++tex) {
+			render_->DeleteTexture(tex->second.texture);
 		}
 	}
 	cache_.clear();
-	lastTexture_ = nullptr;
+	lastTexture_ = 0;
 }
 
 void FragmentTestCacheGLES::Decimate() {
@@ -167,5 +173,5 @@ void FragmentTestCacheGLES::Decimate() {
 		decimationCounter_ = FRAGTEST_DECIMATION_INTERVAL;
 	}
 
-	lastTexture_ = nullptr;
+	lastTexture_ = 0;
 }

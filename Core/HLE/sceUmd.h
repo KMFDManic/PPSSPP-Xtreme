@@ -29,6 +29,11 @@ enum pspUmdState {
 	PSP_UMD_READABLE    = 0x20,
 };
 
+enum pspUmdError {
+	PSP_ERROR_UMD_NOT_READY     = 0x80210001,
+	PSP_ERROR_UMD_INVALID_PARAM = 0x80010016,
+};
+
 enum pspUmdType {
 	PSP_UMD_TYPE_GAME  = 0x10,
 	PSP_UMD_TYPE_VIDEO = 0x20,
@@ -38,7 +43,7 @@ enum pspUmdType {
 void __UmdInit();
 void __UmdDoState(PointerWrap &p);
 
-void __UmdReplace(const Path &filepath);
+void __UmdReplace(Path filepath);
 bool getUMDReplacePermit();
 
 void Register_sceUmdUser();

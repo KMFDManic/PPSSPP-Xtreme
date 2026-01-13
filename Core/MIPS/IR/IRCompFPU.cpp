@@ -102,7 +102,7 @@ void IRFrontend::Comp_FPUComp(MIPSOpcode op) {
 	int opc = op & 0xF;
 	if (opc >= 8) opc -= 8; // alias
 	if (opc == 0) {  // f, sf (signalling false)
-		ir.Write(IROp::FpCondFromReg, 0, MIPS_REG_ZERO);
+		ir.Write(IROp::ZeroFpCond);
 		return;
 	}
 
@@ -118,7 +118,7 @@ void IRFrontend::Comp_FPUComp(MIPSOpcode op) {
 		break;
 	case 3:      // ueq, ngl (equal, unordered)
 		mode = IRFpCompareMode::EqualUnordered;
-		break;
+		return;
 	case 4:      // olt, lt (less than, ordered)
 		mode = IRFpCompareMode::LessOrdered;
 		break;
@@ -152,8 +152,7 @@ void IRFrontend::Comp_FPU2op(MIPSOpcode op) {
 		ir.Write(IROp::FAbs, fd, fs);
 		break;
 	case 6:	//F(fd)	   = F(fs);                   break; //mov
-		if (fd != fs)
-			ir.Write(IROp::FMov, fd, fs);
+		ir.Write(IROp::FMov, fd, fs);
 		break;
 	case 7:	//F(fd)	   = -F(fs);                  break; //neg
 		ir.Write(IROp::FNeg, fd, fs);
@@ -204,8 +203,7 @@ void IRFrontend::Comp_mxc1(MIPSOpcode op) {
 			return;
 		}
 		if (fs == 31) {
-			// This needs to insert fpcond.
-			ir.Write(IROp::FpCtrlToReg, rt);
+			DISABLE;  // TODO: Add a new op
 		} else if (fs == 0) {
 			ir.Write(IROp::SetConst, rt, ir.AddConstant(MIPSState::FCR0_VALUE));
 		} else {
@@ -221,14 +219,9 @@ void IRFrontend::Comp_mxc1(MIPSOpcode op) {
 	case 6: //ctc1
 		if (fs == 31) {
 			// Set rounding mode
-			RestoreRoundingMode();
-			ir.Write(IROp::FpCtrlFromReg, 0, rt);
-			// TODO: Do the UpdateRoundingMode check at runtime?
-			UpdateRoundingMode();
-			ApplyRoundingMode();
+			DISABLE;
 		} else {
-			// Maybe not strictly invalid?  But likely invalid.
-			INVALIDOP;
+			Comp_Generic(op);
 		}
 		return;
 	default:

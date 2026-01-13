@@ -1,21 +1,16 @@
 #include "ppsspp_config.h"
-
-#include <algorithm>  // for std::search
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 
 #include "Common/File/Path.h"
-#include "Common/File/AndroidContentURI.h"
 #include "Common/File/FileUtil.h"
 #include "Common/StringUtils.h"
 #include "Common/Log.h"
 #include "Common/Data/Encoding/Utf8.h"
 
 #include "android/jni/app-android.h"
-
-#if PPSSPP_PLATFORM(UWP) && !defined(__LIBRETRO__)
-#include "UWP/UWPHelpers/StorageManager.h"
-#endif
+#include "android/jni/AndroidContentURI.h"
 
 #if HOST_IS_CASE_SENSITIVE
 #include <dirent.h>
@@ -23,7 +18,7 @@
 #include <sys/stat.h>
 #endif
 
-Path::Path(std::string_view str) {
+Path::Path(const std::string &str) {
 	Init(str);
 }
 
@@ -34,7 +29,7 @@ Path::Path(const std::wstring &str) {
 }
 #endif
 
-void Path::Init(std::string_view str) {
+void Path::Init(const std::string &str) {
 	if (str.empty()) {
 		type_ = PathType::UNDEFINED;
 		path_.clear();
@@ -52,7 +47,7 @@ void Path::Init(std::string_view str) {
 		// and flip it to a NATIVE url and hope for the best.
 		AndroidContentURI uri(str);
 		if (startsWith(uri.FilePath(), "raw:/")) {
-			INFO_LOG(Log::System, "Raw path detected: %s", uri.FilePath().c_str());
+			INFO_LOG(SYSTEM, "Raw path detected: %s", uri.FilePath().c_str());
 			path_ = uri.FilePath().substr(4);
 			type_ = PathType::NATIVE;
 		} else {
@@ -82,7 +77,7 @@ void Path::Init(std::string_view str) {
 
 // We always use forward slashes internally, we convert to backslash only when
 // converted to a wstring.
-Path Path::operator /(std::string_view subdir) const {
+Path Path::operator /(const std::string &subdir) const {
 	if (type_ == PathType::CONTENT_URI) {
 		AndroidContentURI uri(path_);
 		return Path(uri.WithComponent(subdir).ToString());
@@ -105,18 +100,18 @@ Path Path::operator /(std::string_view subdir) const {
 	return Path(fullPath);
 }
 
-void Path::operator /=(std::string_view subdir) {
+void Path::operator /=(const std::string &subdir) {
 	*this = *this / subdir;
 }
 
-Path Path::WithExtraExtension(std::string_view ext) const {
+Path Path::WithExtraExtension(const std::string &ext) const {
 	if (type_ == PathType::CONTENT_URI) {
 		AndroidContentURI uri(path_);
 		return Path(uri.WithExtraExtension(ext).ToString());
 	}
 
 	_dbg_assert_(!ext.empty() && ext[0] == '.');
-	return Path(path_ + std::string(ext));
+	return Path(path_ + ext);
 }
 
 Path Path::WithReplacedExtension(const std::string &oldExtension, const std::string &newExtension) const {
@@ -136,11 +131,6 @@ Path Path::WithReplacedExtension(const std::string &oldExtension, const std::str
 }
 
 Path Path::WithReplacedExtension(const std::string &newExtension) const {
-	if (type_ == PathType::CONTENT_URI) {
-		AndroidContentURI uri(path_);
-		return Path(uri.WithReplacedExtension(newExtension).ToString());
-	}
-
 	_dbg_assert_(!newExtension.empty() && newExtension[0] == '.');
 	if (path_.empty()) {
 		return Path(*this);
@@ -162,7 +152,7 @@ std::string Path::GetFilename() const {
 	return path_;
 }
 
-static std::string GetExtFromString(std::string_view str) {
+static std::string GetExtFromString(const std::string &str) {
 	size_t pos = str.rfind(".");
 	if (pos == std::string::npos) {
 		return "";
@@ -172,7 +162,7 @@ static std::string GetExtFromString(std::string_view str) {
 		// Don't want to detect "df/file" from "/as.df/file"
 		return "";
 	}
-	std::string ext(str.substr(pos));
+	std::string ext = str.substr(pos);
 	for (size_t i = 0; i < ext.size(); i++) {
 		ext[i] = tolower(ext[i]);
 	}
@@ -182,7 +172,7 @@ static std::string GetExtFromString(std::string_view str) {
 std::string Path::GetFileExtension() const {
 	if (type_ == PathType::CONTENT_URI) {
 		AndroidContentURI uri(path_);
-		return uri.GetFileExtension();
+		return GetExtFromString(uri.FilePath());
 	}
 	return GetExtFromString(path_);
 }
@@ -228,48 +218,25 @@ std::string Path::GetDirectory() const {
 	return path_;
 }
 
-bool Path::FilePathContainsNoCase(std::string_view needle) const {
+bool Path::FilePathContainsNoCase(const std::string &needle) const {
 	std::string haystack;
 	if (type_ == PathType::CONTENT_URI) {
 		haystack = AndroidContentURI(path_).FilePath();
 	} else {
 		haystack = path_;
 	}
+
 	auto pred = [](char ch1, char ch2) { return std::toupper(ch1) == std::toupper(ch2); };
 	auto found = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(), pred);
 	return found != haystack.end();
 }
 
 bool Path::StartsWith(const Path &other) const {
-	if (other.empty()) {
-		return true;
-	}
 	if (type_ != other.type_) {
 		// Bad
 		return false;
 	}
 	return startsWith(path_, other.path_);
-}
-
-bool Path::StartsWithGlobalAndNotEqual(const Path &other) const {
-	if (other.empty()) {
-		return true;
-	}
-	if (type_ != other.type_) {
-		// Bad
-		return false;
-	}
-	if (type_ == PathType::CONTENT_URI) {
-		AndroidContentURI a(path_);
-		AndroidContentURI b(other.path_);
-		std::string aLast = a.GetLastPart();
-		std::string bLast = b.GetLastPart();
-		if (aLast == bLast) {
-			return false;
-		}
-		return CountChar(aLast, '/') != CountChar(bLast, '/') && startsWith(aLast, bLast);
-	}
-	return *this != other && StartsWith(other);
 }
 
 const std::string &Path::ToString() const {
@@ -286,67 +253,28 @@ std::wstring Path::ToWString() const {
 	}
 	return w;
 }
-std::string Path::ToCString() const {
-	std::string w = path_;
-	for (size_t i = 0; i < w.size(); i++) {
-		if (w[i] == '/') {
-			w[i] = '\\';
-		}
-	}
-	return w;
-}
 #endif
 
-std::string Path::ToVisualString(const char *relativeRoot) const {
+std::string Path::ToVisualString() const {
 	if (type_ == PathType::CONTENT_URI) {
 		return AndroidContentURI(path_).ToVisualString();
-#if PPSSPP_PLATFORM(WINDOWS)
-	} else if (type_ == PathType::NATIVE) {
-#if PPSSPP_PLATFORM(UWP) && !defined(__LIBRETRO__)
-		return GetPreviewPath(path_);
-#else
-		// It can be useful to show the path as relative to the memstick
-		if (relativeRoot) {
-			std::string root = ReplaceAll(relativeRoot, "/", "\\");
-			std::string path = ReplaceAll(path_, "/", "\\");
-			if (startsWithNoCase(path, root)) {
-				return path.substr(root.size());
-			} else {
-				return path;
-			}
-		} else {
-			return ReplaceAll(path_, "/", "\\");
-		}
-#endif
-#else
-		if (relativeRoot) {
-			std::string root = relativeRoot;
-			if (startsWithNoCase(path_, root)) {
-				return path_.substr(root.size());
-			} else {
-				return path_;
-			}
-		} else {
-			return path_;
-		}
-#endif
-	} else {
-		return path_;
 	}
+	return path_;
 }
 
 bool Path::CanNavigateUp() const {
 	if (type_ == PathType::CONTENT_URI) {
 		return AndroidContentURI(path_).CanNavigateUp();
-	} else if (type_ == PathType::HTTP) {
+	}
+	if (path_ == "/" || path_ == "") {
+		return false;
+	}
+	if (type_ == PathType::HTTP) {
 		size_t rootSlash = path_.find_first_of('/', strlen("https://"));
-		if (rootSlash == path_.npos || path_.size() == rootSlash + 1) {
+		if (rootSlash == path_.npos || path_.size() < rootSlash + 1) {
 			// This means, "http://server" or "http://server/".  Can't go up.
 			return false;
 		}
-	}
-	if (path_ == "/" || path_.empty()) {
-		return false;
 	}
 	return true;
 }
@@ -413,11 +341,6 @@ bool Path::IsAbsolute() const {
 }
 
 bool Path::ComputePathTo(const Path &other, std::string &path) const {
-	if (other == *this) {
-		path.clear();
-		return true;
-	}
-
 	if (!other.StartsWith(*this)) {
 		// Can't do this. Should return an error.
 		return false;
@@ -429,6 +352,7 @@ bool Path::ComputePathTo(const Path &other, std::string &path) const {
 		return true;
 	}
 
+	std::string diff;
 	if (type_ == PathType::CONTENT_URI) {
 		AndroidContentURI a(path_);
 		AndroidContentURI b(other.path_);
@@ -446,12 +370,9 @@ bool Path::ComputePathTo(const Path &other, std::string &path) const {
 	}
 }
 
-static bool FixFilenameCase(const std::string &path, std::string &filename) {
-#if _WIN32
-	// We don't support case-insensitive file systems on Windows.
-	return true;
-#else
+#if HOST_IS_CASE_SENSITIVE
 
+static bool FixFilenameCase(const std::string &path, std::string &filename) {
 	// Are we lucky?
 	if (File::Exists(Path(path + filename)))
 		return true;
@@ -493,14 +414,9 @@ static bool FixFilenameCase(const std::string &path, std::string &filename) {
 	closedir(dirp);
 
 	return retValue;
-#endif
 }
 
 bool FixPathCase(const Path &realBasePath, std::string &path, FixPathCaseBehavior behavior) {
-#if _WIN32
-	return true;
-#else
-
 	if (realBasePath.Type() == PathType::CONTENT_URI) {
 		// Nothing to do. These are already case insensitive, I think.
 		return true;
@@ -553,5 +469,6 @@ bool FixPathCase(const Path &realBasePath, std::string &path, FixPathCaseBehavio
 	}
 
 	return true;
-#endif
 }
+
+#endif

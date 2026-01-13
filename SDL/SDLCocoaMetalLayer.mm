@@ -17,7 +17,6 @@ void *makeWindowMetalCompatible(void *window) {
 	if (![view.layer isKindOfClass:[CAMetalLayer class]])
 	{
 		[view setLayer:[CAMetalLayer layer]];
-		[[view layer] setContentsScale:[window backingScaleFactor]];
 	}
 	return view.layer;
 #else

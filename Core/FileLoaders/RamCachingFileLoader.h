@@ -27,7 +27,7 @@
 class RamCachingFileLoader : public ProxiedFileLoader {
 public:
 	RamCachingFileLoader(FileLoader *backend);
-	~RamCachingFileLoader();
+	~RamCachingFileLoader() override;
 
 	bool Exists() override;
 	bool ExistsFast() override;
@@ -64,8 +64,8 @@ private:
 
 	std::vector<u8> blocks_;
 	std::mutex blocksMutex_;
-	u32 aheadRemaining_ = 0;
-	s64 aheadPos_ = 0;
+	u32 aheadRemaining_;
+	s64 aheadPos_;
 	std::thread aheadThread_;
 	bool aheadThreadRunning_ = false;
 	bool aheadCancel_ = false;

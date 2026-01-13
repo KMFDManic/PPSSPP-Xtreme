@@ -1,14 +1,11 @@
 #pragma once
 
 #include <vector>
-#include <cstdlib>
 
 // Like a const begin/end pair, just more convenient to use (and can only be used for linear array data).
 // Inspired by Rust's slices and Google's StringPiece.
 template <class T>
 struct Slice {
-	Slice() : data_(nullptr), size_(0) {}
-
 	// View some memory as a slice.
 	Slice(const T *data, size_t size) : data_(data), size_(size) {}
 
